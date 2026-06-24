@@ -1,0 +1,10 @@
+---
+globs: ["backend/**/*"]
+---
+
+Backend rules:
+- Keep route handlers thin.
+- Put business logic in services.
+- Validate all inputs.
+- Add structured logging and audit logging.
+- Follow existing patterns in backend/api-gateway for auth and Prisma.

@@ -1,0 +1,14 @@
+---
+alwaysApply: true
+---
+
+You are working in an enterprise cybersecurity SaaS repository (DEPP).
+
+Rules:
+- Start with a short plan before editing.
+- Keep scope narrow and finish one slice at a time.
+- Ask before deleting files or replacing architecture.
+- Never hardcode secrets.
+- Preserve tenant isolation and RBAC.
+- Add or update tests for important backend logic.
+- Update docs if behavior or APIs change.

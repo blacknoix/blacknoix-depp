@@ -1,0 +1,140 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Tenant {
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users           User[]
+  agents          Agent[]
+  telemetryEvents TelemetryEvent[]
+  alerts          Alert[]
+
+  @@map("tenants")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  role         Role     @default(analyst)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+
+  refreshTokens   RefreshToken[]
+  assignedAlerts  Alert[]        @relation("AssignedAlerts")
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  isRevoked Boolean  @default(false)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@map("refresh_tokens")
+}
+
+enum Role {
+  owner
+  admin
+  analyst
+  read_only
+
+  @@map("role")
+}
+
+model Agent {
+  id           String      @id @default(uuid())
+  tenantId     String
+  hostname     String
+  os           String
+  ipAddress    String?
+  agentVersion String
+  status       AgentStatus @default(pending)
+  tokenHash    String
+  registeredAt DateTime    @default(now())
+  lastSeenAt   DateTime?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  tenant          Tenant           @relation(fields: [tenantId], references: [id])
+  telemetryEvents TelemetryEvent[]
+  alerts          Alert[]
+
+  @@map("agents")
+}
+
+model TelemetryEvent {
+  id         String   @id @default(uuid())
+  tenantId   String
+  agentId    String
+  eventType  String
+  severity   String
+  occurredAt DateTime
+  payload    Json
+  receivedAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  agent  Agent  @relation(fields: [agentId], references: [id])
+  alert  Alert?
+
+  @@index([tenantId, receivedAt])
+  @@index([agentId, receivedAt])
+  @@map("telemetry_events")
+}
+
+enum AlertStatus {
+  open
+  acknowledged
+  resolved
+
+  @@map("alert_status")
+}
+
+model Alert {
+  id               String      @id @default(uuid())
+  tenantId         String
+  agentId          String
+  telemetryEventId String?     @unique
+  title            String
+  severity         String
+  status           AlertStatus @default(open)
+  assignedToId     String?
+  resolvedAt       DateTime?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  tenant         Tenant          @relation(fields: [tenantId], references: [id])
+  agent          Agent           @relation(fields: [agentId], references: [id])
+  telemetryEvent TelemetryEvent? @relation(fields: [telemetryEventId], references: [id])
+  assignedTo     User?           @relation("AssignedAlerts", fields: [assignedToId], references: [id])
+
+  @@index([tenantId, status, createdAt])
+  @@index([agentId])
+  @@map("alerts")
+}
+
+enum AgentStatus {
+  pending
+  active
+  inactive
+  revoked
+
+  @@map("agent_status")
+}

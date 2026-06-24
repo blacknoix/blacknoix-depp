@@ -74,6 +74,27 @@ describe('POST /auth/login', () => {
       .send({ email: 'user@example.com' }); // no password
 
     expect(res.status).toBe(400);
+    expect(res.body.fields).toContain('password');
+  });
+
+  it('400 when email format is invalid', async () => {
+    const res = await request(app)
+      .post('/auth/login')
+      .send({ email: 'not-an-email', password: 'pw' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.fields).toContain('email');
+    expect(mockedLogin).not.toHaveBeenCalled();
+  });
+
+  it('400 when password exceeds max length', async () => {
+    const res = await request(app)
+      .post('/auth/login')
+      .send({ email: 'user@example.com', password: 'x'.repeat(129) });
+
+    expect(res.status).toBe(400);
+    expect(res.body.fields).toContain('password');
+    expect(mockedLogin).not.toHaveBeenCalled();
   });
 
   it('lowercases and trims email before lookup', async () => {
@@ -121,6 +142,16 @@ describe('POST /auth/refresh', () => {
       .send({});
 
     expect(res.status).toBe(400);
+    expect(res.body.fields).toContain('refreshToken');
+  });
+
+  it('400 when refreshToken is empty', async () => {
+    const res = await request(app)
+      .post('/auth/refresh')
+      .send({ refreshToken: '   ' });
+
+    expect(res.status).toBe(400);
+    expect(mockedRefresh).not.toHaveBeenCalled();
   });
 });
 
@@ -176,12 +207,34 @@ describe('GET /auth/me', () => {
     const token = jwt.sign(
       { sub: 'user-1', role: 'analyst' }, // deliberately no tenantId
       VALID_ACCESS_SECRET,
-      { expiresIn: '15m' }
+      { expiresIn: '15m', algorithm: 'HS256' }
     );
 
     const res = await request(app)
       .get('/auth/me')
       .set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(401);
+  });
+
+  it('401 on token with invalid role claim', async () => {
+    const token = jwt.sign(
+      { sub: 'user-1', tenantId: 'tenant-1', role: 'superadmin' },
+      VALID_ACCESS_SECRET,
+      { expiresIn: '15m', algorithm: 'HS256' }
+    );
+
+    const res = await request(app)
+      .get('/auth/me')
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(401);
+  });
+
+  it('401 on empty Bearer token', async () => {
+    const res = await request(app)
+      .get('/auth/me')
+      .set('Authorization', 'Bearer ');
 
     expect(res.status).toBe(401);
   });

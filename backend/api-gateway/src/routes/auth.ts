@@ -1,6 +1,8 @@
-import { Router, Request, Response } from 'express';
+import { Router, Response } from 'express';
 import { login, refresh } from '../services/authService';
 import { authenticate } from '../middleware/authenticate';
+import { authRateLimit } from '../middleware/authRateLimit';
+import { validateLoginBody, validateRefreshBody } from '../lib/authValidation';
 import { AuthenticatedRequest } from '../types/auth';
 
 export const authRouter = Router();
@@ -10,18 +12,16 @@ export const authRouter = Router();
  * Body: { email: string, password: string }
  * Returns: { accessToken, refreshToken }
  */
-authRouter.post('/login', async (req: Request, res: Response): Promise<void> => {
-  const { email, password } = req.body as { email?: string; password?: string };
-
-  if (typeof email !== 'string' || typeof password !== 'string') {
-    res.status(400).json({ error: 'email and password are required' });
+authRouter.post('/login', authRateLimit, async (req, res: Response): Promise<void> => {
+  const validated = validateLoginBody(req.body);
+  if (!validated.ok) {
+    res.status(400).json({ error: validated.error, fields: validated.fields });
     return;
   }
 
-  const tokens = await login(email.toLowerCase().trim(), password);
+  const tokens = await login(validated.value.email, validated.value.password);
 
   if (!tokens) {
-    // Deliberately vague — no enumeration
     res.status(401).json({ error: 'Invalid credentials' });
     return;
   }
@@ -34,15 +34,14 @@ authRouter.post('/login', async (req: Request, res: Response): Promise<void> => 
  * Body: { refreshToken: string }
  * Returns: { accessToken, refreshToken }
  */
-authRouter.post('/refresh', async (req: Request, res: Response): Promise<void> => {
-  const { refreshToken } = req.body as { refreshToken?: string };
-
-  if (typeof refreshToken !== 'string') {
-    res.status(400).json({ error: 'refreshToken is required' });
+authRouter.post('/refresh', authRateLimit, async (req, res: Response): Promise<void> => {
+  const validated = validateRefreshBody(req.body);
+  if (!validated.ok) {
+    res.status(400).json({ error: validated.error, fields: validated.fields });
     return;
   }
 
-  const tokens = await refresh(refreshToken);
+  const tokens = await refresh(validated.value.refreshToken);
 
   if (!tokens) {
     res.status(401).json({ error: 'Invalid or expired refresh token' });
@@ -57,7 +56,7 @@ authRouter.post('/refresh', async (req: Request, res: Response): Promise<void> =
  * Protected: requires valid access token.
  * Returns the caller's identity from the token.
  */
-authRouter.get('/me', authenticate, (req: Request, res: Response): void => {
+authRouter.get('/me', authenticate, (req, res: Response): void => {
   const { userId, tenantId, role } = (req as AuthenticatedRequest).auth;
   res.json({ userId, tenantId, role });
 });

@@ -6,3 +6,5 @@ process.env.JWT_ACCESS_EXPIRES_IN = '15m';
 process.env.JWT_REFRESH_EXPIRES_IN = '7d';
 process.env.PORT = '3001';
 process.env.NODE_ENV = 'test';
+process.env.AUTH_RATE_LIMIT_WINDOW_MS = '60000';
+process.env.AUTH_RATE_LIMIT_MAX = '1000';

@@ -5,6 +5,9 @@ import { env } from '../config/env';
 import { prisma } from '../lib/prisma';
 import { AccessTokenPayload, RefreshTokenPayload, UserRole } from '../types/auth';
 
+const BCRYPT_COST = 12;
+const JWT_VERIFY_OPTIONS: jwt.VerifyOptions = { algorithms: ['HS256'] };
+
 // Map Prisma's Role enum to our UserRole type
 function toUserRole(prismaRole: string): UserRole {
   const map: Record<string, UserRole> = {
@@ -50,8 +53,16 @@ export async function login(email: string, password: string): Promise<TokenPair 
 export async function refresh(rawRefreshToken: string): Promise<TokenPair | null> {
   let payload: RefreshTokenPayload;
   try {
-    payload = jwt.verify(rawRefreshToken, env.jwt.refreshSecret) as RefreshTokenPayload;
+    payload = jwt.verify(
+      rawRefreshToken,
+      env.jwt.refreshSecret,
+      JWT_VERIFY_OPTIONS
+    ) as RefreshTokenPayload;
   } catch {
+    return null;
+  }
+
+  if (!payload.sub || !payload.tenantId || !payload.jti) {
     return null;
   }
 
@@ -64,7 +75,11 @@ export async function refresh(rawRefreshToken: string): Promise<TokenPair | null
     return null;
   }
 
-  // Rotate: revoke the old token
+  // Reject tokens whose claims do not match the persisted session.
+  if (stored.userId !== payload.sub || stored.user.tenantId !== payload.tenantId) {
+    return null;
+  }
+
   await prisma.refreshToken.update({
     where: { id: stored.id },
     data: { isRevoked: true },
@@ -79,6 +94,7 @@ export async function refresh(rawRefreshToken: string): Promise<TokenPair | null
 async function issueTokenPair(userId: string, tenantId: string, role: UserRole): Promise<TokenPair> {
   const accessPayload: AccessTokenPayload = { sub: userId, tenantId, role };
   const accessToken = jwt.sign(accessPayload, env.jwt.accessSecret, {
+    algorithm: 'HS256',
     expiresIn: env.jwt.accessExpiresIn,
   } as jwt.SignOptions);
 
@@ -95,6 +111,7 @@ async function issueTokenPair(userId: string, tenantId: string, role: UserRole):
 
   const refreshPayload: RefreshTokenPayload = { sub: userId, tenantId, jti };
   const refreshToken = jwt.sign(refreshPayload, env.jwt.refreshSecret, {
+    algorithm: 'HS256',
     expiresIn: env.jwt.refreshExpiresIn,
   } as jwt.SignOptions);
 
@@ -105,7 +122,7 @@ async function issueTokenPair(userId: string, tenantId: string, role: UserRole):
  * Hash a plaintext password (for seeding / user creation).
  */
 export async function hashPassword(plaintext: string): Promise<string> {
-  return bcrypt.hash(plaintext, 12);
+  return bcrypt.hash(plaintext, BCRYPT_COST);
 }
 
 /** Convert a duration string like "7d" or "15m" to a future Date. */

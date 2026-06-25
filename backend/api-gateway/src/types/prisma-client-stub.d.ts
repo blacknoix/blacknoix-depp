@@ -112,6 +112,10 @@ declare module '@prisma/client' {
       where: WhereUniqueInput<{ id: string }>;
       data: Partial<RefreshToken>;
     }): Promise<RefreshToken>;
+    updateMany(args: {
+      where: Partial<{ userId: string; isRevoked: boolean }>;
+      data: Partial<RefreshToken>;
+    }): Promise<{ count: number }>;
   }
 
   type AgentSummaryRow = Pick<
@@ -327,6 +331,7 @@ declare module '@prisma/client' {
     telemetryEvent: TelemetryEventDelegate;
     agent: Pick<AgentDelegate, 'update'>;
     alert: Pick<AlertDelegate, 'createMany'>;
+    refreshToken: Pick<RefreshTokenDelegate, 'update' | 'create'>;
   };
 
   export class PrismaClient {

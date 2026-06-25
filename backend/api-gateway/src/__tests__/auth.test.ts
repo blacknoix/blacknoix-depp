@@ -8,11 +8,13 @@ import * as authService from '../services/authService';
 jest.mock('../services/authService', () => ({
   login: jest.fn(),
   refresh: jest.fn(),
+  logout: jest.fn(),
   hashPassword: jest.fn(),
 }));
 
 const mockedLogin = authService.login as jest.MockedFunction<typeof authService.login>;
 const mockedRefresh = authService.refresh as jest.MockedFunction<typeof authService.refresh>;
+const mockedLogout = authService.logout as jest.MockedFunction<typeof authService.logout>;
 
 const app = createApp();
 
@@ -74,6 +76,27 @@ describe('POST /auth/login', () => {
       .send({ email: 'user@example.com' }); // no password
 
     expect(res.status).toBe(400);
+    expect(res.body.fields).toContain('password');
+  });
+
+  it('400 when email format is invalid', async () => {
+    const res = await request(app)
+      .post('/auth/login')
+      .send({ email: 'not-an-email', password: 'pw' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.fields).toContain('email');
+    expect(mockedLogin).not.toHaveBeenCalled();
+  });
+
+  it('400 when password exceeds max length', async () => {
+    const res = await request(app)
+      .post('/auth/login')
+      .send({ email: 'user@example.com', password: 'x'.repeat(129) });
+
+    expect(res.status).toBe(400);
+    expect(res.body.fields).toContain('password');
+    expect(mockedLogin).not.toHaveBeenCalled();
   });
 
   it('lowercases and trims email before lookup', async () => {
@@ -121,6 +144,65 @@ describe('POST /auth/refresh', () => {
       .send({});
 
     expect(res.status).toBe(400);
+    expect(res.body.fields).toContain('refreshToken');
+  });
+
+  it('400 when refreshToken is empty', async () => {
+    const res = await request(app)
+      .post('/auth/refresh')
+      .send({ refreshToken: '   ' });
+
+    expect(res.status).toBe(400);
+    expect(mockedRefresh).not.toHaveBeenCalled();
+  });
+});
+
+// ─── POST /auth/logout ────────────────────────────────────────────────────────
+describe('POST /auth/logout', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it('204 when logout succeeds', async () => {
+    mockedLogout.mockResolvedValue(true);
+
+    const res = await request(app)
+      .post('/auth/logout')
+      .send({ refreshToken: 'valid-refresh-token' });
+
+    expect(res.status).toBe(204);
+    expect(mockedLogout).toHaveBeenCalledWith('valid-refresh-token');
+  });
+
+  it('401 when refresh token is invalid', async () => {
+    mockedLogout.mockResolvedValue(false);
+
+    const res = await request(app)
+      .post('/auth/logout')
+      .send({ refreshToken: 'invalid-token' });
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe('Invalid or expired refresh token');
+  });
+
+  it('401 after logout when refresh is attempted', async () => {
+    mockedLogout.mockResolvedValue(true);
+    mockedRefresh.mockResolvedValue(null);
+
+    await request(app)
+      .post('/auth/logout')
+      .send({ refreshToken: 'session-token' });
+
+    const res = await request(app)
+      .post('/auth/refresh')
+      .send({ refreshToken: 'session-token' });
+
+    expect(res.status).toBe(401);
+    expect(mockedRefresh).toHaveBeenCalledWith('session-token');
+  });
+
+  it('400 when refreshToken is missing', async () => {
+    const res = await request(app).post('/auth/logout').send({});
+    expect(res.status).toBe(400);
+    expect(mockedLogout).not.toHaveBeenCalled();
   });
 });
 
@@ -176,12 +258,34 @@ describe('GET /auth/me', () => {
     const token = jwt.sign(
       { sub: 'user-1', role: 'analyst' }, // deliberately no tenantId
       VALID_ACCESS_SECRET,
-      { expiresIn: '15m' }
+      { expiresIn: '15m', algorithm: 'HS256' }
     );
 
     const res = await request(app)
       .get('/auth/me')
       .set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(401);
+  });
+
+  it('401 on token with invalid role claim', async () => {
+    const token = jwt.sign(
+      { sub: 'user-1', tenantId: 'tenant-1', role: 'superadmin' },
+      VALID_ACCESS_SECRET,
+      { expiresIn: '15m', algorithm: 'HS256' }
+    );
+
+    const res = await request(app)
+      .get('/auth/me')
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(401);
+  });
+
+  it('401 on empty Bearer token', async () => {
+    const res = await request(app)
+      .get('/auth/me')
+      .set('Authorization', 'Bearer ');
 
     expect(res.status).toBe(401);
   });

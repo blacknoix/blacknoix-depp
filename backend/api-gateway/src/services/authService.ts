@@ -5,6 +5,13 @@ import { env } from '../config/env';
 import { prisma } from '../lib/prisma';
 import { AccessTokenPayload, RefreshTokenPayload, UserRole } from '../types/auth';
 
+const BCRYPT_COST = 12;
+const JWT_VERIFY_OPTIONS: jwt.VerifyOptions = { algorithms: ['HS256'] };
+
+type DbClient = {
+  refreshToken: Pick<typeof prisma.refreshToken, 'create'>;
+};
+
 // Map Prisma's Role enum to our UserRole type
 function toUserRole(prismaRole: string): UserRole {
   const map: Record<string, UserRole> = {
@@ -19,6 +26,30 @@ function toUserRole(prismaRole: string): UserRole {
 export interface TokenPair {
   accessToken: string;
   refreshToken: string;
+}
+
+function parseRefreshToken(rawRefreshToken: string): RefreshTokenPayload | null {
+  try {
+    const payload = jwt.verify(
+      rawRefreshToken,
+      env.jwt.refreshSecret,
+      JWT_VERIFY_OPTIONS
+    ) as RefreshTokenPayload;
+    if (!payload.sub || !payload.tenantId || !payload.jti) {
+      return null;
+    }
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+/** Revoke every active refresh session for a user (reuse-detection response). */
+async function revokeAllUserSessions(userId: string): Promise<void> {
+  await prisma.refreshToken.updateMany({
+    where: { userId, isRevoked: false },
+    data: { isRevoked: true },
+  });
 }
 
 /**
@@ -45,13 +76,12 @@ export async function login(email: string, password: string): Promise<TokenPair 
 }
 
 /**
- * Validate a refresh token and rotate it (revoke old, issue new pair).
+ * Validate a refresh token, rotate it, and issue a new pair.
+ * Detects reuse of revoked tokens and invalidates all user sessions.
  */
 export async function refresh(rawRefreshToken: string): Promise<TokenPair | null> {
-  let payload: RefreshTokenPayload;
-  try {
-    payload = jwt.verify(rawRefreshToken, env.jwt.refreshSecret) as RefreshTokenPayload;
-  } catch {
+  const payload = parseRefreshToken(rawRefreshToken);
+  if (!payload) {
     return null;
   }
 
@@ -60,32 +90,94 @@ export async function refresh(rawRefreshToken: string): Promise<TokenPair | null
     include: { user: true },
   });
 
-  if (!stored || stored.isRevoked || stored.expiresAt < new Date()) {
+  if (!stored) {
     return null;
   }
 
-  // Rotate: revoke the old token
-  await prisma.refreshToken.update({
-    where: { id: stored.id },
-    data: { isRevoked: true },
+  if (stored.userId !== payload.sub || stored.user.tenantId !== payload.tenantId) {
+    return null;
+  }
+
+  if (stored.isRevoked) {
+    await revokeAllUserSessions(stored.userId);
+    return null;
+  }
+
+  if (stored.expiresAt < new Date()) {
+    await prisma.refreshToken.update({
+      where: { id: stored.id },
+      data: { isRevoked: true },
+    });
+    return null;
+  }
+
+  return prisma.$transaction(async (tx) => {
+    await tx.refreshToken.update({
+      where: { id: stored.id },
+      data: { isRevoked: true },
+    });
+
+    return issueTokenPair(
+      stored.user.id,
+      stored.user.tenantId,
+      toUserRole(stored.user.role),
+      tx
+    );
+  });
+}
+
+/**
+ * Revoke the refresh session identified by the token.
+ * Idempotent — already-revoked sessions still return true.
+ */
+export async function logout(rawRefreshToken: string): Promise<boolean> {
+  const payload = parseRefreshToken(rawRefreshToken);
+  if (!payload) {
+    return false;
+  }
+
+  const stored = await prisma.refreshToken.findUnique({
+    where: { id: payload.jti },
+    include: { user: true },
   });
 
-  return issueTokenPair(stored.user.id, stored.user.tenantId, toUserRole(stored.user.role));
+  if (!stored) {
+    return false;
+  }
+
+  if (stored.userId !== payload.sub || stored.user.tenantId !== payload.tenantId) {
+    return false;
+  }
+
+  if (!stored.isRevoked) {
+    await prisma.refreshToken.update({
+      where: { id: stored.id },
+      data: { isRevoked: true },
+    });
+  }
+
+  return true;
 }
 
 /**
  * Issue a fresh access + refresh token pair, persisting the refresh token.
  */
-async function issueTokenPair(userId: string, tenantId: string, role: UserRole): Promise<TokenPair> {
+async function issueTokenPair(
+  userId: string,
+  tenantId: string,
+  role: UserRole,
+  db: DbClient = prisma
+): Promise<TokenPair> {
   const accessPayload: AccessTokenPayload = { sub: userId, tenantId, role };
   const accessToken = jwt.sign(accessPayload, env.jwt.accessSecret, {
+    algorithm: 'HS256',
     expiresIn: env.jwt.accessExpiresIn,
   } as jwt.SignOptions);
 
   const jti = uuidv4();
   const refreshExpiresAt = computeExpiry(env.jwt.refreshExpiresIn);
 
-  await prisma.refreshToken.create({
+  await db.refreshToken.create({
     data: {
       id: jti,
       userId,
@@ -95,6 +187,7 @@ async function issueTokenPair(userId: string, tenantId: string, role: UserRole):
 
   const refreshPayload: RefreshTokenPayload = { sub: userId, tenantId, jti };
   const refreshToken = jwt.sign(refreshPayload, env.jwt.refreshSecret, {
+    algorithm: 'HS256',
     expiresIn: env.jwt.refreshExpiresIn,
   } as jwt.SignOptions);
 
@@ -105,7 +198,7 @@ async function issueTokenPair(userId: string, tenantId: string, role: UserRole):
  * Hash a plaintext password (for seeding / user creation).
  */
 export async function hashPassword(plaintext: string): Promise<string> {
-  return bcrypt.hash(plaintext, 12);
+  return bcrypt.hash(plaintext, BCRYPT_COST);
 }
 
 /** Convert a duration string like "7d" or "15m" to a future Date. */

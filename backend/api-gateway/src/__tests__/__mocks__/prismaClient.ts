@@ -16,6 +16,7 @@ const PrismaClient = jest.fn().mockImplementation(() => ({
     findUnique: jest.fn(),
     create: jest.fn(),
     update: jest.fn(),
+    updateMany: jest.fn(),
   },
   agent: {
     create: jest.fn(),

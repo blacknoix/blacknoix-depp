@@ -8,11 +8,13 @@ import * as authService from '../services/authService';
 jest.mock('../services/authService', () => ({
   login: jest.fn(),
   refresh: jest.fn(),
+  logout: jest.fn(),
   hashPassword: jest.fn(),
 }));
 
 const mockedLogin = authService.login as jest.MockedFunction<typeof authService.login>;
 const mockedRefresh = authService.refresh as jest.MockedFunction<typeof authService.refresh>;
+const mockedLogout = authService.logout as jest.MockedFunction<typeof authService.logout>;
 
 const app = createApp();
 
@@ -152,6 +154,55 @@ describe('POST /auth/refresh', () => {
 
     expect(res.status).toBe(400);
     expect(mockedRefresh).not.toHaveBeenCalled();
+  });
+});
+
+// ─── POST /auth/logout ────────────────────────────────────────────────────────
+describe('POST /auth/logout', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it('204 when logout succeeds', async () => {
+    mockedLogout.mockResolvedValue(true);
+
+    const res = await request(app)
+      .post('/auth/logout')
+      .send({ refreshToken: 'valid-refresh-token' });
+
+    expect(res.status).toBe(204);
+    expect(mockedLogout).toHaveBeenCalledWith('valid-refresh-token');
+  });
+
+  it('401 when refresh token is invalid', async () => {
+    mockedLogout.mockResolvedValue(false);
+
+    const res = await request(app)
+      .post('/auth/logout')
+      .send({ refreshToken: 'invalid-token' });
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe('Invalid or expired refresh token');
+  });
+
+  it('401 after logout when refresh is attempted', async () => {
+    mockedLogout.mockResolvedValue(true);
+    mockedRefresh.mockResolvedValue(null);
+
+    await request(app)
+      .post('/auth/logout')
+      .send({ refreshToken: 'session-token' });
+
+    const res = await request(app)
+      .post('/auth/refresh')
+      .send({ refreshToken: 'session-token' });
+
+    expect(res.status).toBe(401);
+    expect(mockedRefresh).toHaveBeenCalledWith('session-token');
+  });
+
+  it('400 when refreshToken is missing', async () => {
+    const res = await request(app).post('/auth/logout').send({});
+    expect(res.status).toBe(400);
+    expect(mockedLogout).not.toHaveBeenCalled();
   });
 });
 

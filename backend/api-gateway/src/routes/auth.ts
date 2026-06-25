@@ -1,5 +1,5 @@
 import { Router, Response } from 'express';
-import { login, refresh } from '../services/authService';
+import { login, logout, refresh } from '../services/authService';
 import { authenticate } from '../middleware/authenticate';
 import { authRateLimit } from '../middleware/authRateLimit';
 import { validateLoginBody, validateRefreshBody } from '../lib/authValidation';
@@ -49,6 +49,27 @@ authRouter.post('/refresh', authRateLimit, async (req, res: Response): Promise<v
   }
 
   res.json(tokens);
+});
+
+/**
+ * POST /auth/logout
+ * Body: { refreshToken: string }
+ * Revokes the current refresh session.
+ */
+authRouter.post('/logout', async (req, res: Response): Promise<void> => {
+  const validated = validateRefreshBody(req.body);
+  if (!validated.ok) {
+    res.status(400).json({ error: validated.error, fields: validated.fields });
+    return;
+  }
+
+  const ok = await logout(validated.value.refreshToken);
+  if (!ok) {
+    res.status(401).json({ error: 'Invalid or expired refresh token' });
+    return;
+  }
+
+  res.status(204).send();
 });
 
 /**

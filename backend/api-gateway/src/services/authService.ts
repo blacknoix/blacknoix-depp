@@ -3,6 +3,14 @@ import jwt from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
 import { env } from '../config/env';
 import { logAuthEvent } from '../lib/authAudit';
+import {
+  recordLoginFailure,
+  recordLoginSuccess,
+  recordLogoutSuccess,
+  recordRefreshFailure,
+  recordRefreshReuseDetected,
+  recordRefreshSuccess,
+} from '../lib/metrics';
 import { prisma } from '../lib/prisma';
 import { AccessTokenPayload, RefreshTokenPayload, UserRole } from '../types/auth';
 
@@ -87,6 +95,7 @@ export async function login(email: string, password: string): Promise<TokenPair 
       outcome: 'failure',
       reason: 'invalid_credentials',
     });
+    recordLoginFailure();
     return null;
   }
 
@@ -101,6 +110,7 @@ export async function login(email: string, password: string): Promise<TokenPair 
     jti: pair.refreshJti,
   });
 
+  recordLoginSuccess();
   return { accessToken: pair.accessToken, refreshToken: pair.refreshToken };
 }
 
@@ -116,6 +126,7 @@ export async function refresh(rawRefreshToken: string): Promise<TokenPair | null
       outcome: 'failure',
       reason: 'invalid_token',
     });
+    recordRefreshFailure();
     return null;
   }
 
@@ -131,6 +142,7 @@ export async function refresh(rawRefreshToken: string): Promise<TokenPair | null
       reason: 'session_not_found',
       jti: payload.jti,
     });
+    recordRefreshFailure();
     return null;
   }
 
@@ -143,6 +155,7 @@ export async function refresh(rawRefreshToken: string): Promise<TokenPair | null
       tenantId: stored.user.tenantId,
       jti: payload.jti,
     });
+    recordRefreshFailure();
     return null;
   }
 
@@ -155,6 +168,8 @@ export async function refresh(rawRefreshToken: string): Promise<TokenPair | null
       jti: payload.jti,
       reason: 'revoked_token_reused',
     });
+    recordRefreshReuseDetected();
+    recordRefreshFailure();
     await revokeAllUserSessions(stored.userId, stored.user.tenantId, 'refresh_reuse_detected');
     return null;
   }
@@ -180,6 +195,7 @@ export async function refresh(rawRefreshToken: string): Promise<TokenPair | null
       jti: stored.id,
       reason: 'expired',
     });
+    recordRefreshFailure();
     return null;
   }
 
@@ -218,6 +234,7 @@ export async function refresh(rawRefreshToken: string): Promise<TokenPair | null
     jti: pair.refreshJti,
   });
 
+  recordRefreshSuccess();
   return { accessToken: pair.accessToken, refreshToken: pair.refreshToken };
 }
 
@@ -286,6 +303,7 @@ export async function logout(rawRefreshToken: string): Promise<boolean> {
     jti: stored.id,
   });
 
+  recordLogoutSuccess();
   return true;
 }
 

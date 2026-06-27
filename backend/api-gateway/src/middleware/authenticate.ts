@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { env } from '../config/env';
 import { hashClientIp, logAuthEvent } from '../lib/authAudit';
+import { recordUnauthorized } from '../lib/metrics';
 import { AccessTokenPayload, AuthenticatedRequest, UserRole } from '../types/auth';
 
 const JWT_VERIFY_OPTIONS: jwt.VerifyOptions = {
@@ -24,6 +25,7 @@ function denyInvalidToken(req: Request, res: Response, reason: string): void {
     reason,
     clientIpHash: hashClientIp(req),
   });
+  recordUnauthorized();
   res.status(401).json({ error: reason === 'missing_header' ? 'Missing or malformed Authorization header' : reason === 'malformed_payload' ? 'Malformed token payload' : 'Invalid or expired token' });
 }
 

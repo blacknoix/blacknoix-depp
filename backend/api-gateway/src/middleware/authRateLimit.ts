@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction, RequestHandler } from 'express';
 import { env } from '../config/env';
 import { hashClientIp, logAuthEvent } from '../lib/authAudit';
+import { recordRateLimited } from '../lib/metrics';
 
 interface Bucket {
   count: number;
@@ -38,6 +39,7 @@ export function createAuthRateLimiter(windowMs: number, max: number): RequestHan
         reason: 'rate_limit_exceeded',
         clientIpHash: hashClientIp(req),
       });
+      recordRateLimited();
       res.status(429).json({ error: 'Too many requests' });
       return;
     }

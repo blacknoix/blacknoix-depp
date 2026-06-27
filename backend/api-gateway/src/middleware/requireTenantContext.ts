@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { hashClientIp, logAuthEvent } from '../lib/authAudit';
+import { recordUnauthorized } from '../lib/metrics';
 import { AuthenticatedRequest } from '../types/auth';
 import { TenantScopedRequest } from '../types/tenant';
 import { getTenantContext } from '../lib/tenantScope';
@@ -24,6 +25,7 @@ export function requireTenantContext(req: Request, res: Response, next: NextFunc
       reason: 'tenant_context_required',
       clientIpHash: hashClientIp(req),
     });
+    recordUnauthorized();
     res.status(401).json({ error: 'Tenant context required' });
     return;
   }

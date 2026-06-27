@@ -1,6 +1,7 @@
 import express, { ErrorRequestHandler } from 'express';
 import { authRouter } from './routes/auth';
 import { apiRouter } from './routes/api';
+import { internalRouter } from './routes/internal';
 import { telemetryRouter } from './routes/telemetry';
 import { env } from './config/env';
 
@@ -30,6 +31,9 @@ export function createApp() {
 
   // Tenant-scoped API routes (authenticate + requireTenantContext by default)
   app.use('/api', apiRouter);
+
+  // Operator metrics (admin+ JWT)
+  app.use('/internal', internalRouter);
 
   return app;
 }

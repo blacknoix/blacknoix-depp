@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { hashClientIp, logAuthEvent } from '../lib/authAudit';
 import { AuthenticatedRequest } from '../types/auth';
 import { TenantScopedRequest } from '../types/tenant';
 import { getTenantContext } from '../lib/tenantScope';
@@ -14,6 +15,15 @@ export function requireTenantContext(req: Request, res: Response, next: NextFunc
   const { tenantId, userId, role } = authReq.auth ?? {};
 
   if (!tenantId || !userId || !role) {
+    logAuthEvent({
+      action: 'access_denied_missing_tenant_context',
+      outcome: 'denied',
+      httpStatus: 401,
+      route: req.path,
+      method: req.method,
+      reason: 'tenant_context_required',
+      clientIpHash: hashClientIp(req),
+    });
     res.status(401).json({ error: 'Tenant context required' });
     return;
   }

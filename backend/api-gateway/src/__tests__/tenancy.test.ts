@@ -116,6 +116,21 @@ describe('GET /api/tenant', () => {
     expect(res.body.error).toBe('Tenant not found');
     expect(mockedGetTenantProfile).toHaveBeenCalledWith('tenant-a');
   });
+
+  it('200 for read-only role', async () => {
+    mockedGetTenantProfile.mockResolvedValue({
+      id: 'tenant-a',
+      name: 'Acme Corp',
+      createdAt: new Date('2024-01-01'),
+    });
+
+    const res = await request(app)
+      .get('/api/tenant')
+      .set('Authorization', `Bearer ${makeAccessToken({ role: 'read-only' })}`);
+
+    expect(res.status).toBe(200);
+    expect(mockedGetTenantProfile).toHaveBeenCalledWith('tenant-a');
+  });
 });
 
 // ─── GET /api/tenants/:tenantId ───────────────────────────────────────────────
@@ -194,6 +209,16 @@ describe('GET /api/users/:userId', () => {
   it('401 without token', async () => {
     const res = await request(app).get('/api/users/user-a');
     expect(res.status).toBe(401);
+    expect(mockedGetUserInTenant).not.toHaveBeenCalled();
+  });
+
+  it('403 for read-only role', async () => {
+    const res = await request(app)
+      .get('/api/users/user-a')
+      .set('Authorization', `Bearer ${makeAccessToken({ role: 'read-only' })}`);
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe('Forbidden');
     expect(mockedGetUserInTenant).not.toHaveBeenCalled();
   });
 });

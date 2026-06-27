@@ -1,6 +1,14 @@
 import jwt from 'jsonwebtoken';
 import { prisma } from '../lib/prisma';
+import { logAuthEvent } from '../lib/authAudit';
 import { refresh, logout } from '../services/authService';
+
+jest.mock('../lib/authAudit', () => ({
+  logAuthEvent: jest.fn(),
+  hashClientIp: jest.fn(),
+}));
+
+const mockedLogAuthEvent = logAuthEvent as jest.MockedFunction<typeof logAuthEvent>;
 
 const mockFindUnique = jest.fn();
 const mockCreate = jest.fn();
@@ -91,6 +99,13 @@ describe('authService.refresh rotation', () => {
     const newPayload = jwt.verify(result!.refreshToken, REFRESH_SECRET) as { jti: string };
     expect(newPayload.jti).not.toBe(oldJti);
     expect(jwt.verify(result!.accessToken, ACCESS_SECRET)).toBeTruthy();
+
+    expect(mockedLogAuthEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'refresh', outcome: 'success', userId: user.id })
+    );
+    expect(mockedLogAuthEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'session_revoked', reason: 'rotated', jti: oldJti })
+    );
   });
 });
 
@@ -109,6 +124,13 @@ describe('authService.refresh reuse detection', () => {
       data: { isRevoked: true },
     });
     expect(mockTransaction).not.toHaveBeenCalled();
+
+    expect(mockedLogAuthEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'refresh_reuse_detected', jti: jti })
+    );
+    expect(mockedLogAuthEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'session_revoked_all', userId: user.id })
+    );
   });
 });
 
@@ -126,6 +148,13 @@ describe('authService.logout', () => {
       where: { id: jti },
       data: { isRevoked: true },
     });
+
+    expect(mockedLogAuthEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'logout', outcome: 'success', jti })
+    );
+    expect(mockedLogAuthEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'session_revoked', reason: 'logout', jti })
+    );
   });
 
   it('is idempotent for an already-revoked session', async () => {
@@ -144,6 +173,9 @@ describe('authService.logout', () => {
     const ok = await logout('not-a-jwt');
     expect(ok).toBe(false);
     expect(mockFindUnique).not.toHaveBeenCalled();
+    expect(mockedLogAuthEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'logout_failed', reason: 'invalid_token' })
+    );
   });
 });
 

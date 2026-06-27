@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { readTenantFromRequest } from '../lib/tenantScope';
 import { requireRole } from '../middleware/requireRole';
 import { createAgent, getAgentInTenant, listAgentsInTenant } from '../services/agentService';
+import { listEventsForAgent } from '../services/telemetryService';
 import { CreateAgentInput } from '../types/agent';
 
 export const agentRouter = Router();
@@ -64,6 +65,41 @@ agentRouter.get('/', requireRole('analyst'), async (req, res: Response): Promise
   const { tenantId } = readTenantFromRequest(req);
   const agents = await listAgentsInTenant(tenantId);
   res.json(agents);
+});
+
+/**
+ * GET /api/agents/:agentId/events
+ * List telemetry events for an agent in the caller's tenant.
+ */
+agentRouter.get('/:agentId/events', requireRole('analyst'), async (req, res: Response): Promise<void> => {
+  const { tenantId } = readTenantFromRequest(req);
+  const { agentId } = req.params;
+
+  const limitRaw = req.query.limit;
+  let limit = 50;
+  if (typeof limitRaw === 'string') {
+    const parsed = parseInt(limitRaw, 10);
+    if (!Number.isNaN(parsed)) {
+      limit = Math.min(Math.max(parsed, 1), 200);
+    }
+  }
+
+  let before: Date | undefined;
+  const beforeRaw = req.query.before;
+  if (typeof beforeRaw === 'string') {
+    const parsed = new Date(beforeRaw);
+    if (!Number.isNaN(parsed.getTime())) {
+      before = parsed;
+    }
+  }
+
+  const events = await listEventsForAgent(tenantId, agentId, limit, before);
+  if (events === null) {
+    res.status(404).json({ error: 'Agent not found' });
+    return;
+  }
+
+  res.json(events);
 });
 
 /**

@@ -3,6 +3,14 @@ import {
   createAuthRateLimiter,
   resetAuthRateLimitBuckets,
 } from '../middleware/authRateLimit';
+import { logAuthEvent } from '../lib/authAudit';
+
+jest.mock('../lib/authAudit', () => ({
+  logAuthEvent: jest.fn(),
+  hashClientIp: jest.fn(),
+}));
+
+const mockedLogAuthEvent = logAuthEvent as jest.MockedFunction<typeof logAuthEvent>;
 
 function runRateLimiter(
   limiter: ReturnType<typeof createAuthRateLimiter>,
@@ -42,5 +50,8 @@ describe('authRateLimit', () => {
     expect(blocked.res.status).toHaveBeenCalledWith(429);
     expect(blocked.res.json).toHaveBeenCalledWith({ error: 'Too many requests' });
     expect(blocked.res.setHeader).toHaveBeenCalledWith('Retry-After', expect.any(String));
+    expect(mockedLogAuthEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'request_rate_limited', httpStatus: 429 })
+    );
   });
 });

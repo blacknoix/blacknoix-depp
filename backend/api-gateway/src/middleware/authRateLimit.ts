@@ -1,5 +1,7 @@
 import { Request, Response, NextFunction, RequestHandler } from 'express';
 import { env } from '../config/env';
+import { hashClientIp, logAuthEvent } from '../lib/authAudit';
+import { recordRateLimited } from '../lib/metrics';
 
 interface Bucket {
   count: number;
@@ -28,6 +30,16 @@ export function createAuthRateLimiter(windowMs: number, max: number): RequestHan
     if (bucket.count > max) {
       const retryAfterSeconds = Math.max(1, Math.ceil((bucket.resetAt - now) / 1000));
       res.setHeader('Retry-After', String(retryAfterSeconds));
+      logAuthEvent({
+        action: 'request_rate_limited',
+        outcome: 'denied',
+        httpStatus: 429,
+        route: req.path,
+        method: req.method,
+        reason: 'rate_limit_exceeded',
+        clientIpHash: hashClientIp(req),
+      });
+      recordRateLimited();
       res.status(429).json({ error: 'Too many requests' });
       return;
     }

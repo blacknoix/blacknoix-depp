@@ -2,6 +2,7 @@ import request from 'supertest';
 import jwt from 'jsonwebtoken';
 import { createApp } from '../app';
 import * as authService from '../services/authService';
+import { logAuthRouteDenied } from '../lib/authRouteAudit';
 
 // ─── Mock authService with a factory so Jest never loads the real module.
 // The real module imports @prisma/client which requires a full npm install.
@@ -11,6 +12,12 @@ jest.mock('../services/authService', () => ({
   logout: jest.fn(),
   hashPassword: jest.fn(),
 }));
+
+jest.mock('../lib/authRouteAudit', () => ({
+  logAuthRouteDenied: jest.fn(),
+}));
+
+const mockedLogAuthRouteDenied = logAuthRouteDenied as jest.MockedFunction<typeof logAuthRouteDenied>;
 
 const mockedLogin = authService.login as jest.MockedFunction<typeof authService.login>;
 const mockedRefresh = authService.refresh as jest.MockedFunction<typeof authService.refresh>;
@@ -303,5 +310,44 @@ describe('Tenant isolation', () => {
     expect(res.status).toBe(200);
     expect(res.body.tenantId).toBe('tenant-A');
     // Future tenant-scoped routes must enforce: req.auth.tenantId === resource.tenantId
+  });
+});
+
+// ─── Auth route audit logging ─────────────────────────────────────────────────
+describe('auth route audit logging', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it('logs validation failure on login 400 without password values', async () => {
+    await request(app)
+      .post('/auth/login')
+      .send({ email: 'user@example.com' });
+
+    expect(mockedLogAuthRouteDenied).toHaveBeenCalledWith(
+      expect.anything(),
+      400,
+      expect.any(String),
+      expect.arrayContaining(['password'])
+    );
+    const [, , reason, fields] = mockedLogAuthRouteDenied.mock.calls[0]!;
+    expect(reason).not.toMatch(/secret|password/i);
+    expect(fields).toEqual(expect.arrayContaining(['password']));
+  });
+
+  it('logs 401 on failed login without credential values', async () => {
+    mockedLogin.mockResolvedValue(null);
+
+    await request(app)
+      .post('/auth/login')
+      .send({ email: 'user@example.com', password: 'wrong-password' });
+
+    expect(mockedLogAuthRouteDenied).toHaveBeenCalledWith(
+      expect.anything(),
+      401,
+      'invalid_credentials'
+    );
+    const [, status, reason] = mockedLogAuthRouteDenied.mock.calls[0]!;
+    expect(status).toBe(401);
+    expect(reason).toBe('invalid_credentials');
+    expect(reason).not.toContain('wrong-password');
   });
 });

@@ -241,6 +241,15 @@ describe('GET /api/agents', () => {
     expect(res.status).toBe(401);
     expect(mockedListAgentsInTenant).not.toHaveBeenCalled();
   });
+
+  it('403 for read-only role', async () => {
+    const res = await request(app)
+      .get('/api/agents')
+      .set('Authorization', `Bearer ${makeAccessToken({ role: 'read-only' })}`);
+
+    expect(res.status).toBe(403);
+    expect(mockedListAgentsInTenant).not.toHaveBeenCalled();
+  });
 });
 
 // ─── GET /api/agents/:agentId ─────────────────────────────────────────────────
@@ -283,6 +292,15 @@ describe('GET /api/agents/:agentId', () => {
   it('401 without token', async () => {
     const res = await request(app).get('/api/agents/agent-1');
     expect(res.status).toBe(401);
+    expect(mockedGetAgentInTenant).not.toHaveBeenCalled();
+  });
+
+  it('403 for read-only role', async () => {
+    const res = await request(app)
+      .get('/api/agents/agent-1')
+      .set('Authorization', `Bearer ${makeAccessToken({ role: 'read-only' })}`);
+
+    expect(res.status).toBe(403);
     expect(mockedGetAgentInTenant).not.toHaveBeenCalled();
   });
 });

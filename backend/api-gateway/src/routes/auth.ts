@@ -1,5 +1,6 @@
 import { Router, Response } from 'express';
 import { login, logout, refresh } from '../services/authService';
+import { logAuthRouteDenied } from '../lib/authRouteAudit';
 import { authenticate } from '../middleware/authenticate';
 import { authRateLimit } from '../middleware/authRateLimit';
 import { validateLoginBody, validateRefreshBody } from '../lib/authValidation';
@@ -15,6 +16,7 @@ export const authRouter = Router();
 authRouter.post('/login', authRateLimit, async (req, res: Response): Promise<void> => {
   const validated = validateLoginBody(req.body);
   if (!validated.ok) {
+    logAuthRouteDenied(req, 400, validated.error, validated.fields);
     res.status(400).json({ error: validated.error, fields: validated.fields });
     return;
   }
@@ -22,6 +24,7 @@ authRouter.post('/login', authRateLimit, async (req, res: Response): Promise<voi
   const tokens = await login(validated.value.email, validated.value.password);
 
   if (!tokens) {
+    logAuthRouteDenied(req, 401, 'invalid_credentials');
     res.status(401).json({ error: 'Invalid credentials' });
     return;
   }
@@ -37,6 +40,7 @@ authRouter.post('/login', authRateLimit, async (req, res: Response): Promise<voi
 authRouter.post('/refresh', authRateLimit, async (req, res: Response): Promise<void> => {
   const validated = validateRefreshBody(req.body);
   if (!validated.ok) {
+    logAuthRouteDenied(req, 400, validated.error, validated.fields);
     res.status(400).json({ error: validated.error, fields: validated.fields });
     return;
   }
@@ -44,6 +48,7 @@ authRouter.post('/refresh', authRateLimit, async (req, res: Response): Promise<v
   const tokens = await refresh(validated.value.refreshToken);
 
   if (!tokens) {
+    logAuthRouteDenied(req, 401, 'invalid_or_expired_refresh_token');
     res.status(401).json({ error: 'Invalid or expired refresh token' });
     return;
   }
@@ -59,12 +64,14 @@ authRouter.post('/refresh', authRateLimit, async (req, res: Response): Promise<v
 authRouter.post('/logout', async (req, res: Response): Promise<void> => {
   const validated = validateRefreshBody(req.body);
   if (!validated.ok) {
+    logAuthRouteDenied(req, 400, validated.error, validated.fields);
     res.status(400).json({ error: validated.error, fields: validated.fields });
     return;
   }
 
   const ok = await logout(validated.value.refreshToken);
   if (!ok) {
+    logAuthRouteDenied(req, 401, 'invalid_or_expired_refresh_token');
     res.status(401).json({ error: 'Invalid or expired refresh token' });
     return;
   }

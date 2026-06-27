@@ -194,6 +194,15 @@ describe('GET /api/alerts/:alertId', () => {
     expect(res.status).toBe(401);
     expect(mockedGetAlert).not.toHaveBeenCalled();
   });
+
+  it('403 for read-only role', async () => {
+    const res = await request(app)
+      .get('/api/alerts/alert-1')
+      .set('Authorization', `Bearer ${makeUserToken({ role: 'read-only' })}`);
+
+    expect(res.status).toBe(403);
+    expect(mockedGetAlert).not.toHaveBeenCalled();
+  });
 });
 
 // ─── PATCH /api/alerts/:alertId ───────────────────────────────────────────────

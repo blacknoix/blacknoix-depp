@@ -2,6 +2,7 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
 import { env } from '../config/env';
+import { logAuthEvent } from '../lib/authAudit';
 import { prisma } from '../lib/prisma';
 import { AccessTokenPayload, RefreshTokenPayload, UserRole } from '../types/auth';
 
@@ -45,10 +46,22 @@ function parseRefreshToken(rawRefreshToken: string): RefreshTokenPayload | null 
 }
 
 /** Revoke every active refresh session for a user (reuse-detection response). */
-async function revokeAllUserSessions(userId: string): Promise<void> {
+async function revokeAllUserSessions(
+  userId: string,
+  tenantId: string,
+  reason: string
+): Promise<void> {
   await prisma.refreshToken.updateMany({
     where: { userId, isRevoked: false },
     data: { isRevoked: true },
+  });
+
+  logAuthEvent({
+    action: 'session_revoked_all',
+    outcome: 'success',
+    userId,
+    tenantId,
+    reason,
   });
 }
 
@@ -69,10 +82,26 @@ export async function login(email: string, password: string): Promise<TokenPair 
   const valid = await bcrypt.compare(password, hash);
 
   if (!user || !valid) {
+    logAuthEvent({
+      action: 'login_failed',
+      outcome: 'failure',
+      reason: 'invalid_credentials',
+    });
     return null;
   }
 
-  return issueTokenPair(user.id, user.tenantId, toUserRole(user.role));
+  const pair = await issueTokenPair(user.id, user.tenantId, toUserRole(user.role));
+
+  logAuthEvent({
+    action: 'login',
+    outcome: 'success',
+    userId: user.id,
+    tenantId: user.tenantId,
+    role: toUserRole(user.role),
+    jti: pair.refreshJti,
+  });
+
+  return { accessToken: pair.accessToken, refreshToken: pair.refreshToken };
 }
 
 /**
@@ -82,6 +111,11 @@ export async function login(email: string, password: string): Promise<TokenPair 
 export async function refresh(rawRefreshToken: string): Promise<TokenPair | null> {
   const payload = parseRefreshToken(rawRefreshToken);
   if (!payload) {
+    logAuthEvent({
+      action: 'refresh_failed',
+      outcome: 'failure',
+      reason: 'invalid_token',
+    });
     return null;
   }
 
@@ -91,15 +125,37 @@ export async function refresh(rawRefreshToken: string): Promise<TokenPair | null
   });
 
   if (!stored) {
+    logAuthEvent({
+      action: 'refresh_failed',
+      outcome: 'failure',
+      reason: 'session_not_found',
+      jti: payload.jti,
+    });
     return null;
   }
 
   if (stored.userId !== payload.sub || stored.user.tenantId !== payload.tenantId) {
+    logAuthEvent({
+      action: 'refresh_failed',
+      outcome: 'failure',
+      reason: 'claim_mismatch',
+      userId: stored.userId,
+      tenantId: stored.user.tenantId,
+      jti: payload.jti,
+    });
     return null;
   }
 
   if (stored.isRevoked) {
-    await revokeAllUserSessions(stored.userId);
+    logAuthEvent({
+      action: 'refresh_reuse_detected',
+      outcome: 'denied',
+      userId: stored.userId,
+      tenantId: stored.user.tenantId,
+      jti: payload.jti,
+      reason: 'revoked_token_reused',
+    });
+    await revokeAllUserSessions(stored.userId, stored.user.tenantId, 'refresh_reuse_detected');
     return null;
   }
 
@@ -108,10 +164,28 @@ export async function refresh(rawRefreshToken: string): Promise<TokenPair | null
       where: { id: stored.id },
       data: { isRevoked: true },
     });
+    logAuthEvent({
+      action: 'session_revoked',
+      outcome: 'success',
+      userId: stored.userId,
+      tenantId: stored.user.tenantId,
+      jti: stored.id,
+      reason: 'expired',
+    });
+    logAuthEvent({
+      action: 'refresh_failed',
+      outcome: 'failure',
+      userId: stored.userId,
+      tenantId: stored.user.tenantId,
+      jti: stored.id,
+      reason: 'expired',
+    });
     return null;
   }
 
-  return prisma.$transaction(async (tx) => {
+  const previousJti = stored.id;
+
+  const pair = await prisma.$transaction(async (tx) => {
     await tx.refreshToken.update({
       where: { id: stored.id },
       data: { isRevoked: true },
@@ -124,6 +198,27 @@ export async function refresh(rawRefreshToken: string): Promise<TokenPair | null
       tx
     );
   });
+
+  logAuthEvent({
+    action: 'session_revoked',
+    outcome: 'success',
+    userId: stored.user.id,
+    tenantId: stored.user.tenantId,
+    jti: previousJti,
+    reason: 'rotated',
+  });
+
+  logAuthEvent({
+    action: 'refresh',
+    outcome: 'success',
+    userId: stored.user.id,
+    tenantId: stored.user.tenantId,
+    role: toUserRole(stored.user.role),
+    previousJti,
+    jti: pair.refreshJti,
+  });
+
+  return { accessToken: pair.accessToken, refreshToken: pair.refreshToken };
 }
 
 /**
@@ -133,6 +228,11 @@ export async function refresh(rawRefreshToken: string): Promise<TokenPair | null
 export async function logout(rawRefreshToken: string): Promise<boolean> {
   const payload = parseRefreshToken(rawRefreshToken);
   if (!payload) {
+    logAuthEvent({
+      action: 'logout_failed',
+      outcome: 'failure',
+      reason: 'invalid_token',
+    });
     return false;
   }
 
@@ -142,10 +242,24 @@ export async function logout(rawRefreshToken: string): Promise<boolean> {
   });
 
   if (!stored) {
+    logAuthEvent({
+      action: 'logout_failed',
+      outcome: 'failure',
+      reason: 'session_not_found',
+      jti: payload.jti,
+    });
     return false;
   }
 
   if (stored.userId !== payload.sub || stored.user.tenantId !== payload.tenantId) {
+    logAuthEvent({
+      action: 'logout_failed',
+      outcome: 'failure',
+      reason: 'claim_mismatch',
+      userId: stored.userId,
+      tenantId: stored.user.tenantId,
+      jti: payload.jti,
+    });
     return false;
   }
 
@@ -154,7 +268,23 @@ export async function logout(rawRefreshToken: string): Promise<boolean> {
       where: { id: stored.id },
       data: { isRevoked: true },
     });
+    logAuthEvent({
+      action: 'session_revoked',
+      outcome: 'success',
+      userId: stored.userId,
+      tenantId: stored.user.tenantId,
+      jti: stored.id,
+      reason: 'logout',
+    });
   }
+
+  logAuthEvent({
+    action: 'logout',
+    outcome: 'success',
+    userId: stored.userId,
+    tenantId: stored.user.tenantId,
+    jti: stored.id,
+  });
 
   return true;
 }
@@ -167,7 +297,7 @@ async function issueTokenPair(
   tenantId: string,
   role: UserRole,
   db: DbClient = prisma
-): Promise<TokenPair> {
+): Promise<TokenPair & { refreshJti: string }> {
   const accessPayload: AccessTokenPayload = { sub: userId, tenantId, role };
   const accessToken = jwt.sign(accessPayload, env.jwt.accessSecret, {
     algorithm: 'HS256',
@@ -191,7 +321,7 @@ async function issueTokenPair(
     expiresIn: env.jwt.refreshExpiresIn,
   } as jwt.SignOptions);
 
-  return { accessToken, refreshToken };
+  return { accessToken, refreshToken, refreshJti: jti };
 }
 
 /**

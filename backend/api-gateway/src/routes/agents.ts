@@ -1,9 +1,18 @@
 import { Router, Response } from 'express';
 import { readTenantFromRequest } from '../lib/tenantScope';
 import { requireRole } from '../middleware/requireRole';
-import { createAgent, getAgentInTenant, listAgentsInTenant } from '../services/agentService';
+import {
+  createAgentEnrollment,
+  getAgentInTenant,
+  listAgentsInTenant,
+  revokeAgent,
+} from '../services/agentService';
 import { listEventsForAgent } from '../services/telemetryService';
-import { CreateAgentInput } from '../types/agent';
+import {
+  CreateAgentInput,
+  DEFAULT_ENROLLMENT_WINDOW_HOURS,
+  MAX_ENROLLMENT_WINDOW_HOURS,
+} from '../types/agent';
 
 export const agentRouter = Router();
 
@@ -13,6 +22,9 @@ function validateCreateBody(
   const data = body as Record<string, unknown>;
   const fields: string[] = [];
 
+  if (typeof data.displayName !== 'string' || !data.displayName.trim()) {
+    fields.push('displayName');
+  }
   if (typeof data.hostname !== 'string' || !data.hostname.trim()) {
     fields.push('hostname');
   }
@@ -28,10 +40,26 @@ function validateCreateBody(
   }
 
   const input: CreateAgentInput = {
+    displayName: (data.displayName as string).trim(),
     hostname: (data.hostname as string).trim(),
     os: (data.os as string).trim(),
     agentVersion: (data.agentVersion as string).trim(),
   };
+
+  if (typeof data.enrollmentWindowHours === 'number') {
+    input.enrollmentWindowHours = Math.min(
+      Math.max(Math.floor(data.enrollmentWindowHours), 1),
+      MAX_ENROLLMENT_WINDOW_HOURS
+    );
+  } else if (typeof data.enrollmentWindowHours === 'string') {
+    const parsed = parseInt(data.enrollmentWindowHours, 10);
+    if (!Number.isNaN(parsed)) {
+      input.enrollmentWindowHours = Math.min(
+        Math.max(parsed, 1),
+        MAX_ENROLLMENT_WINDOW_HOURS
+      );
+    }
+  }
 
   if (typeof data.ipAddress === 'string' && data.ipAddress.trim()) {
     input.ipAddress = data.ipAddress.trim();
@@ -40,22 +68,35 @@ function validateCreateBody(
   return { ok: true, input };
 }
 
-/**
- * POST /api/agents
- * Register a new endpoint agent. Returns a one-time agent token.
- */
-agentRouter.post('/', requireRole('admin'), async (req, res: Response): Promise<void> => {
+function readActor(req: Parameters<typeof readTenantFromRequest>[0]) {
+  const { tenantId, userId, role } = readTenantFromRequest(req);
+  return { tenantId, actor: { userId, role } };
+}
+
+function enrollmentHandler(req: Parameters<typeof readTenantFromRequest>[0], res: Response): Promise<void> {
   const validated = validateCreateBody(req.body);
   if (!validated.ok) {
     res.status(400).json({ error: 'Validation failed', fields: validated.fields });
-    return;
+    return Promise.resolve();
   }
 
-  const { tenantId } = readTenantFromRequest(req);
-  const result = await createAgent(tenantId, validated.input);
+  const { tenantId, actor } = readActor(req);
+  return createAgentEnrollment(tenantId, validated.input, actor).then((result) => {
+    res.status(201).json(result);
+  });
+}
 
-  res.status(201).json(result);
-});
+/**
+ * POST /api/agents/enroll
+ * Enroll a new endpoint agent. Returns a one-time enrollment token.
+ */
+agentRouter.post('/enroll', requireRole('admin'), (req, res) => enrollmentHandler(req, res));
+
+/**
+ * POST /api/agents
+ * Primary enrollment endpoint (architecture alias).
+ */
+agentRouter.post('/', requireRole('admin'), (req, res) => enrollmentHandler(req, res));
 
 /**
  * GET /api/agents
@@ -66,6 +107,33 @@ agentRouter.get('/', requireRole('analyst'), async (req, res: Response): Promise
   const agents = await listAgentsInTenant(tenantId);
   res.json(agents);
 });
+
+async function revokeHandler(req: Parameters<typeof readTenantFromRequest>[0], res: Response): Promise<void> {
+  const { tenantId, actor } = readActor(req);
+  const body = req.body as Record<string, unknown>;
+  const reason = typeof body.reason === 'string' ? body.reason.trim() : undefined;
+
+  const agent = await revokeAgent(tenantId, req.params.agentId, actor, reason);
+
+  if (!agent) {
+    res.status(404).json({ error: 'Agent not found' });
+    return;
+  }
+
+  res.json({ status: 'revoked', agent });
+}
+
+/**
+ * POST /api/agents/:agentId/revoke
+ * Revoke an agent credential in the caller's tenant.
+ */
+agentRouter.post('/:agentId/revoke', requireRole('admin'), (req, res) => revokeHandler(req, res));
+
+/**
+ * PATCH /api/agents/:agentId/revoke
+ * Architecture alias for revocation.
+ */
+agentRouter.patch('/:agentId/revoke', requireRole('admin'), (req, res) => revokeHandler(req, res));
 
 /**
  * GET /api/agents/:agentId/events
@@ -117,3 +185,5 @@ agentRouter.get('/:agentId', requireRole('analyst'), async (req, res: Response):
 
   res.json(agent);
 });
+
+export { DEFAULT_ENROLLMENT_WINDOW_HOURS };

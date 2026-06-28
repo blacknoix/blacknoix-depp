@@ -18,7 +18,14 @@ export type AuthAuditAction =
   | 'request_rate_limited'
   | 'access_denied_invalid_token'
   | 'access_denied_missing_tenant_context'
-  | 'access_denied_insufficient_role';
+  | 'access_denied_insufficient_role'
+  | 'agent_enrollment'
+  | 'agent_enrollment_failed'
+  | 'agent_auth_success'
+  | 'agent_auth_failed'
+  | 'agent_activated'
+  | 'agent_expired'
+  | 'agent_revoked';
 
 export interface AuthAuditEvent {
   timestamp?: string;
@@ -29,6 +36,7 @@ export interface AuthAuditEvent {
   method?: string;
   userId?: string;
   tenantId?: string;
+  agentId?: string;
   jti?: string;
   previousJti?: string;
   role?: string;
@@ -47,6 +55,9 @@ const SENSITIVE_FIELD_NAMES = new Set([
   'token',
   'authorization',
   'agentToken',
+  'agentSecret',
+  'agentCredential',
+  'enrollmentToken',
 ]);
 
 /** SHA-256 prefix of client IP — never log raw IPs. */
@@ -58,11 +69,20 @@ export function hashClientIp(req: Pick<Request, 'ip' | 'socket'>): string | unde
   return createHash('sha256').update(ip).digest('hex').slice(0, 16);
 }
 
+/** Full SHA-256 of client IP + optional salt — stored on agent records. */
+export function hashAgentClientIp(req: Pick<Request, 'ip' | 'socket'>, salt = ''): string | undefined {
+  const ip = req.ip ?? req.socket?.remoteAddress;
+  if (!ip) {
+    return undefined;
+  }
+  return createHash('sha256').update(ip + salt).digest('hex');
+}
+
 function containsSensitiveValue(value: string): boolean {
   if (/^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/.test(value)) {
     return true;
   }
-  return /password|refreshToken|accessToken|Bearer\s+eyJ/i.test(value);
+  return /password|refreshToken|accessToken|Bearer\s+eyJ|depp_agt_[0-9a-f]+/i.test(value);
 }
 
 function sanitizeEvent(event: AuthAuditEvent): AuthAuditEvent {

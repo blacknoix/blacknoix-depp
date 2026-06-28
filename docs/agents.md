@@ -1,10 +1,12 @@
-# Agents — Registration and Management
+# Agents — Enrollment and Management
 
 ## Overview
 
-An **agent** is an endpoint device registered under a tenant. Tenant admins create agent records and receive a **one-time agent token** used to authenticate the agent for future telemetry ingestion. Analysts and above can list and view agents.
+An **agent** is an endpoint device enrolled under a tenant. Tenant admins create agent records and receive a **one-time enrollment token** used to authenticate the agent for telemetry and heartbeat traffic. Analysts and above can list and view agents.
 
-All agent routes live under `/api/agents` and inherit `tenantScoped` middleware from the parent API router. See [tenancy.md](./tenancy.md) for isolation patterns.
+Human management routes live under `/api/agents` (user JWT via `tenantScoped`). Agent traffic uses Bearer enrollment tokens on `/telemetry/*` and `/agent/*` only — never user JWTs on those paths.
+
+See [tenancy.md](./tenancy.md) for isolation patterns.
 
 ---
 
@@ -14,16 +16,21 @@ All agent routes live under `/api/agents` and inherit `tenantScoped` middleware 
 |---|---|---|
 | `id` | UUID | Primary key |
 | `tenantId` | UUID | Owning tenant (FK → `tenants`) |
-| `hostname` | string | Endpoint hostname |
+| `displayName` | string | Human-set label (e.g. `prod-server-01`) |
+| `hostname` | string | Endpoint hostname reported at enrollment |
 | `os` | string | Operating system identifier |
-| `ipAddress` | string? | Optional IP at registration |
 | `agentVersion` | string | Installed agent software version |
-| `status` | enum | `pending`, `active`, `inactive`, `revoked` |
-| `tokenHash` | string | SHA-256 hash of the agent token (**never returned via API**) |
-| `registeredAt` | datetime | When the agent was registered |
-| `lastSeenAt` | datetime? | Updated on each accepted telemetry batch |
-| `createdAt` | datetime | Row creation time |
-| `updatedAt` | datetime | Row last update time |
+| `status` | enum | `pending`, `active`, `inactive`, `revoked`, `expired` |
+| `tokenHash` | string | SHA-256 hash of enrollment token (**never returned via API**) |
+| `tokenPrefix` | string | First 17 chars of token — safe for support identification |
+| `enrolledByUserId` | UUID | FK → user who issued the credential |
+| `pendingExpiresAt` | datetime | Enrollment window expiry (default 24h) |
+| `lastSeenAt` | datetime? | Updated on successful agent auth |
+| `lastIpHash` | string? | SHA-256(ip + `IP_HASH_SALT`) — never raw IP |
+| `lastAgentVersion` | string? | Last reported version (may drift) |
+| `ipAddress` | string? | Deprecated — retained for migration window |
+| `registeredAt` | datetime | When the agent was enrolled |
+| `createdAt` / `updatedAt` | datetime | Row timestamps |
 
 ---
 
@@ -31,57 +38,58 @@ All agent routes live under `/api/agents` and inherit `tenantScoped` middleware 
 
 | Status | Meaning |
 |---|---|
-| `pending` | Registered; token issued but agent has not sent telemetry yet (default) |
-| `active` | Agent has sent at least one accepted telemetry batch |
-| `inactive` | Agent stopped reporting; not revoked |
-| `revoked` | Token invalidated; agent must re-register |
+| `pending` | Enrolled; token issued but agent has not authenticated yet |
+| `active` | Agent has completed at least one successful authenticated request |
+| `inactive` | Manually flagged; still authenticates (future automation) |
+| `revoked` | Credential permanently invalidated |
+| `expired` | Pending enrollment window passed without first auth |
 
 ### Transitions
 
 ```
-pending → active     (first accepted telemetry batch — see telemetry.md)
-active  → inactive   (missed heartbeats threshold — future slice)
-inactive → active    (telemetry resumed — future slice)
-*       → revoked    (admin revokes — future slice)
+pending → active     (first successful agent auth)
+pending → expired    (pendingExpiresAt passed — lazy check on auth)
+active  → inactive   (admin flag — future slice)
+*       → revoked    (admin revoke)
 ```
-
-On creation, agents start in `pending`. The first successful `POST /telemetry/events` batch atomically sets `status = active` and updates `lastSeenAt`.
 
 ---
 
-## Agent token lifecycle
+## Enrollment token lifecycle
 
-1. **Registration** — Admin calls `POST /api/agents`. Server generates a 64-character hex token (`crypto.randomBytes(32)`), hashes it with SHA-256, stores only the hash, and returns the plaintext token **once** in the response.
-2. **Configuration** — Admin copies `agentToken` into the endpoint agent config file or environment variable (e.g. `DEPP_AGENT_TOKEN`).
-3. **Telemetry auth** — The agent presents this token as `Authorization: Bearer <token>` on `POST /telemetry/events`. See [telemetry.md](./telemetry.md).
-4. **Revocation** — Not implemented in this slice. Future work will set `status = revoked` and reject matching tokens.
+1. **Enrollment** — Admin calls `POST /api/agents` or `POST /api/agents/enroll`. Server generates `depp_agt_` + 64 hex chars, stores SHA-256 hash + 17-char prefix, sets `pendingExpiresAt`, returns plaintext token **once**.
+2. **Configuration** — Admin stores `enrollmentToken` in the endpoint credential store (OS keychain, secrets manager, etc.).
+3. **Agent auth** — Agent presents `Authorization: Bearer depp_agt_<hex>` on `/telemetry/*` and `/agent/*`.
+4. **Revocation** — Admin calls `POST` or `PATCH /api/agents/:agentId/revoke`. Takes effect immediately; revoked tokens receive indistinguishable `401 Unauthorized`.
 
 **Security notes:**
-- Plaintext token is never stored, logged, or returned again after registration.
+- Plaintext token is never stored, logged, or returned again after enrollment.
 - `tokenHash` is never included in API responses.
+- Auth failures always return `{ "error": "Unauthorized" }` with no distinguishing detail.
 - Use HTTPS for all token transmission.
 
 ---
 
 ## Endpoints
 
-All endpoints require `Authorization: Bearer <accessToken>`.
+All `/api/agents/*` endpoints require `Authorization: Bearer <user-access-token>`.
 
-### `POST /api/agents`
+### `POST /api/agents` / `POST /api/agents/enroll`
 
-Register a new agent. **Requires role: `admin` or higher.**
+Enroll a new agent. **Requires role: `admin` or higher.**
 
 **Request**
 ```json
 {
-  "hostname": "workstation-01",
+  "displayName": "prod-dc1-endpoint-01",
+  "hostname": "WIN-DC1-PROD-01",
   "os": "windows",
   "agentVersion": "1.0.0",
-  "ipAddress": "10.0.0.42"
+  "enrollmentWindowHours": 24
 }
 ```
 
-Required: `hostname`, `os`, `agentVersion`. Optional: `ipAddress`.
+Required: `displayName`, `hostname`, `os`, `agentVersion`. Optional: `enrollmentWindowHours` (default 24, max 72), `ipAddress`.
 
 `tenantId` is taken from the JWT — never from the request body.
 
@@ -91,22 +99,38 @@ Required: `hostname`, `os`, `agentVersion`. Optional: `ipAddress`.
   "agent": {
     "id": "<uuid>",
     "tenantId": "<uuid>",
-    "hostname": "workstation-01",
+    "displayName": "prod-dc1-endpoint-01",
+    "hostname": "WIN-DC1-PROD-01",
     "os": "windows",
     "agentVersion": "1.0.0",
     "status": "pending",
-    "registeredAt": "2024-06-01T00:00:00.000Z"
+    "tokenPrefix": "depp_agt_a3f2b91c",
+    "enrolledBy": "<user-uuid>",
+    "pendingExpiresAt": "2026-06-29T14:00:00.000Z",
+    "registeredAt": "2026-06-28T14:00:00.000Z"
   },
-  "agentToken": "<64-char-hex — save immediately>"
+  "enrollmentToken": "depp_agt_a3f2b91c...<full 73-char string>",
+  "_tokenWarning": "This token will not be shown again. Store it securely before closing this response."
 }
 ```
 
-**Response `400`** — validation failure
+---
+
+### `POST /api/agents/:agentId/revoke` / `PATCH /api/agents/:agentId/revoke`
+
+Revoke an agent credential. **Requires role: `admin` or higher.**
+
+**Request**
 ```json
-{ "error": "Validation failed", "fields": ["hostname"] }
+{ "reason": "suspected_compromise" }
 ```
 
-**Response `403`** — insufficient role (analyst, read-only)
+**Response `200`**
+```json
+{ "status": "revoked", "agent": { "...summary fields..." } }
+```
+
+**Response `404`** — agent not found or belongs to another tenant
 
 ---
 
@@ -114,22 +138,7 @@ Required: `hostname`, `os`, `agentVersion`. Optional: `ipAddress`.
 
 List agents in the caller's tenant. **Requires role: `analyst` or higher.**
 
-**Response `200`**
-```json
-[
-  {
-    "id": "<uuid>",
-    "tenantId": "<uuid>",
-    "hostname": "workstation-01",
-    "os": "windows",
-    "agentVersion": "1.0.0",
-    "status": "pending",
-    "registeredAt": "2024-06-01T00:00:00.000Z"
-  }
-]
-```
-
-Ordered by `registeredAt` descending.
+Ordered by `registeredAt` descending. Never includes `enrollmentToken` or `tokenHash`.
 
 ---
 
@@ -137,38 +146,19 @@ Ordered by `registeredAt` descending.
 
 Get a single agent. **Requires role: `analyst` or higher.**
 
-**Response `200`**
-```json
-{
-  "id": "<uuid>",
-  "tenantId": "<uuid>",
-  "hostname": "workstation-01",
-  "os": "windows",
-  "agentVersion": "1.0.0",
-  "status": "pending",
-  "registeredAt": "2024-06-01T00:00:00.000Z",
-  "ipAddress": "10.0.0.42",
-  "lastSeenAt": null,
-  "createdAt": "2024-06-01T00:00:00.000Z",
-  "updatedAt": "2024-06-01T00:00:00.000Z"
-}
-```
-
 **Response `404`** — agent not found or belongs to another tenant (same body; no existence leak)
 
 ---
 
-## Wiring the token into agent configuration
+## Agent authentication header
 
-After registration, configure the endpoint agent with:
+Agent routes accept **only** enrollment Bearer tokens (not user JWTs):
 
-```env
-DEPP_AGENT_TOKEN=<agentToken from POST response>
-DEPP_API_URL=https://api.depp.example.com
-DEPP_AGENT_ID=<agent.id from POST response>
+```
+Authorization: Bearer depp_agt_<64-hex-chars>
 ```
 
-The agent process will use `DEPP_AGENT_TOKEN` to authenticate on `POST /telemetry/events`. Keep the token out of logs, version control, and shared dashboards.
+On success, `req.agent = { agentId, tenantId }` where `tenantId` comes from the DB row — never from request body or headers.
 
 ---
 
@@ -176,8 +166,24 @@ The agent process will use `DEPP_AGENT_TOKEN` to authenticate on `POST /telemetr
 
 | Endpoint | Minimum role |
 |---|---|
-| `POST /api/agents` | `admin` |
+| `POST /api/agents` / `/enroll` | `admin` |
+| `POST` / `PATCH /api/agents/:id/revoke` | `admin` |
 | `GET /api/agents` | `analyst` |
 | `GET /api/agents/:agentId` | `analyst` |
 
 Role hierarchy: `owner` > `admin` > `analyst` > `read-only`.
+
+---
+
+## Audit events
+
+| Action | When |
+|---|---|
+| `agent_enrollment` | Successful enrollment |
+| `agent_enrollment_failed` | Enrollment persistence failure |
+| `agent_auth_success` / `agent_auth_failed` | Agent middleware auth |
+| `agent_activated` | First successful auth (`pending → active`) |
+| `agent_expired` | Pending window expired |
+| `agent_revoked` | Admin revocation |
+
+Raw tokens are never logged. Failures omit `agentId` when the token is unknown.

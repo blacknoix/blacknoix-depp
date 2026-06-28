@@ -1,51 +1,74 @@
 import { Request, Response, NextFunction } from 'express';
-import crypto from 'crypto';
-import { prisma } from '../lib/prisma';
+import { parseAgentBearerToken } from '../lib/agentToken';
+import { hashClientIp, logAuthEvent } from '../lib/authAudit';
+import { recordAgentAuthFailure, recordAgentAuthSuccess } from '../lib/metrics';
+import {
+  applyAgentAuthSideEffects,
+  authenticateAgentCredential,
+} from '../services/agentService';
 import { AgentAuthenticatedRequest } from '../types/telemetry';
 
-const INVALID_TOKEN_ERROR = { error: 'Invalid or expired agent token' };
-
-function hashAgentToken(token: string): string {
-  return crypto.createHash('sha256').update(token).digest('hex');
-}
+export const AGENT_UNAUTHORIZED_ERROR = { error: 'Unauthorized' };
 
 /**
- * Authenticates a registered agent via Bearer token (SHA-256 hash lookup).
+ * Authenticates a registered agent via Bearer enrollment token.
  * Separate from user JWT auth — do not use on /api/* routes.
+ *
+ * Format: Authorization: Bearer depp_agt_<64-hex-chars>
  */
 export async function authenticateAgent(
   req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> {
-  const authHeader = req.headers['authorization'];
-  if (!authHeader?.startsWith('Bearer ')) {
-    res.status(401).json(INVALID_TOKEN_ERROR);
+  const rawToken = parseAgentBearerToken(req);
+  if (!rawToken) {
+    logAuthEvent({
+      action: 'agent_auth_failed',
+      outcome: 'failure',
+      httpStatus: 401,
+      route: req.path,
+      method: req.method,
+      reason: 'missing_credentials',
+      clientIpHash: hashClientIp(req),
+    });
+    recordAgentAuthFailure();
+    res.status(401).json(AGENT_UNAUTHORIZED_ERROR);
     return;
   }
 
-  const token = authHeader.slice(7).trim();
-  if (!token) {
-    res.status(401).json(INVALID_TOKEN_ERROR);
+  const context = await authenticateAgentCredential(rawToken);
+  if (!context) {
+    logAuthEvent({
+      action: 'agent_auth_failed',
+      outcome: 'failure',
+      httpStatus: 401,
+      route: req.path,
+      method: req.method,
+      reason: 'invalid_token',
+      clientIpHash: hashClientIp(req),
+    });
+    recordAgentAuthFailure();
+    res.status(401).json(AGENT_UNAUTHORIZED_ERROR);
     return;
   }
 
-  const tokenHash = hashAgentToken(token);
-
-  const agent = await prisma.agent.findFirst({
-    where: { tokenHash },
-    select: { id: true, tenantId: true, status: true },
+  logAuthEvent({
+    action: 'agent_auth_success',
+    outcome: 'success',
+    route: req.path,
+    method: req.method,
+    agentId: context.agentId,
+    tenantId: context.tenantId,
+    clientIpHash: hashClientIp(req),
   });
+  recordAgentAuthSuccess();
 
-  if (!agent || agent.status === 'revoked') {
-    res.status(401).json(INVALID_TOKEN_ERROR);
-    return;
-  }
+  applyAgentAuthSideEffects(context, req);
 
   (req as AgentAuthenticatedRequest).agent = {
-    agentId: agent.id,
-    tenantId: agent.tenantId,
+    agentId: context.agentId,
+    tenantId: context.tenantId,
   };
-
   next();
 }

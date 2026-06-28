@@ -1,7 +1,9 @@
 import express, { ErrorRequestHandler } from 'express';
 import { authRouter } from './routes/auth';
 import { apiRouter } from './routes/api';
+import { internalRouter } from './routes/internal';
 import { telemetryRouter } from './routes/telemetry';
+import { agentTrafficRouter } from './routes/agentTraffic';
 import { env } from './config/env';
 
 export function createApp() {
@@ -17,7 +19,8 @@ export function createApp() {
   // Auth routes: /auth/login, /auth/refresh, /auth/me
   app.use('/auth', authRouter);
 
-  // Agent telemetry ingestion (agent token auth — not user JWT)
+  // Agent traffic (agent credential auth — not user JWT)
+  app.use('/agent', agentTrafficRouter);
   app.use('/telemetry', express.json({ limit: '512kb' }), telemetryRouter);
 
   app.use(((err, _req, res, next) => {
@@ -30,6 +33,9 @@ export function createApp() {
 
   // Tenant-scoped API routes (authenticate + requireTenantContext by default)
   app.use('/api', apiRouter);
+
+  // Operator metrics (admin+ JWT)
+  app.use('/internal', internalRouter);
 
   return app;
 }

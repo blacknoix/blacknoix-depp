@@ -47,6 +47,8 @@ export const env = {
     max: optionalInt('AUTH_RATE_LIMIT_MAX', 20),
   },
 
+  ipHashSalt: optional('IP_HASH_SALT', ''),
+
   port: parseInt(optional('PORT', '3001'), 10),
   nodeEnv: optional('NODE_ENV', 'development'),
 } as const;

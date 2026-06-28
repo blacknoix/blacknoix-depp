@@ -25,7 +25,7 @@ const mockedListEventsForAgent = telemetryService.listEventsForAgent as jest.Moc
 const app = createApp();
 const VALID_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET!;
 
-const INVALID_TOKEN_ERROR = { error: 'Invalid or expired agent token' };
+const INVALID_TOKEN_ERROR = { error: 'Unauthorized' };
 
 function makeUserToken(overrides?: Partial<{ sub: string; tenantId: string; role: string }>) {
   return jwt.sign(

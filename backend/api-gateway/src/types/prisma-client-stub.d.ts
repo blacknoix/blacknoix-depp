@@ -10,7 +10,7 @@
  */
 declare module '@prisma/client' {
   export type Role = 'owner' | 'admin' | 'analyst' | 'read_only';
-  export type AgentStatus = 'pending' | 'active' | 'inactive' | 'revoked';
+  export type AgentStatus = 'pending' | 'active' | 'inactive' | 'revoked' | 'expired';
   export type AlertStatus = 'open' | 'acknowledged' | 'resolved';
 
   export interface Tenant {
@@ -43,12 +43,18 @@ declare module '@prisma/client' {
   export interface Agent {
     id: string;
     tenantId: string;
+    displayName: string;
     hostname: string;
     os: string;
     ipAddress: string | null;
     agentVersion: string;
     status: AgentStatus;
     tokenHash: string;
+    tokenPrefix: string;
+    enrolledByUserId: string;
+    pendingExpiresAt: Date;
+    lastIpHash: string | null;
+    lastAgentVersion: string | null;
     registeredAt: Date;
     lastSeenAt: Date | null;
     createdAt: Date;
@@ -120,73 +126,150 @@ declare module '@prisma/client' {
 
   type AgentSummaryRow = Pick<
     Agent,
-    'id' | 'tenantId' | 'hostname' | 'os' | 'agentVersion' | 'status' | 'registeredAt'
+    | 'id'
+    | 'tenantId'
+    | 'displayName'
+    | 'hostname'
+    | 'os'
+    | 'agentVersion'
+    | 'status'
+    | 'tokenPrefix'
+    | 'enrolledByUserId'
+    | 'pendingExpiresAt'
+    | 'registeredAt'
   >;
 
   type AgentDetailRow = AgentSummaryRow &
-    Pick<Agent, 'ipAddress' | 'lastSeenAt' | 'createdAt' | 'updatedAt'>;
+    Pick<Agent, 'ipAddress' | 'lastSeenAt' | 'lastAgentVersion' | 'createdAt' | 'updatedAt'>;
 
   interface AgentDelegate {
     create(args: {
       data: {
+        displayName: string;
         hostname: string;
         os: string;
         agentVersion: string;
         tokenHash: string;
+        tokenPrefix: string;
         tenantId: string;
+        enrolledByUserId: string;
+        pendingExpiresAt: Date;
         ipAddress?: string | null;
       };
       select: {
         id: true;
         tenantId: true;
+        displayName: true;
         hostname: true;
         os: true;
         agentVersion: true;
         status: true;
+        tokenPrefix: true;
+        enrolledByUserId: true;
+        pendingExpiresAt: true;
         registeredAt: true;
       };
     }): Promise<AgentSummaryRow>;
+    findFirst(args: {
+      where: { tokenHash: string };
+      select: {
+        id: true;
+        tenantId: true;
+        status: true;
+        tokenHash: true;
+        tokenPrefix: true;
+        pendingExpiresAt: true;
+      };
+    }): Promise<
+      Pick<Agent, 'id' | 'tenantId' | 'status' | 'tokenHash' | 'tokenPrefix' | 'pendingExpiresAt'> | null
+    >;
+    findUnique(args: {
+      where: { id: string };
+      select: { id: true; tenantId: true; status: true; tokenHash: true };
+    }): Promise<Pick<Agent, 'id' | 'tenantId' | 'status' | 'tokenHash'> | null>;
     findMany(args: {
       where: { tenantId: string };
       orderBy: { registeredAt: 'desc' | 'asc' };
       select: {
         id: true;
         tenantId: true;
+        displayName: true;
         hostname: true;
         os: true;
         agentVersion: true;
         status: true;
+        tokenPrefix: true;
+        enrolledByUserId: true;
+        pendingExpiresAt: true;
         registeredAt: true;
       };
     }): Promise<AgentSummaryRow[]>;
     findFirst(args: {
       where: { id: string; tenantId: string };
-      select: { id: true };
-    }): Promise<Pick<Agent, 'id'> | null>;
-    findFirst(args: {
-      where: { tokenHash: string };
-      select: { id: true; tenantId: true; status: true };
-    }): Promise<Pick<Agent, 'id' | 'tenantId' | 'status'> | null>;
+      select: {
+        id: true;
+        tenantId: true;
+        displayName: true;
+        hostname: true;
+        os: true;
+        agentVersion: true;
+        status: true;
+        tokenPrefix: true;
+        enrolledByUserId: true;
+        pendingExpiresAt: true;
+        registeredAt: true;
+        ipAddress: true;
+        lastSeenAt: true;
+        lastAgentVersion: true;
+        createdAt: true;
+        updatedAt: true;
+      };
+    }): Promise<AgentDetailRow | null>;
     findFirst(args: {
       where: { id: string; tenantId: string };
       select: {
         id: true;
         tenantId: true;
+        displayName: true;
         hostname: true;
         os: true;
         agentVersion: true;
         status: true;
+        tokenPrefix: true;
+        enrolledByUserId: true;
+        pendingExpiresAt: true;
         registeredAt: true;
-        ipAddress: true;
-        lastSeenAt: true;
-        createdAt: true;
-        updatedAt: true;
       };
-    }): Promise<AgentDetailRow | null>;
+    }): Promise<AgentSummaryRow | null>;
+    findFirst(args: {
+      where: { id: string; tenantId: string };
+      select: { id: true; status: true };
+    }): Promise<Pick<Agent, 'id' | 'status'> | null>;
+    findFirst(args: {
+      where: { id: string; tenantId: string };
+      select: { id: true };
+    }): Promise<Pick<Agent, 'id'> | null>;
     update(args: {
       where: { id: string };
-      data: Partial<Pick<Agent, 'status' | 'lastSeenAt'>>;
-    }): Promise<Agent>;
+      data: Partial<Pick<Agent, 'status' | 'lastSeenAt' | 'lastIpHash'>>;
+      select?: {
+        id: true;
+        tenantId: true;
+        displayName: true;
+        hostname: true;
+        os: true;
+        agentVersion: true;
+        status: true;
+        tokenPrefix: true;
+        enrolledByUserId: true;
+        pendingExpiresAt: true;
+        registeredAt: true;
+      };
+    }): Promise<AgentSummaryRow | Agent>;
+    updateMany(args: {
+      where: { id: string; tenantId: string; status: AgentStatus };
+      data: Partial<Pick<Agent, 'status'>>;
+    }): Promise<{ count: number }>;
   }
 
   type TelemetryEventRow = Pick<

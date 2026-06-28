@@ -4,13 +4,19 @@ import { Request, Response, NextFunction } from 'express';
 import { createApp } from '../app';
 import * as agentService from '../services/agentService';
 import { requireRole } from '../middleware/requireRole';
+import { ENROLLMENT_TOKEN_WARNING } from '../types/agent';
 
 jest.mock('../services/agentService', () => ({
+  createAgentEnrollment: jest.fn(),
   createAgent: jest.fn(),
   listAgentsInTenant: jest.fn(),
   getAgentInTenant: jest.fn(),
+  revokeAgent: jest.fn(),
 }));
 
+const mockedCreateAgentEnrollment = agentService.createAgentEnrollment as jest.MockedFunction<
+  typeof agentService.createAgentEnrollment
+>;
 const mockedCreateAgent = agentService.createAgent as jest.MockedFunction<typeof agentService.createAgent>;
 const mockedListAgentsInTenant = agentService.listAgentsInTenant as jest.MockedFunction<
   typeof agentService.listAgentsInTenant
@@ -18,6 +24,17 @@ const mockedListAgentsInTenant = agentService.listAgentsInTenant as jest.MockedF
 const mockedGetAgentInTenant = agentService.getAgentInTenant as jest.MockedFunction<
   typeof agentService.getAgentInTenant
 >;
+const mockedRevokeAgent = agentService.revokeAgent as jest.MockedFunction<typeof agentService.revokeAgent>;
+
+const pendingExpiresAt = new Date('2026-06-29T14:00:00.000Z');
+
+function enrollmentResult(enrollmentToken = 'depp_agt_a3f2b91c0123456789012345678901234567890123456789012345678901234') {
+  return {
+    agent: sampleAgentSummary,
+    enrollmentToken,
+    _tokenWarning: ENROLLMENT_TOKEN_WARNING,
+  };
+}
 
 const app = createApp();
 const VALID_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET!;
@@ -33,10 +50,14 @@ function makeAccessToken(overrides?: Partial<{ sub: string; tenantId: string; ro
 const sampleAgentSummary = {
   id: 'agent-1',
   tenantId: 'tenant-a',
+  displayName: 'prod-endpoint-01',
   hostname: 'endpoint-01',
   os: 'linux',
   agentVersion: '1.0.0',
   status: 'pending' as const,
+  tokenPrefix: 'depp_agt_a3f2b91c',
+  enrolledBy: 'user-a',
+  pendingExpiresAt,
   registeredAt: new Date('2024-06-01'),
 };
 
@@ -44,11 +65,13 @@ const sampleAgentDetail = {
   ...sampleAgentSummary,
   ipAddress: '10.0.0.1',
   lastSeenAt: null,
+  lastAgentVersion: null,
   createdAt: new Date('2024-06-01'),
   updatedAt: new Date('2024-06-01'),
 };
 
 const validCreateBody = {
+  displayName: 'prod-endpoint-01',
   hostname: 'endpoint-01',
   os: 'linux',
   agentVersion: '1.0.0',
@@ -102,11 +125,8 @@ describe('requireRole middleware', () => {
 describe('POST /api/agents', () => {
   beforeEach(() => jest.clearAllMocks());
 
-  it('201 + agentToken on valid admin token', async () => {
-    mockedCreateAgent.mockResolvedValue({
-      agent: sampleAgentSummary,
-      agentToken: 'one-time-token-hex',
-    });
+  it('201 + enrollmentToken on valid admin token', async () => {
+    mockedCreateAgentEnrollment.mockResolvedValue(enrollmentResult());
 
     const res = await request(app)
       .post('/api/agents')
@@ -114,22 +134,22 @@ describe('POST /api/agents', () => {
       .send(validCreateBody);
 
     expect(res.status).toBe(201);
-    expect(res.body.agentToken).toBe('one-time-token-hex');
+    expect(res.body.enrollmentToken).toMatch(/^depp_agt_/);
+    expect(res.body._tokenWarning).toBe(ENROLLMENT_TOKEN_WARNING);
     expect(res.body.agent).toMatchObject({
       id: 'agent-1',
+      displayName: 'prod-endpoint-01',
       hostname: 'endpoint-01',
       os: 'linux',
       agentVersion: '1.0.0',
       status: 'pending',
       tenantId: 'tenant-a',
+      tokenPrefix: 'depp_agt_a3f2b91c',
     });
   });
 
   it('does not include tokenHash in response', async () => {
-    mockedCreateAgent.mockResolvedValue({
-      agent: sampleAgentSummary,
-      agentToken: 'one-time-token-hex',
-    });
+    mockedCreateAgentEnrollment.mockResolvedValue(enrollmentResult());
 
     const res = await request(app)
       .post('/api/agents')
@@ -137,6 +157,7 @@ describe('POST /api/agents', () => {
       .send(validCreateBody);
 
     expect(res.body.tokenHash).toBeUndefined();
+    expect(res.body.enrollmentToken).toBeDefined();
     expect(JSON.stringify(res.body)).not.toMatch(/tokenHash/);
   });
 
@@ -147,7 +168,7 @@ describe('POST /api/agents', () => {
       .send(validCreateBody);
 
     expect(res.status).toBe(403);
-    expect(mockedCreateAgent).not.toHaveBeenCalled();
+    expect(mockedCreateAgentEnrollment).not.toHaveBeenCalled();
   });
 
   it('403 when role is read-only', async () => {
@@ -157,14 +178,24 @@ describe('POST /api/agents', () => {
       .send(validCreateBody);
 
     expect(res.status).toBe(403);
-    expect(mockedCreateAgent).not.toHaveBeenCalled();
+    expect(mockedCreateAgentEnrollment).not.toHaveBeenCalled();
+  });
+
+  it('400 when displayName is missing', async () => {
+    const res = await request(app)
+      .post('/api/agents')
+      .set('Authorization', `Bearer ${makeAccessToken({ role: 'admin' })}`)
+      .send({ hostname: 'endpoint-01', os: 'linux', agentVersion: '1.0.0' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.fields).toContain('displayName');
   });
 
   it('400 when hostname is missing', async () => {
     const res = await request(app)
       .post('/api/agents')
       .set('Authorization', `Bearer ${makeAccessToken({ role: 'admin' })}`)
-      .send({ os: 'linux', agentVersion: '1.0.0' });
+      .send({ displayName: 'prod-endpoint-01', os: 'linux', agentVersion: '1.0.0' });
 
     expect(res.status).toBe(400);
     expect(res.body.fields).toContain('hostname');
@@ -174,7 +205,7 @@ describe('POST /api/agents', () => {
     const res = await request(app)
       .post('/api/agents')
       .set('Authorization', `Bearer ${makeAccessToken({ role: 'admin' })}`)
-      .send({ hostname: 'endpoint-01', agentVersion: '1.0.0' });
+      .send({ displayName: 'prod-endpoint-01', hostname: 'endpoint-01', agentVersion: '1.0.0' });
 
     expect(res.status).toBe(400);
     expect(res.body.fields).toContain('os');
@@ -184,25 +215,25 @@ describe('POST /api/agents', () => {
     const res = await request(app)
       .post('/api/agents')
       .set('Authorization', `Bearer ${makeAccessToken({ role: 'admin' })}`)
-      .send({ hostname: 'endpoint-01', os: 'linux' });
+      .send({ displayName: 'prod-endpoint-01', hostname: 'endpoint-01', os: 'linux' });
 
     expect(res.status).toBe(400);
     expect(res.body.fields).toContain('agentVersion');
   });
 
   it('uses tenantId from token, not request body', async () => {
-    mockedCreateAgent.mockResolvedValue({
-      agent: sampleAgentSummary,
-      agentToken: 'token',
-    });
+    mockedCreateAgentEnrollment.mockResolvedValue(enrollmentResult());
 
     await request(app)
       .post('/api/agents')
       .set('Authorization', `Bearer ${makeAccessToken({ role: 'admin', tenantId: 'tenant-a' })}`)
       .send({ ...validCreateBody, tenantId: 'tenant-b' });
 
-    expect(mockedCreateAgent).toHaveBeenCalledWith('tenant-a', expect.objectContaining(validCreateBody));
-    expect(mockedCreateAgent).not.toHaveBeenCalledWith('tenant-b', expect.anything());
+    expect(mockedCreateAgentEnrollment).toHaveBeenCalledWith(
+      'tenant-a',
+      expect.objectContaining(validCreateBody),
+      expect.objectContaining({ userId: 'user-a' })
+    );
   });
 });
 
@@ -265,6 +296,7 @@ describe('GET /api/agents/:agentId', () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ id: 'agent-1', tenantId: 'tenant-a' });
+    expect(res.body.enrollmentToken).toBeUndefined();
     expect(mockedGetAgentInTenant).toHaveBeenCalledWith('tenant-a', 'agent-1');
   });
 

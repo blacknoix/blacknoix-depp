@@ -32,8 +32,9 @@ model User {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id])
 
-  refreshTokens   RefreshToken[]
-  assignedAlerts  Alert[]        @relation("AssignedAlerts")
+  refreshTokens  RefreshToken[]
+  assignedAlerts Alert[]        @relation("AssignedAlerts")
+  enrolledAgents Agent[]        @relation("EnrolledAgents")
 
   @@map("users")
 }
@@ -60,23 +61,42 @@ enum Role {
 }
 
 model Agent {
-  id           String      @id @default(uuid())
-  tenantId     String
+  id       String @id @default(uuid())
+  tenantId String
+
+  // Identity fields
+  displayName  String
   hostname     String
   os           String
-  ipAddress    String?
   agentVersion String
-  status       AgentStatus @default(pending)
-  tokenHash    String
-  registeredAt DateTime    @default(now())
-  lastSeenAt   DateTime?
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
+
+  // Credential — SHA-256(raw_token) only; raw token returned once at enrollment
+  tokenHash   String @unique
+  tokenPrefix String // first 17 chars of raw token — safe for support identification
+
+  // Lifecycle
+  status           AgentStatus @default(pending)
+  enrolledByUserId String
+  pendingExpiresAt DateTime // enrollment window; pending tokens auto-expire
+
+  // Telemetry context
+  lastSeenAt       DateTime?
+  lastIpHash       String? // SHA-256(ip + IP_HASH_SALT) — never raw IP
+  lastAgentVersion String?
+  ipAddress        String? // @deprecated — retained for migration window; use lastIpHash
+
+  // Timestamps
+  registeredAt DateTime @default(now())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   tenant          Tenant           @relation(fields: [tenantId], references: [id])
+  enrolledBy      User             @relation("EnrolledAgents", fields: [enrolledByUserId], references: [id])
   telemetryEvents TelemetryEvent[]
   alerts          Alert[]
 
+  @@index([tenantId, status])
+  @@index([tenantId, lastSeenAt])
   @@map("agents")
 }
 
@@ -135,6 +155,7 @@ enum AgentStatus {
   active
   inactive
   revoked
+  expired
 
   @@map("agent_status")
 }

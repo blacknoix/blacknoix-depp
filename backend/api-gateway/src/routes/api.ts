@@ -5,6 +5,7 @@ import { requireRole } from '../middleware/requireRole';
 import { readTenantFromRequest } from '../lib/tenantScope';
 import { getTenantProfile } from '../services/tenantService';
 import { getUserInTenant } from '../services/userService';
+import { getTenantOverview } from '../services/tenantOverviewService';
 import { agentRouter } from './agents';
 import { alertRouter } from './alerts';
 
@@ -33,6 +34,22 @@ apiRouter.get('/tenant', requireRole('read-only'), async (req, res: Response): P
   }
 
   res.json(tenant);
+});
+
+/**
+ * GET /api/tenant/overview
+ * Dashboard aggregates for the authenticated caller's tenant.
+ */
+apiRouter.get('/tenant/overview', requireRole('analyst'), async (req, res: Response): Promise<void> => {
+  const { tenantId } = readTenantFromRequest(req);
+
+  const overview = await getTenantOverview(tenantId);
+  if (!overview) {
+    res.status(404).json({ error: 'Tenant not found' });
+    return;
+  }
+
+  res.json(overview);
 });
 
 /**

@@ -294,6 +294,10 @@ declare module '@prisma/client' {
       };
     }): Promise<Pick<Agent, 'id' | 'tenantId' | 'status' | 'isolatedAt'>>;
     updateMany(args: {
+      where: { id: string; tenantId: string };
+      data: Partial<Pick<Agent, 'isolatedAt'>>;
+    }): Promise<{ count: number }>;
+    updateMany(args: {
       where: { id: string; tenantId: string; status: AgentStatus };
       data: Partial<Pick<Agent, 'status'>>;
     }): Promise<{ count: number }>;

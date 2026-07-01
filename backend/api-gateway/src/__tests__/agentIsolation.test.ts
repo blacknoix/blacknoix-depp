@@ -6,7 +6,7 @@ import { logAuthEvent } from '../lib/authAudit';
 
 const mockAgentFindFirst = jest.fn();
 const mockAgentFindFirstAuth = jest.fn();
-const mockAgentUpdate = jest.fn();
+const mockAgentUpdateMany = jest.fn();
 
 jest.mock('../lib/prisma', () => ({
   prisma: {
@@ -18,7 +18,7 @@ jest.mock('../lib/prisma', () => ({
         }
         return mockAgentFindFirst(...args);
       },
-      update: (...args: unknown[]) => mockAgentUpdate(...args),
+      updateMany: (...args: unknown[]) => mockAgentUpdateMany(...args),
     },
   },
 }));
@@ -58,13 +58,16 @@ function isolationAudit(action: 'agent_isolated' | 'agent_restored' | 'agent_iso
 beforeEach(() => {
   resetMetrics();
   jest.clearAllMocks();
+  mockAgentUpdateMany.mockReset();
 });
 
 describe('POST /api/agents/:agentId/isolate', () => {
   it('200 with isolation state for admin', async () => {
     const isolatedAt = new Date('2026-06-23T12:00:00.000Z');
-    mockAgentFindFirst.mockResolvedValue(activeAgentRow);
-    mockAgentUpdate.mockResolvedValue({ ...activeAgentRow, isolatedAt });
+    mockAgentFindFirst
+      .mockResolvedValueOnce(activeAgentRow)
+      .mockResolvedValueOnce({ ...activeAgentRow, isolatedAt });
+    mockAgentUpdateMany.mockResolvedValue({ count: 1 });
 
     const res = await request(app)
       .post('/api/agents/agent-1/isolate')
@@ -142,13 +145,30 @@ describe('POST /api/agents/:agentId/isolate', () => {
 
     expect(isolationAudit('agent_isolated')).toHaveLength(0);
   });
+
+  it('treats a tenant-guarded write miss as 404 (not success)', async () => {
+    mockAgentFindFirst.mockResolvedValue(activeAgentRow);
+    mockAgentUpdateMany.mockResolvedValue({ count: 0 });
+
+    const res = await request(app)
+      .post('/api/agents/agent-1/isolate')
+      .set('Authorization', `Bearer ${adminToken({ role: 'admin' })}`)
+      .send({ reason: 'cross_tenant_attempt' });
+
+    expect(res.status).toBe(404);
+    expect(isolationAudit('agent_isolated')).toHaveLength(0);
+    expect(isolationAudit('agent_isolation_access_denied')).toHaveLength(1);
+    expect(getMetricsSnapshot().agentsIsolated).toBe(0);
+  });
 });
 
 describe('POST /api/agents/:agentId/restore', () => {
   it('200 and clears isolation for admin', async () => {
     const isolatedAt = new Date('2026-06-23T12:00:00.000Z');
-    mockAgentFindFirst.mockResolvedValue({ ...activeAgentRow, isolatedAt });
-    mockAgentUpdate.mockResolvedValue({ ...activeAgentRow, isolatedAt: null });
+    mockAgentFindFirst
+      .mockResolvedValueOnce({ ...activeAgentRow, isolatedAt })
+      .mockResolvedValueOnce({ ...activeAgentRow, isolatedAt: null });
+    mockAgentUpdateMany.mockResolvedValue({ count: 1 });
 
     const res = await request(app)
       .post('/api/agents/agent-1/restore')

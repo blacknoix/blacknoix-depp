@@ -96,11 +96,32 @@ export async function isolateAgent(
   }
 
   const now = new Date();
-  const updated = await prisma.agent.update({
-    where: { id: agentId },
+  const result = await prisma.agent.updateMany({
+    where: { id: agentId, tenantId },
     data: { isolatedAt: now },
+  });
+
+  if (result.count === 0) {
+    logAuthEvent({
+      action: 'agent_isolation_access_denied',
+      outcome: 'denied',
+      httpStatus: 404,
+      tenantId,
+      userId: actor.userId,
+      role: actor.role,
+      agentId,
+      reason: 'not_found',
+    });
+    return null;
+  }
+
+  const updated = await prisma.agent.findFirst({
+    where: tenantOwnedWhere(tenantId, agentId),
     select: ISOLATION_SELECT,
   });
+  if (!updated) {
+    throw new Error('unreachable: agent updated then vanished');
+  }
 
   logAuthEvent({
     action: 'agent_isolated',
@@ -163,11 +184,32 @@ export async function restoreAgent(
   }
 
   const previousIsolatedAt = existing.isolatedAt.toISOString();
-  const updated = await prisma.agent.update({
-    where: { id: agentId },
+  const result = await prisma.agent.updateMany({
+    where: { id: agentId, tenantId },
     data: { isolatedAt: null },
+  });
+
+  if (result.count === 0) {
+    logAuthEvent({
+      action: 'agent_isolation_access_denied',
+      outcome: 'denied',
+      httpStatus: 404,
+      tenantId,
+      userId: actor.userId,
+      role: actor.role,
+      agentId,
+      reason: 'not_found',
+    });
+    return null;
+  }
+
+  const updated = await prisma.agent.findFirst({
+    where: tenantOwnedWhere(tenantId, agentId),
     select: ISOLATION_SELECT,
   });
+  if (!updated) {
+    throw new Error('unreachable: agent restored then vanished');
+  }
 
   logAuthEvent({
     action: 'agent_restored',

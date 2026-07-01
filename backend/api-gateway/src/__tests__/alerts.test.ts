@@ -3,6 +3,13 @@ import jwt from 'jsonwebtoken';
 import { createApp } from '../app';
 import * as alertService from '../services/alertService';
 import { AlertValidationError } from '../types/alert';
+import { logAuthEvent } from '../lib/authAudit';
+import { resetMetrics } from '../lib/metrics';
+
+jest.mock('../lib/authAudit', () => ({
+  logAuthEvent: jest.fn(),
+  hashClientIp: jest.fn(() => 'abcd1234'),
+}));
 
 jest.mock('../services/alertService', () => ({
   listAlerts: jest.fn(),
@@ -33,6 +40,7 @@ const sampleAlertSummary = {
   title: 'CRITICAL event: file.write',
   severity: 'critical',
   status: 'open' as const,
+  ruleId: 'severity-threshold',
   assignedToId: null,
   createdAt: new Date('2024-06-02T10:00:00.000Z'),
   updatedAt: new Date('2024-06-02T10:00:00.000Z'),
@@ -45,7 +53,10 @@ const sampleAlertDetail = {
 
 // ─── GET /api/alerts ──────────────────────────────────────────────────────────
 describe('GET /api/alerts', () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    resetMetrics();
+  });
 
   it('200 + alert list for caller tenant', async () => {
     mockedListAlerts.mockResolvedValue([sampleAlertSummary]);
@@ -57,7 +68,17 @@ describe('GET /api/alerts', () => {
     expect(res.status).toBe(200);
     expect(res.body).toHaveLength(1);
     expect(res.body[0].tenantId).toBe('tenant-a');
+    expect(res.body[0].ruleId).toBe('severity-threshold');
     expect(mockedListAlerts).toHaveBeenCalledWith('tenant-a', expect.objectContaining({ limit: 50 }));
+    expect(logAuthEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'alert_list',
+        outcome: 'success',
+        tenantId: 'tenant-a',
+        userId: 'user-a',
+        meta: expect.objectContaining({ count: 1 }),
+      })
+    );
   });
 
   it('only includes alerts scoped to caller tenant via service', async () => {
@@ -109,6 +130,37 @@ describe('GET /api/alerts', () => {
     );
   });
 
+  it('filter by ruleId', async () => {
+    mockedListAlerts.mockResolvedValue([]);
+
+    await request(app)
+      .get('/api/alerts?ruleId=malware-prefix')
+      .set('Authorization', `Bearer ${makeUserToken()}`);
+
+    expect(mockedListAlerts).toHaveBeenCalledWith(
+      'tenant-a',
+      expect.objectContaining({ ruleId: 'malware-prefix' })
+    );
+    expect(logAuthEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'alert_list',
+        meta: expect.objectContaining({ ruleId: 'malware-prefix' }),
+      })
+    );
+  });
+
+  it('does not emit alert_list on paginated unfiltered list', async () => {
+    mockedListAlerts.mockResolvedValue([]);
+    const before = '2024-06-02T10:00:00.000Z';
+
+    await request(app)
+      .get(`/api/alerts?before=${encodeURIComponent(before)}`)
+      .set('Authorization', `Bearer ${makeUserToken()}`);
+
+    expect(mockedListAlerts).toHaveBeenCalled();
+    expect(logAuthEvent).not.toHaveBeenCalled();
+  });
+
   it('respects limit default 50 and max 200', async () => {
     mockedListAlerts.mockResolvedValue([]);
 
@@ -154,7 +206,10 @@ describe('GET /api/alerts', () => {
 
 // ─── GET /api/alerts/:alertId ─────────────────────────────────────────────────
 describe('GET /api/alerts/:alertId', () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    resetMetrics();
+  });
 
   it('200 + alert detail in caller tenant', async () => {
     mockedGetAlert.mockResolvedValue(sampleAlertDetail);
@@ -165,7 +220,16 @@ describe('GET /api/alerts/:alertId', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.id).toBe('alert-1');
+    expect(res.body.ruleId).toBe('severity-threshold');
     expect(mockedGetAlert).toHaveBeenCalledWith('tenant-a', 'alert-1');
+    expect(logAuthEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'alert_read',
+        outcome: 'success',
+        alertId: 'alert-1',
+        meta: expect.objectContaining({ alertId: 'alert-1', ruleId: 'severity-threshold' }),
+      })
+    );
   });
 
   it('404 for alertId in another tenant', async () => {
@@ -177,6 +241,9 @@ describe('GET /api/alerts/:alertId', () => {
 
     expect(res.status).toBe(404);
     expect(res.body.error).toBe('Alert not found');
+    expect(logAuthEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'alert_access_denied', outcome: 'denied' })
+    );
   });
 
   it('404 for non-existent alertId', async () => {
@@ -187,6 +254,9 @@ describe('GET /api/alerts/:alertId', () => {
       .set('Authorization', `Bearer ${makeUserToken()}`);
 
     expect(res.status).toBe(404);
+    expect(logAuthEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'alert_access_denied', outcome: 'denied' })
+    );
   });
 
   it('401 without token', async () => {
@@ -207,7 +277,10 @@ describe('GET /api/alerts/:alertId', () => {
 
 // ─── PATCH /api/alerts/:alertId ───────────────────────────────────────────────
 describe('PATCH /api/alerts/:alertId', () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    resetMetrics();
+  });
 
   it('open → acknowledged returns 200', async () => {
     mockedUpdateAlert.mockResolvedValue({ ...sampleAlertDetail, status: 'acknowledged' });
@@ -219,6 +292,13 @@ describe('PATCH /api/alerts/:alertId', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('acknowledged');
+    expect(mockedUpdateAlert).toHaveBeenCalledWith(
+      'tenant-a',
+      'alert-1',
+      { status: 'acknowledged' },
+      { userId: 'user-a', role: 'analyst' }
+    );
+    expect(logAuthEvent).not.toHaveBeenCalled();
   });
 
   it('acknowledged → resolved returns 200 with resolvedAt', async () => {
@@ -298,7 +378,7 @@ describe('PATCH /api/alerts/:alertId', () => {
     expect(res.body.status).toBe('open');
     expect(mockedUpdateAlert).toHaveBeenCalledWith('tenant-a', 'alert-1', {
       assignedToUserId: 'user-b',
-    });
+    }, { userId: 'user-a', role: 'analyst' });
   });
 
   it('explicit unassign with null', async () => {
@@ -364,7 +444,7 @@ describe('PATCH /api/alerts/:alertId', () => {
     expect(mockedUpdateAlert).toHaveBeenCalledWith('tenant-a', 'alert-1', {
       status: 'resolved',
       assignedToUserId: null,
-    });
+    }, { userId: 'user-a', role: 'analyst' });
   });
 
   it('combined acknowledge + assign', async () => {
@@ -393,6 +473,9 @@ describe('PATCH /api/alerts/:alertId', () => {
       .send({ status: 'acknowledged' });
 
     expect(res.status).toBe(404);
+    expect(logAuthEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'alert_access_denied', outcome: 'denied' })
+    );
   });
 
   it('401 without token', async () => {

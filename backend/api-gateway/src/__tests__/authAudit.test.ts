@@ -73,6 +73,23 @@ describe('authAudit', () => {
     expect(payload.fields).toEqual(['email']);
   });
 
+  it('strips sensitive keys from meta', () => {
+    logAuthEvent({
+      action: 'alert_created',
+      outcome: 'success',
+      meta: {
+        alertCount: 2,
+        password: 'secret',
+        ruleIds: 'severity-threshold',
+      },
+    });
+
+    const line = consoleSpy.mock.calls[0][0] as string;
+    const payload = JSON.parse(line.slice('AUTH_EVENT '.length));
+    expect(payload.meta.password).toBeUndefined();
+    expect(payload.meta.alertCount).toBe(2);
+  });
+
   it('hashClientIp returns a stable truncated hash', () => {
     const req = {
       ip: '203.0.113.42',

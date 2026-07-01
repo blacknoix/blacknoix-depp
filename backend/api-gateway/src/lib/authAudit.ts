@@ -25,7 +25,12 @@ export type AuthAuditAction =
   | 'agent_auth_failed'
   | 'agent_activated'
   | 'agent_expired'
-  | 'agent_revoked';
+  | 'agent_revoked'
+  | 'alert_list'
+  | 'alert_read'
+  | 'alert_access_denied'
+  | 'alert_updated'
+  | 'alert_created';
 
 export interface AuthAuditEvent {
   timestamp?: string;
@@ -37,6 +42,7 @@ export interface AuthAuditEvent {
   userId?: string;
   tenantId?: string;
   agentId?: string;
+  alertId?: string;
   jti?: string;
   previousJti?: string;
   role?: string;
@@ -44,6 +50,7 @@ export interface AuthAuditEvent {
   reason?: string;
   fields?: string[];
   clientIpHash?: string;
+  meta?: Record<string, string | number | boolean>;
 }
 
 const LOG_PREFIX = 'AUTH_EVENT';
@@ -104,6 +111,23 @@ function sanitizeEvent(event: AuthAuditEvent): AuthAuditEvent {
 
   if (Array.isArray(clean.fields)) {
     clean.fields = (clean.fields as string[]).filter((f) => !SENSITIVE_FIELD_NAMES.has(f));
+  }
+
+  if (clean.meta && typeof clean.meta === 'object' && !Array.isArray(clean.meta)) {
+    const meta: Record<string, string | number | boolean> = {
+      ...(clean.meta as Record<string, string | number | boolean>),
+    };
+    for (const key of Object.keys(meta)) {
+      if (SENSITIVE_FIELD_NAMES.has(key)) {
+        delete meta[key];
+        continue;
+      }
+      const value = meta[key];
+      if (typeof value === 'string' && containsSensitiveValue(value)) {
+        delete meta[key];
+      }
+    }
+    clean.meta = meta;
   }
 
   return clean as unknown as AuthAuditEvent;

@@ -1,5 +1,7 @@
 import { ingestTelemetryBatch } from '../services/telemetryService';
 import { TelemetryEventInput } from '../types/telemetry';
+import { logAuthEvent } from '../lib/authAudit';
+import { getMetricsSnapshot, resetMetrics } from '../lib/metrics';
 
 let capturedTx: {
   telemetryEvent: { createMany: jest.Mock };
@@ -8,6 +10,11 @@ let capturedTx: {
 };
 
 const mockTransaction = jest.fn();
+
+jest.mock('../lib/authAudit', () => ({
+  logAuthEvent: jest.fn(),
+  hashClientIp: jest.fn(),
+}));
 
 jest.mock('../lib/prisma', () => ({
   prisma: {
@@ -27,6 +34,7 @@ function event(overrides?: Partial<TelemetryEventInput>): TelemetryEventInput {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  resetMetrics();
   mockTransaction.mockImplementation(async (fn: (tx: typeof capturedTx) => Promise<unknown>) => {
     capturedTx = {
       telemetryEvent: { createMany: jest.fn().mockResolvedValue({ count: 0 }) },
@@ -38,33 +46,7 @@ beforeEach(() => {
 });
 
 describe('ingestTelemetryBatch transaction', () => {
-  it('high-severity event calls telemetry createMany before alert createMany', async () => {
-    const callOrder: string[] = [];
-    mockTransaction.mockImplementation(async (fn) => {
-      capturedTx = {
-        telemetryEvent: {
-          createMany: jest.fn().mockImplementation(async () => {
-            callOrder.push('telemetry');
-            return { count: 1 };
-          }),
-        },
-        agent: { update: jest.fn().mockResolvedValue({}) },
-        alert: {
-          createMany: jest.fn().mockImplementation(async () => {
-            callOrder.push('alert');
-            return { count: 1 };
-          }),
-        },
-      };
-      return fn(capturedTx);
-    });
-
-    await ingestTelemetryBatch('agent-a', 'tenant-a', [event({ severity: 'high' })]);
-
-    expect(callOrder).toEqual(['telemetry', 'alert']);
-  });
-
-  it('high-severity alert telemetryEventId matches pre-generated event id', async () => {
+  it('high-severity alert includes ruleId and telemetryEventId', async () => {
     await ingestTelemetryBatch('agent-a', 'tenant-a', [
       event({ severity: 'high', eventType: 'file.write' }),
     ]);
@@ -72,15 +54,16 @@ describe('ingestTelemetryBatch transaction', () => {
     const eventData = capturedTx.telemetryEvent.createMany.mock.calls[0][0].data;
     const alertData = capturedTx.alert.createMany.mock.calls[0][0].data;
 
-    expect(eventData).toHaveLength(1);
-    expect(alertData).toHaveLength(1);
-    expect(alertData[0].telemetryEventId).toBe(eventData[0].id);
-    expect(eventData[0].id).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-    );
+    expect(alertData[0]).toMatchObject({
+      ruleId: 'severity-threshold',
+      telemetryEventId: eventData[0].id,
+      severity: 'high',
+      status: 'open',
+      title: 'HIGH event: file.write',
+    });
   });
 
-  it('high-severity alert createMany runs inside the same transaction callback', async () => {
+  it('alert createMany runs inside the same transaction callback', async () => {
     await ingestTelemetryBatch('agent-a', 'tenant-a', [event({ severity: 'high' })]);
 
     expect(mockTransaction).toHaveBeenCalledTimes(1);
@@ -89,7 +72,7 @@ describe('ingestTelemetryBatch transaction', () => {
     expect(capturedTx.alert.createMany).toHaveBeenCalled();
   });
 
-  it('critical event creates alert with severity critical and status open', async () => {
+  it('malware-prefix wins over severity-threshold for critical malware events', async () => {
     await ingestTelemetryBatch('agent-a', 'tenant-a', [
       event({ severity: 'critical', eventType: 'malware.detected' }),
     ]);
@@ -98,13 +81,30 @@ describe('ingestTelemetryBatch transaction', () => {
     expect(alertData[0]).toMatchObject({
       tenantId: 'tenant-a',
       agentId: 'agent-a',
-      severity: 'critical',
+      severity: 'high',
       status: 'open',
-      title: 'CRITICAL event: malware.detected',
+      ruleId: 'malware-prefix',
+      title: 'Malware event: malware.detected',
     });
   });
 
-  it('mixed batch creates alerts for critical events only in one createMany call', async () => {
+  it('critical non-malware event uses severity-threshold ruleId', async () => {
+    await ingestTelemetryBatch('agent-a', 'tenant-a', [
+      event({ severity: 'critical', eventType: 'process.anomaly' }),
+    ]);
+
+    const alertData = capturedTx.alert.createMany.mock.calls[0][0].data;
+    expect(alertData[0]).toMatchObject({
+      tenantId: 'tenant-a',
+      agentId: 'agent-a',
+      severity: 'critical',
+      status: 'open',
+      ruleId: 'severity-threshold',
+      title: 'CRITICAL event: process.anomaly',
+    });
+  });
+
+  it('mixed batch creates per-event alerts for critical events only', async () => {
     await ingestTelemetryBatch('agent-a', 'tenant-a', [
       event({ severity: 'critical', eventType: 'a' }),
       event({ severity: 'critical', eventType: 'b' }),
@@ -113,10 +113,10 @@ describe('ingestTelemetryBatch transaction', () => {
       event({ severity: 'low', eventType: 'e' }),
     ]);
 
-    expect(capturedTx.alert.createMany).toHaveBeenCalledTimes(1);
     const alertData = capturedTx.alert.createMany.mock.calls[0][0].data;
-    expect(alertData).toHaveLength(2);
-    expect(alertData.every((row: { severity: string }) => row.severity === 'critical')).toBe(true);
+    const perEvent = alertData.filter((row: { telemetryEventId: string | null }) => row.telemetryEventId);
+    expect(perEvent).toHaveLength(2);
+    expect(perEvent.every((row: { ruleId: string }) => row.ruleId === 'severity-threshold')).toBe(true);
   });
 
   it('info / low / medium only does not call alert createMany', async () => {
@@ -127,6 +127,56 @@ describe('ingestTelemetryBatch transaction', () => {
     ]);
 
     expect(capturedTx.alert.createMany).not.toHaveBeenCalled();
+    expect(logAuthEvent).not.toHaveBeenCalled();
+  });
+
+  it('malware-prefix ruleId on low severity malware events', async () => {
+    await ingestTelemetryBatch('agent-a', 'tenant-a', [
+      event({ severity: 'low', eventType: 'malware.trojan', payload: {} }),
+    ]);
+
+    const alertData = capturedTx.alert.createMany.mock.calls[0][0].data;
+    expect(alertData[0]).toMatchObject({
+      ruleId: 'malware-prefix',
+      title: 'Malware event: malware.trojan',
+      severity: 'high',
+    });
+  });
+
+  it('batch burst adds burst alert with null telemetryEventId', async () => {
+    await ingestTelemetryBatch('agent-a', 'tenant-a', [
+      event({ severity: 'high', eventType: 'a' }),
+      event({ severity: 'critical', eventType: 'b' }),
+      event({ severity: 'high', eventType: 'c' }),
+    ]);
+
+    const alertData = capturedTx.alert.createMany.mock.calls[0][0].data;
+    const perEvent = alertData.filter((row: { telemetryEventId: string | null }) => row.telemetryEventId);
+    const burst = alertData.find((row: { ruleId: string }) => row.ruleId === 'batch-burst');
+    expect(perEvent).toHaveLength(3);
+    expect(burst).toMatchObject({
+      telemetryEventId: null,
+      ruleId: 'batch-burst',
+      severity: 'critical',
+    });
+  });
+
+  it('emits alert_created audit and metrics after commit', async () => {
+    await ingestTelemetryBatch('agent-a', 'tenant-a', [event({ severity: 'high' })]);
+
+    expect(logAuthEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'alert_created',
+        outcome: 'success',
+        tenantId: 'tenant-a',
+        agentId: 'agent-a',
+        meta: expect.objectContaining({
+          alertCount: 1,
+          ruleIds: 'severity-threshold',
+        }),
+      })
+    );
+    expect(getMetricsSnapshot().alertsCreated).toBe(1);
   });
 
   it('alert createMany throws rejects the transaction', async () => {
@@ -142,6 +192,9 @@ describe('ingestTelemetryBatch transaction', () => {
     await expect(
       ingestTelemetryBatch('agent-a', 'tenant-a', [event({ severity: 'high' })])
     ).rejects.toThrow('alert insert failed');
+
+    expect(logAuthEvent).not.toHaveBeenCalled();
+    expect(getMetricsSnapshot().alertsCreated).toBe(0);
   });
 
   it('telemetry createMany throws rejects and alert createMany is not called', async () => {

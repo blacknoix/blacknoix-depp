@@ -1,7 +1,9 @@
 import crypto from 'crypto';
+import { evaluateRules } from '../lib/correlationEngine';
+import { logAuthEvent } from '../lib/authAudit';
 import { prisma } from '../lib/prisma';
+import { recordAlertCreated } from '../lib/metrics';
 import { tenantOwnedWhere } from '../lib/tenantScope';
-import { ALERT_TRIGGER_SEVERITIES } from '../types/alert';
 import { TelemetryEventInput, TelemetryEventRecord } from '../types/telemetry';
 
 const EVENT_SELECT = {
@@ -68,8 +70,8 @@ export async function updateAgentActivity(agentId: string): Promise<void> {
 }
 
 /**
- * Atomically insert events and update agent activity.
- * Used by the ingestion route so both succeed or fail together.
+ * Atomically insert events, correlate alerts, and update agent activity.
+ * Correlation runs before the transaction (pure evaluateRules); persistence is transactional.
  */
 export async function ingestTelemetryBatch(
   agentId: string,
@@ -86,9 +88,7 @@ export async function ingestTelemetryBatch(
     payload: event.payload,
   }));
 
-  const triggeringEvents = eventRows.filter((row) =>
-    (ALERT_TRIGGER_SEVERITIES as readonly string[]).includes(row.severity)
-  );
+  const alertsToCreate = evaluateRules(eventRows, { agentId, tenantId });
 
   await prisma.$transaction(async (tx) => {
     await tx.telemetryEvent.createMany({ data: eventRows });
@@ -101,19 +101,37 @@ export async function ingestTelemetryBatch(
       },
     });
 
-    if (triggeringEvents.length > 0) {
+    if (alertsToCreate.length > 0) {
       await tx.alert.createMany({
-        data: triggeringEvents.map((row) => ({
-          tenantId,
-          agentId,
-          telemetryEventId: row.id,
-          title: `${row.severity.toUpperCase()} event: ${row.eventType}`,
-          severity: row.severity,
+        data: alertsToCreate.map((alert) => ({
+          tenantId: alert.tenantId,
+          agentId: alert.agentId,
+          telemetryEventId: alert.telemetryEventId ?? null,
+          title: alert.title,
+          severity: alert.severity,
+          ruleId: alert.ruleId,
           status: 'open' as const,
         })),
       });
     }
   });
+
+  if (alertsToCreate.length > 0) {
+    const ruleIds = [...new Set(alertsToCreate.map((a) => a.ruleId))].join(',');
+    logAuthEvent({
+      action: 'alert_created',
+      outcome: 'success',
+      tenantId,
+      agentId,
+      meta: {
+        alertCount: alertsToCreate.length,
+        ruleIds,
+      },
+    });
+    for (let i = 0; i < alertsToCreate.length; i += 1) {
+      recordAlertCreated();
+    }
+  }
 }
 
 /**

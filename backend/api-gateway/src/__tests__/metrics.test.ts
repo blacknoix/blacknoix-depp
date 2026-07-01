@@ -249,6 +249,8 @@ describe('GET /internal/metrics', () => {
     'unauthorizedCount',
     'forbiddenCount',
     'rateLimitedCount',
+    'alertsCreated',
+    'alertsUpdated',
     'collectedAt',
   ];
 

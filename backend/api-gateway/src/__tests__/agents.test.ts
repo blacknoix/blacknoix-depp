@@ -17,14 +17,12 @@ jest.mock('../services/agentService', () => ({
 const mockedCreateAgentEnrollment = agentService.createAgentEnrollment as jest.MockedFunction<
   typeof agentService.createAgentEnrollment
 >;
-const mockedCreateAgent = agentService.createAgent as jest.MockedFunction<typeof agentService.createAgent>;
 const mockedListAgentsInTenant = agentService.listAgentsInTenant as jest.MockedFunction<
   typeof agentService.listAgentsInTenant
 >;
 const mockedGetAgentInTenant = agentService.getAgentInTenant as jest.MockedFunction<
   typeof agentService.getAgentInTenant
 >;
-const mockedRevokeAgent = agentService.revokeAgent as jest.MockedFunction<typeof agentService.revokeAgent>;
 
 const pendingExpiresAt = new Date('2026-06-29T14:00:00.000Z');
 

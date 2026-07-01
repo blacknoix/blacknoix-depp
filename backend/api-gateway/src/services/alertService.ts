@@ -1,4 +1,6 @@
 import { prisma } from '../lib/prisma';
+import { logAuthEvent } from '../lib/authAudit';
+import { recordAlertUpdated } from '../lib/metrics';
 import { tenantOwnedWhere, tenantWhere } from '../lib/tenantScope';
 import {
   ALERT_STATUS_TRANSITIONS,
@@ -6,6 +8,7 @@ import {
   AlertFilterParams,
   AlertStatus,
   AlertSummary,
+  AlertActor,
   AlertValidationError,
   UpdateAlertInput,
 } from '../types/alert';
@@ -18,6 +21,7 @@ const ALERT_SUMMARY_SELECT = {
   title: true,
   severity: true,
   status: true,
+  ruleId: true,
   assignedToId: true,
   createdAt: true,
   updatedAt: true,
@@ -41,6 +45,7 @@ function toAlertSummary(row: {
   title: string;
   severity: string;
   status: string;
+  ruleId: string | null;
   assignedToId: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -53,6 +58,7 @@ function toAlertSummary(row: {
     title: row.title,
     severity: row.severity,
     status: toAlertStatus(row.status),
+    ruleId: row.ruleId,
     assignedToId: row.assignedToId,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -67,6 +73,7 @@ function toAlertDetail(row: {
   title: string;
   severity: string;
   status: string;
+  ruleId: string | null;
   assignedToId: string | null;
   resolvedAt: Date | null;
   createdAt: Date;
@@ -89,6 +96,7 @@ export async function listAlerts(
       ...(filters.status ? { status: filters.status } : {}),
       ...(filters.severity ? { severity: filters.severity } : {}),
       ...(filters.agentId ? { agentId: filters.agentId } : {}),
+      ...(filters.ruleId ? { ruleId: filters.ruleId } : {}),
       ...(filters.before ? { createdAt: { lt: filters.before } } : {}),
     },
     orderBy: { createdAt: 'desc' },
@@ -117,7 +125,8 @@ export async function getAlert(tenantId: string, alertId: string): Promise<Alert
 export async function updateAlert(
   tenantId: string,
   alertId: string,
-  input: UpdateAlertInput
+  input: UpdateAlertInput,
+  actor?: AlertActor
 ): Promise<AlertDetail | null> {
   const alert = await prisma.alert.findFirst({
     where: tenantOwnedWhere(tenantId, alertId),
@@ -128,6 +137,8 @@ export async function updateAlert(
     return null;
   }
 
+  const previousStatus = toAlertStatus(alert.status);
+
   const data: {
     status?: AlertStatus;
     assignedToId?: string | null;
@@ -135,11 +146,10 @@ export async function updateAlert(
   } = {};
 
   if (input.status !== undefined) {
-    const currentStatus = toAlertStatus(alert.status);
-    const allowed = ALERT_STATUS_TRANSITIONS[currentStatus];
+    const allowed = ALERT_STATUS_TRANSITIONS[previousStatus];
     if (!allowed.includes(input.status)) {
       throw new AlertValidationError(
-        `Cannot transition from ${currentStatus} to ${input.status}`
+        `Cannot transition from ${previousStatus} to ${input.status}`
       );
     }
     data.status = input.status;
@@ -169,5 +179,25 @@ export async function updateAlert(
     select: ALERT_DETAIL_SELECT,
   });
 
-  return toAlertDetail(updated as Parameters<typeof toAlertDetail>[0]);
+  const detail = toAlertDetail(updated as Parameters<typeof toAlertDetail>[0]);
+  const newStatus = detail.status;
+
+  if (actor) {
+    logAuthEvent({
+      action: 'alert_updated',
+      outcome: 'success',
+      tenantId,
+      userId: actor.userId,
+      role: actor.role,
+      alertId,
+      meta: {
+        alertId,
+        previousStatus,
+        newStatus,
+      },
+    });
+    recordAlertUpdated();
+  }
+
+  return detail;
 }

@@ -80,6 +80,7 @@ declare module '@prisma/client' {
     title: string;
     severity: string;
     status: AlertStatus;
+    ruleId: string | null;
     assignedToId: string | null;
     resolvedAt: Date | null;
     createdAt: Date;
@@ -326,6 +327,7 @@ declare module '@prisma/client' {
     | 'title'
     | 'severity'
     | 'status'
+    | 'ruleId'
     | 'assignedToId'
     | 'createdAt'
     | 'updatedAt'
@@ -340,6 +342,7 @@ declare module '@prisma/client' {
         status?: AlertStatus;
         severity?: string;
         agentId?: string;
+        ruleId?: string;
         createdAt?: { lt: Date };
       };
       orderBy: { createdAt: 'desc' | 'asc' };
@@ -352,6 +355,7 @@ declare module '@prisma/client' {
         title: true;
         severity: true;
         status: true;
+        ruleId: true;
         assignedToId: true;
         createdAt: true;
         updatedAt: true;
@@ -367,6 +371,7 @@ declare module '@prisma/client' {
         title: true;
         severity: true;
         status: true;
+        ruleId: true;
         assignedToId: true;
         resolvedAt: true;
         createdAt: true;
@@ -392,6 +397,7 @@ declare module '@prisma/client' {
         title: true;
         severity: true;
         status: true;
+        ruleId: true;
         assignedToId: true;
         resolvedAt: true;
         createdAt: true;
@@ -402,9 +408,10 @@ declare module '@prisma/client' {
       data: Array<{
         tenantId: string;
         agentId: string;
-        telemetryEventId: string;
+        telemetryEventId: string | null;
         title: string;
         severity: string;
+        ruleId: string;
         status: AlertStatus;
       }>;
     }): Promise<{ count: number }>;

@@ -10,13 +10,13 @@ jest.mock('../lib/authAudit', () => ({
 }));
 
 const mockAgentFindFirst = jest.fn();
-const mockAgentUpdate = jest.fn();
+const mockAgentUpdateMany = jest.fn();
 
 jest.mock('../lib/prisma', () => ({
   prisma: {
     agent: {
       findFirst: (...args: unknown[]) => mockAgentFindFirst(...args),
-      update: (...args: unknown[]) => mockAgentUpdate(...args),
+      updateMany: (...args: unknown[]) => mockAgentUpdateMany(...args),
     },
   },
 }));
@@ -37,15 +37,17 @@ const activeRow = {
 beforeEach(() => {
   jest.clearAllMocks();
   mockAgentFindFirst.mockReset();
-  mockAgentUpdate.mockReset();
+  mockAgentUpdateMany.mockReset();
   resetMetrics();
 });
 
 describe('agentIsolationService.isolateAgent', () => {
   it('transitions isolation state and captures reason', async () => {
     const isolatedAt = new Date('2026-06-23T12:00:00.000Z');
-    mockAgentFindFirst.mockResolvedValue(activeRow);
-    mockAgentUpdate.mockResolvedValue({ ...activeRow, isolatedAt });
+    mockAgentFindFirst
+      .mockResolvedValueOnce(activeRow)
+      .mockResolvedValueOnce({ ...activeRow, isolatedAt });
+    mockAgentUpdateMany.mockResolvedValue({ count: 1 });
 
     const result = await isolateAgent(tenantId, agentId, actor, 'suspected_lateral_movement');
 
@@ -56,9 +58,9 @@ describe('agentIsolationService.isolateAgent', () => {
       isolated: true,
       isolatedAt: isolatedAt.toISOString(),
     });
-    expect(mockAgentUpdate).toHaveBeenCalledWith(
+    expect(mockAgentUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: agentId },
+        where: { id: agentId, tenantId },
         data: { isolatedAt: expect.any(Date) },
       })
     );
@@ -83,7 +85,7 @@ describe('agentIsolationService.isolateAgent', () => {
     const result = await isolateAgent(tenantId, 'agent-other', actor);
 
     expect(result).toBeNull();
-    expect(mockAgentUpdate).not.toHaveBeenCalled();
+    expect(mockAgentUpdateMany).not.toHaveBeenCalled();
     expect(mockedLogAuthEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         action: 'agent_isolation_access_denied',
@@ -103,7 +105,7 @@ describe('agentIsolationService.isolateAgent', () => {
 
     expect(result?.isolated).toBe(true);
     expect(result?.isolatedAt).toBe(isolatedAt.toISOString());
-    expect(mockAgentUpdate).not.toHaveBeenCalled();
+    expect(mockAgentUpdateMany).not.toHaveBeenCalled();
     expect(mockedLogAuthEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         action: 'agent_isolated',
@@ -115,19 +117,39 @@ describe('agentIsolationService.isolateAgent', () => {
     expect(getMetricsSnapshot().agentsIsolated).toBe(0);
   });
 
+  it('returns null when tenant-guarded write matches nothing', async () => {
+    mockAgentFindFirst.mockResolvedValue(activeRow);
+    mockAgentUpdateMany.mockResolvedValue({ count: 0 });
+
+    const result = await isolateAgent(tenantId, agentId, actor, 'cross_tenant_attempt');
+
+    expect(result).toBeNull();
+    expect(mockedLogAuthEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'agent_isolation_access_denied',
+        outcome: 'denied',
+        httpStatus: 404,
+        reason: 'not_found',
+      })
+    );
+    expect(getMetricsSnapshot().agentsIsolated).toBe(0);
+  });
+
   it('rejects terminal agent status', async () => {
     mockAgentFindFirst.mockResolvedValue({ ...activeRow, status: 'revoked' });
 
     await expect(isolateAgent(tenantId, agentId, actor)).rejects.toBeInstanceOf(AgentIsolationError);
-    expect(mockAgentUpdate).not.toHaveBeenCalled();
+    expect(mockAgentUpdateMany).not.toHaveBeenCalled();
   });
 });
 
 describe('agentIsolationService.restoreAgent', () => {
   it('clears isolation and returns baseline state', async () => {
     const isolatedAt = new Date('2026-06-23T12:00:00.000Z');
-    mockAgentFindFirst.mockResolvedValue({ ...activeRow, isolatedAt });
-    mockAgentUpdate.mockResolvedValue({ ...activeRow, isolatedAt: null });
+    mockAgentFindFirst
+      .mockResolvedValueOnce({ ...activeRow, isolatedAt })
+      .mockResolvedValueOnce({ ...activeRow, isolatedAt: null });
+    mockAgentUpdateMany.mockResolvedValue({ count: 1 });
 
     const result = await restoreAgent(tenantId, agentId, actor);
 
@@ -138,9 +160,9 @@ describe('agentIsolationService.restoreAgent', () => {
       isolated: false,
       isolatedAt: null,
     });
-    expect(mockAgentUpdate).toHaveBeenCalledWith(
+    expect(mockAgentUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: agentId },
+        where: { id: agentId, tenantId },
         data: { isolatedAt: null },
       })
     );
@@ -161,7 +183,7 @@ describe('agentIsolationService.restoreAgent', () => {
     const result = await restoreAgent(tenantId, agentId, actor);
 
     expect(result?.isolated).toBe(false);
-    expect(mockAgentUpdate).not.toHaveBeenCalled();
+    expect(mockAgentUpdateMany).not.toHaveBeenCalled();
     expect(mockedLogAuthEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         action: 'agent_restored',
@@ -178,10 +200,11 @@ describe('agentIsolationService.restoreAgent', () => {
     mockAgentFindFirst
       .mockResolvedValueOnce(activeRow)
       .mockResolvedValueOnce({ ...activeRow, isolatedAt })
-      .mockResolvedValueOnce({ ...activeRow, isolatedAt });
-    mockAgentUpdate
       .mockResolvedValueOnce({ ...activeRow, isolatedAt })
       .mockResolvedValueOnce({ ...activeRow, isolatedAt: null });
+    mockAgentUpdateMany
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 1 });
 
     const isolated = await isolateAgent(tenantId, agentId, actor, 'contain');
     const restored = await restoreAgent(tenantId, agentId, actor);

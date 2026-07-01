@@ -30,6 +30,7 @@ See [tenancy.md](./tenancy.md) for isolation patterns.
 | `lastAgentVersion` | string? | Last reported version (may drift) |
 | `ipAddress` | string? | Deprecated — retained for migration window |
 | `registeredAt` | datetime | When the agent was enrolled |
+| `isolatedAt` | datetime? | When platform-side isolation was applied (`null` = not isolated) |
 | `createdAt` / `updatedAt` | datetime | Row timestamps |
 
 ---
@@ -134,6 +135,59 @@ Revoke an agent credential. **Requires role: `admin` or higher.**
 
 ---
 
+### `POST /api/agents/:agentId/isolate`
+
+Record **platform-side isolation intent** for an endpoint (first response action). **Requires role: `admin` or higher** — strictly above analyst alert triage; isolating a machine is a privileged, near-destructive operation.
+
+**Request**
+```json
+{ "reason": "active_incident_containment" }
+```
+
+Optional `reason` is captured in the audit log (operator justification). Never include secrets or tokens in `reason`.
+
+**Response `200`**
+```json
+{
+  "agentId": "<uuid>",
+  "tenantId": "<uuid>",
+  "status": "active",
+  "isolated": true,
+  "isolatedAt": "2026-06-23T12:00:00.000Z"
+}
+```
+
+`status` reflects lifecycle (`pending` / `active` / etc.) and remains independent of isolation — an agent can be `active` **and** isolated.
+
+**Response `404`** — agent not found or belongs to another tenant (same body; no existence leak). Emits `agent_isolation_access_denied` audit.
+
+**Response `409`** — agent is in a terminal lifecycle state (`revoked`, `expired`) where isolation cannot be applied.
+
+Repeat isolate on an already-isolated agent returns **200** (idempotent) with current state.
+
+---
+
+### `POST /api/agents/:agentId/restore`
+
+Lift platform-side isolation — **first-class reversible counterpart** to isolate. **Requires role: `admin` or higher.**
+
+**Response `200`**
+```json
+{
+  "agentId": "<uuid>",
+  "tenantId": "<uuid>",
+  "status": "active",
+  "isolated": false,
+  "isolatedAt": null
+}
+```
+
+Restore on a non-isolated agent returns **200** (idempotent). Cross-tenant or missing agents return **404** with `agent_isolation_access_denied` audit.
+
+> **Deferred (future work):** Endpoint-side enforcement — the agent daemon acting on `isolatedAt` (network drop, process containment, etc.) is **not implemented** in this slice. This API records and exposes isolation **state and intent** only. Do not assume an isolated endpoint is physically contained until the daemon slice ships.
+
+---
+
 ### `GET /api/agents`
 
 List agents in the caller's tenant. **Requires role: `analyst` or higher.**
@@ -168,6 +222,8 @@ On success, `req.agent = { agentId, tenantId }` where `tenantId` comes from the 
 |---|---|
 | `POST /api/agents` / `/enroll` | `admin` |
 | `POST` / `PATCH /api/agents/:id/revoke` | `admin` |
+| `POST /api/agents/:id/isolate` | `admin` |
+| `POST /api/agents/:id/restore` | `admin` |
 | `GET /api/agents` | `analyst` |
 | `GET /api/agents/:agentId` | `analyst` |
 
@@ -185,5 +241,8 @@ Role hierarchy: `owner` > `admin` > `analyst` > `read-only`.
 | `agent_activated` | First successful auth (`pending → active`) |
 | `agent_expired` | Pending window expired |
 | `agent_revoked` | Admin revocation |
+| `agent_isolated` | Admin isolation (success, including idempotent re-isolate) |
+| `agent_restored` | Admin restore (success, including idempotent restore) |
+| `agent_isolation_access_denied` | Isolate/restore denied — missing or cross-tenant agent (`404`) |
 
-Raw tokens are never logged. Failures omit `agentId` when the token is unknown.
+Raw tokens are never logged. Operator `reason` on isolate is scrubbed via the same `sanitizeEvent` path as other audit fields. Failures omit `agentId` when the token is unknown.

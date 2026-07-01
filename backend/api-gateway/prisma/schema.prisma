@@ -85,6 +85,9 @@ model Agent {
   lastAgentVersion String?
   ipAddress        String? // @deprecated — retained for migration window; use lastIpHash
 
+  // Response containment (platform-side intent; endpoint enforcement deferred)
+  isolatedAt DateTime?
+
   // Timestamps
   registeredAt DateTime @default(now())
   createdAt    DateTime @default(now())
@@ -97,6 +100,7 @@ model Agent {
 
   @@index([tenantId, status])
   @@index([tenantId, lastSeenAt])
+  @@index([tenantId, isolatedAt])
   @@map("agents")
 }
 

@@ -1,8 +1,9 @@
 import { Router, Response } from 'express';
+import { hashClientIp, logAuthEvent } from '../lib/authAudit';
 import { readTenantFromRequest } from '../lib/tenantScope';
 import { requireRole } from '../middleware/requireRole';
 import { getAlert, listAlerts, updateAlert } from '../services/alertService';
-import { AlertStatus, AlertValidationError, UpdateAlertInput } from '../types/alert';
+import { AlertFilterParams, AlertStatus, AlertValidationError, UpdateAlertInput } from '../types/alert';
 
 export const alertRouter = Router();
 
@@ -28,12 +29,37 @@ function parseBefore(raw: unknown): Date | undefined {
   return Number.isNaN(parsed.getTime()) ? undefined : parsed;
 }
 
+function auditBase(req: Parameters<typeof readTenantFromRequest>[0]) {
+  const { tenantId, userId, role } = readTenantFromRequest(req);
+  return {
+    tenantId,
+    userId,
+    role,
+    route: req.path,
+    method: req.method,
+    clientIpHash: hashClientIp(req),
+  };
+}
+
+function hasListFilters(filters: Pick<AlertFilterParams, 'status' | 'severity' | 'agentId' | 'ruleId'>): boolean {
+  return Boolean(filters.status || filters.severity || filters.agentId || filters.ruleId);
+}
+
+function isFirstPage(filters: Pick<AlertFilterParams, 'before'>): boolean {
+  return filters.before === undefined;
+}
+
+function shouldAuditList(filters: AlertFilterParams): boolean {
+  return hasListFilters(filters) || isFirstPage(filters);
+}
+
 /**
  * GET /api/alerts
  * List alerts in the caller's tenant with optional filters.
  */
 alertRouter.get('/', requireRole('analyst'), async (req, res: Response): Promise<void> => {
-  const { tenantId } = readTenantFromRequest(req);
+  const base = auditBase(req);
+  const { tenantId } = base;
 
   let status: AlertStatus | undefined;
   if (typeof req.query.status === 'string' && VALID_STATUSES.includes(req.query.status as AlertStatus)) {
@@ -42,14 +68,35 @@ alertRouter.get('/', requireRole('analyst'), async (req, res: Response): Promise
 
   const severity = typeof req.query.severity === 'string' ? req.query.severity : undefined;
   const agentId = typeof req.query.agentId === 'string' ? req.query.agentId : undefined;
+  const ruleId = typeof req.query.ruleId === 'string' ? req.query.ruleId : undefined;
 
-  const alerts = await listAlerts(tenantId, {
+  const filters: AlertFilterParams = {
     status,
     severity,
     agentId,
+    ruleId,
     limit: parseLimit(req.query.limit),
     before: parseBefore(req.query.before),
-  });
+  };
+
+  const alerts = await listAlerts(tenantId, filters);
+
+  if (shouldAuditList(filters)) {
+    logAuthEvent({
+      action: 'alert_list',
+      outcome: 'success',
+      httpStatus: 200,
+      ...base,
+      meta: {
+        count: alerts.length,
+        ...(status ? { status } : {}),
+        ...(severity ? { severity } : {}),
+        ...(agentId ? { agentId } : {}),
+        ...(ruleId ? { ruleId } : {}),
+        ...(filters.before ? { paginated: true } : {}),
+      },
+    });
+  }
 
   res.json(alerts);
 });
@@ -59,13 +106,30 @@ alertRouter.get('/', requireRole('analyst'), async (req, res: Response): Promise
  * Get a single alert in the caller's tenant.
  */
 alertRouter.get('/:alertId', requireRole('analyst'), async (req, res: Response): Promise<void> => {
-  const { tenantId } = readTenantFromRequest(req);
+  const base = auditBase(req);
+  const { tenantId } = base;
   const alert = await getAlert(tenantId, req.params.alertId);
 
   if (!alert) {
+    logAuthEvent({
+      action: 'alert_access_denied',
+      outcome: 'denied',
+      httpStatus: 404,
+      ...base,
+      alertId: req.params.alertId,
+    });
     res.status(404).json({ error: 'Alert not found' });
     return;
   }
+
+  logAuthEvent({
+    action: 'alert_read',
+    outcome: 'success',
+    httpStatus: 200,
+    ...base,
+    alertId: alert.id,
+    meta: { alertId: alert.id, ruleId: alert.ruleId ?? '' },
+  });
 
   res.json(alert);
 });
@@ -96,15 +160,12 @@ alertRouter.patch('/:alertId', requireRole('analyst'), async (req, res: Response
     return;
   }
 
-  const { tenantId } = readTenantFromRequest(req);
+  const base = auditBase(req);
+  const { tenantId, userId, role } = base;
 
+  let alert: Awaited<ReturnType<typeof updateAlert>>;
   try {
-    const alert = await updateAlert(tenantId, req.params.alertId, input);
-    if (!alert) {
-      res.status(404).json({ error: 'Alert not found' });
-      return;
-    }
-    res.json(alert);
+    alert = await updateAlert(tenantId, req.params.alertId, input, { userId, role });
   } catch (err) {
     if (err instanceof AlertValidationError) {
       res.status(400).json({ error: err.message });
@@ -112,4 +173,18 @@ alertRouter.patch('/:alertId', requireRole('analyst'), async (req, res: Response
     }
     throw err;
   }
+
+  if (!alert) {
+    logAuthEvent({
+      action: 'alert_access_denied',
+      outcome: 'denied',
+      httpStatus: 404,
+      ...base,
+      alertId: req.params.alertId,
+    });
+    res.status(404).json({ error: 'Alert not found' });
+    return;
+  }
+
+  res.json(alert);
 });

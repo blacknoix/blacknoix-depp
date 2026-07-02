@@ -135,6 +135,7 @@ model Alert {
   title            String
   severity         String
   status           AlertStatus @default(open)
+  ruleId           String?
   assignedToId     String?
   resolvedAt       DateTime?
   createdAt        DateTime    @default(now())
@@ -146,6 +147,7 @@ model Alert {
   assignedTo     User?           @relation("AssignedAlerts", fields: [assignedToId], references: [id])
 
   @@index([tenantId, status, createdAt])
+  @@index([tenantId, ruleId])
   @@index([agentId])
   @@map("alerts")
 }

@@ -15,6 +15,8 @@ export interface MetricsSnapshot {
   unauthorizedCount: number;
   forbiddenCount: number;
   rateLimitedCount: number;
+  alertsCreated: number;
+  alertsUpdated: number;
   collectedAt: string;
 }
 
@@ -35,6 +37,8 @@ const counters = {
   unauthorizedCount: 0,
   forbiddenCount: 0,
   rateLimitedCount: 0,
+  alertsCreated: 0,
+  alertsUpdated: 0,
 };
 
 export function recordLoginSuccess(): void {
@@ -101,6 +105,15 @@ export function recordRateLimited(): void {
   counters.rateLimitedCount += 1;
 }
 
+/** Increment alertsCreated by one — call once per persisted alert. */
+export function recordAlertCreated(): void {
+  counters.alertsCreated += 1;
+}
+
+export function recordAlertUpdated(): void {
+  counters.alertsUpdated += 1;
+}
+
 export function getMetricsSnapshot(): MetricsSnapshot {
   return {
     loginSuccess: counters.loginSuccess,
@@ -119,6 +132,8 @@ export function getMetricsSnapshot(): MetricsSnapshot {
     unauthorizedCount: counters.unauthorizedCount,
     forbiddenCount: counters.forbiddenCount,
     rateLimitedCount: counters.rateLimitedCount,
+    alertsCreated: counters.alertsCreated,
+    alertsUpdated: counters.alertsUpdated,
     collectedAt: new Date().toISOString(),
   };
 }
@@ -141,4 +156,6 @@ export function resetMetrics(): void {
   counters.unauthorizedCount = 0;
   counters.forbiddenCount = 0;
   counters.rateLimitedCount = 0;
+  counters.alertsCreated = 0;
+  counters.alertsUpdated = 0;
 }

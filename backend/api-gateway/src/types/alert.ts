@@ -1,5 +1,6 @@
 export type AlertStatus = 'open' | 'acknowledged' | 'resolved';
 
+/** @deprecated Use correlation engine severity_threshold rules instead. */
 export const ALERT_TRIGGER_SEVERITIES = ['high', 'critical'] as const;
 
 export const ALERT_STATUS_TRANSITIONS: Record<AlertStatus, AlertStatus[]> = {
@@ -16,6 +17,7 @@ export interface AlertSummary {
   title: string;
   severity: string;
   status: AlertStatus;
+  ruleId: string | null;
   assignedToId: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -34,8 +36,14 @@ export interface AlertFilterParams {
   status?: AlertStatus;
   severity?: string;
   agentId?: string;
+  ruleId?: string;
   limit: number;
   before?: Date;
+}
+
+export interface AlertActor {
+  userId: string;
+  role: string;
 }
 
 export class AlertValidationError extends Error {

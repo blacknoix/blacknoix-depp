@@ -19,6 +19,7 @@ See also: [telemetry.md](./telemetry.md) for ingestion, [tenancy.md](./tenancy.m
 | `title` | string | Human-readable summary |
 | `severity` | string | Copied from triggering event (`high`, `critical`, etc.) |
 | `status` | enum | `open`, `acknowledged`, `resolved` |
+| `ruleId` | string? | Correlation rule that produced the alert (`null` for legacy rows) |
 | `assignedToId` | UUID? | Assigned analyst (must be same tenant) |
 | `resolvedAt` | datetime? | Set when status becomes `resolved` |
 | `createdAt` | datetime | Alert creation time |
@@ -50,20 +51,44 @@ Backward transitions (e.g. `resolved → acknowledged`) are rejected with `400`.
 
 ---
 
-## Auto-trigger rules
+## Correlation rules and `ruleId`
 
-Alerts are created **inside the telemetry ingestion transaction** when:
+Alerts are created during telemetry ingest by a **pure in-memory correlation engine** (`evaluateRules`) that runs **before** the database transaction. Each alert stores the producing rule in nullable `ruleId` (legacy alerts remain `ruleId: null`).
 
-- Event `severity` is `high` or `critical`
-- Event is successfully persisted
+### Default rules (priority order — lower runs first)
 
-| Severity | Creates alert? |
+| Rule ID | Type | Priority | Behavior |
+|---------|------|----------|----------|
+| `malware-prefix` | `event_type_match` | 10 | `eventType` starts with `malware.` → severity normalized to `high` |
+| `severity-threshold` | `severity_threshold` | 20 | `high` / `critical` events not already claimed |
+| `batch-burst` | `batch_burst` | 30 | ≥3 high/critical in batch → one synthetic alert with `telemetryEventId: null` |
+
+**Per-event rules:** first matching rule wins per event (no duplicate per-event alerts).
+
+**Batch burst:** additive; does not claim event IDs. Burst alerts have `telemetryEventId: null`.
+
+**v2 (deferred):** cross-batch / sliding-window correlation will be a background job, not inline ingest.
+
+### Filtering by rule
+
+`GET /api/alerts?ruleId=malware-prefix` returns tenant-scoped alerts for that rule. Indexed by `(tenantId, ruleId)`.
+
+---
+
+## Auto-trigger rules (ingest)
+
+Correlation runs on in-memory event rows, then alerts are persisted inside the telemetry transaction:
+
+- Per-event alerts link `telemetryEventId` to the pre-generated event UUID
+- Burst alerts use `telemetryEventId: null`
+- If alert creation fails, the entire telemetry batch rolls back
+
+| Severity / pattern | Typical rule |
 |---|---|
-| `info` | No |
-| `low` | No |
-| `medium` | No |
-| `high` | Yes |
-| `critical` | Yes |
+| `malware.*` (any severity) | `malware-prefix` |
+| `high` / `critical` (non-malware) | `severity-threshold` |
+| ≥3 high/critical in one batch | `batch-burst` (plus per-event alerts) |
+| `info` / `low` / `medium` (non-malware) | No alert |
 
 Alert fields at creation:
 
@@ -71,14 +96,33 @@ Alert fields at creation:
 |---|---|
 | `tenantId` | Authenticated agent context |
 | `agentId` | Authenticated agent context |
-| `telemetryEventId` | Pre-generated event UUID |
-| `title` | `{SEVERITY} event: {eventType}` |
-| `severity` | Event severity |
+| `telemetryEventId` | Event UUID, or `null` for burst |
+| `ruleId` | Matching correlation rule id |
+| `title` | Rule title template |
+| `severity` | Rule output severity |
 | `status` | `open` |
 
-If alert creation fails, the entire telemetry batch is rolled back.
+There is **no manual alert creation** or suppression in this slice.
 
-There is **no manual alert creation**, deduplication, or suppression in this slice.
+---
+
+## Audit and metrics
+
+| Action | When |
+|--------|------|
+| `alert_created` | After successful ingest batch with alerts (`meta.alertCount`, `meta.ruleIds`) |
+| `alert_list` | First-page list or when filters present (avoids pagination log floods) |
+| `alert_read` | Successful `GET /api/alerts/:id` |
+| `alert_access_denied` | `GET` or `PATCH` when alert is missing or cross-tenant (`404`) |
+| `alert_updated` | Successful status/assignee update via service (`meta.previousStatus`, `meta.newStatus`) |
+
+Metrics: `alertsCreated` (per alert on ingest), `alertsUpdated` (per triage update). Nested audit `meta` is scrubbed for sensitive keys.
+
+---
+
+## Auto-trigger rules (legacy note)
+
+Previously, alerts were created only for raw `high`/`critical` severity. The correlation engine preserves backward-compatible titles for severity-threshold matches (`{SEVERITY} event: {eventType}`) while adding malware and burst rules.
 
 ---
 
@@ -97,6 +141,7 @@ List alerts in the caller's tenant.
 | `status` | Filter: `open`, `acknowledged`, or `resolved` |
 | `severity` | Filter by severity string |
 | `agentId` | Filter by source agent |
+| `ruleId` | Filter by correlation rule id |
 | `limit` | Default 50, max 200 |
 | `before` | ISO datetime cursor on `createdAt` |
 
@@ -154,7 +199,7 @@ Update status and/or assignee. Only `status` and `assignedToUserId` are accepted
 
 ## Triage workflow
 
-1. **Ingest** — Agent sends `high`/`critical` telemetry; alert auto-created as `open`.
+1. **Ingest** — Agent sends telemetry; correlation engine creates alerts with `ruleId` as `open`.
 2. **Review** — Analyst lists alerts filtered by `status=open`.
 3. **Acknowledge** — `PATCH { "status": "acknowledged" }` optionally with assignee.
 4. **Investigate** — Analyst reviews linked telemetry via `GET /api/agents/:agentId/events`.

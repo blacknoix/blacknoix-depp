@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { Prisma } from '@prisma/client';
 import { evaluateRules } from '../lib/correlationEngine';
 import { logAuthEvent } from '../lib/authAudit';
 import { prisma } from '../lib/prisma';
@@ -53,7 +54,7 @@ export async function insertEvents(
       eventType: event.eventType,
       severity: event.severity,
       occurredAt: new Date(event.occurredAt),
-      payload: event.payload,
+      payload: event.payload as Prisma.InputJsonValue,
     })),
   });
 }
@@ -91,7 +92,12 @@ export async function ingestTelemetryBatch(
   const alertsToCreate = evaluateRules(eventRows, { agentId, tenantId });
 
   await prisma.$transaction(async (tx) => {
-    await tx.telemetryEvent.createMany({ data: eventRows });
+    await tx.telemetryEvent.createMany({
+      data: eventRows.map((row) => ({
+        ...row,
+        payload: row.payload as Prisma.InputJsonValue,
+      })),
+    });
 
     await tx.agent.update({
       where: { id: agentId },

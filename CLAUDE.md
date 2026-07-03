@@ -124,8 +124,7 @@ Custom JWT-based auth:
 
 **Next up:** Policy engine — priority #6.
 
-**Note:** Run `npm install` in `backend/api-gateway` before `npm run test` or `npm run lint`.
-After install, delete `src/types/prisma-client-stub.d.ts` and run `npx prisma generate` to get real Prisma types.
+**Note:** Run `npm install` in `backend/api-gateway` before `npm run test` or `npm run lint`. `postinstall` runs `prisma generate` so `@prisma/client` types match `schema.prisma`. After schema changes, run `npx prisma generate` (or reinstall).
 
 ### Integration tests (`backend/api-gateway`)
 

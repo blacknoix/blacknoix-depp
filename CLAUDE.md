@@ -39,6 +39,7 @@ infra/
 | frontend | `npm run lint` | Lint |
 | api-gateway | `npm run dev` | Start dev server |
 | api-gateway | `npm run test` | Run tests |
+| api-gateway | `npm run test:integration` | Run Postgres integration tests (see below) |
 | api-gateway | `npm run lint` | Lint |
 | agent-manager | `npm run dev` | Start dev server |
 | agent-manager | `npm run test` | Run tests |
@@ -125,6 +126,27 @@ Custom JWT-based auth:
 
 **Note:** Run `npm install` in `backend/api-gateway` before `npm run test` or `npm run lint`.
 After install, delete `src/types/prisma-client-stub.d.ts` and run `npx prisma generate` to get real Prisma types.
+
+### Integration tests (`backend/api-gateway`)
+
+Unit tests (`npm test`) mock Prisma and do not need a database. Integration tests (`npm run test:integration`) use a real Postgres instance.
+
+1. Start test Postgres (from `backend/api-gateway`):
+   ```bash
+   docker compose -f docker-compose.test.yml up -d --wait
+   ```
+2. Run integration tests:
+   ```bash
+   npm run test:integration
+   ```
+3. Stop when finished:
+   ```bash
+   docker compose -f docker-compose.test.yml down
+   ```
+
+Uses `DATABASE_URL=postgresql://test:test@localhost:5432/depp_test` (override via env if needed). Migrations are applied with `prisma migrate deploy` before the suite runs.
+
+**Migration note (no action needed today):** This repo includes baseline migration `20240623100000_baseline_auth` so `prisma migrate deploy` builds the database correctly from an empty Postgres (previously failed with P3018 — auth tables were never captured as a migration). Development currently uses mocks and an ephemeral test database, so no baselining is required now. If a persistent database is ever created via `db push` instead of `migrate deploy`, it must be baselined with `prisma migrate resolve --applied` before its next deploy — inspect any such environment individually.
 
 ## Current priorities
 1. Auth + RBAC

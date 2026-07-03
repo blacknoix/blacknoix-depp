@@ -8,6 +8,7 @@
     "start": "node dist/app.js",
     "lint": "eslint src --ext .ts",
     "test": "jest --forceExit --runInBand",
+    "test:integration": "jest --config jest.integration.config.js --forceExit --runInBand",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

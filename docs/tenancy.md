@@ -88,6 +88,7 @@ await prisma.someModel.create({
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/tenant` | Current tenant profile |
+| `GET` | `/api/tenant/overview` | Dashboard aggregates for caller's tenant (analyst+) |
 | `GET` | `/api/tenants/:tenantId` | Tenant profile (param must match token) |
 | `GET` | `/api/users/:userId` | User in caller's tenant only |
 | `GET` | `/api/agents` | List agents in caller's tenant ([agents.md](./agents.md)) |
@@ -151,6 +152,37 @@ export async function getUserInTenant(tenantId: string, userId: string) {
 
 ---
 
-## Shared Prisma client
+## Tenant overview dashboard
+
+### `GET /api/tenant/overview`
+
+Returns read-only aggregate metrics for the authenticated caller's tenant. Uses **tenant-from-auth-context** (same pattern as `GET /api/tenant`) — no path-param tenant id.
+
+| Requirement | Value |
+|---|---|
+| Auth | Bearer access token (`tenantScoped` chain) |
+| Minimum role | `analyst` (owner/admin/analyst allowed; read-only → 403) |
+| Missing tenant | `404` `{ "error": "Tenant not found" }` (same as `GET /api/tenant`) |
+
+**Response fields:**
+
+| Section | Fields |
+|---|---|
+| `tenant` | `id`, `name` |
+| `agents` | `total`, `byStatus` (stored `Agent.status`: `pending`, `active`, `inactive`, `revoked`, `expired`), `recentlySeen` |
+| `alerts` | `total`, `byStatus` (`open`, `acknowledged`, `resolved`), `bySeverity` (`info`, `low`, `medium`, `high`, `critical`) |
+| `telemetry` | `events24h` — count of events with `receivedAt` in the rolling last 24 hours |
+| `activity` | `lastTelemetryReceivedAt`, `lastAlertCreatedAt`, `lastAgentSeenAt` (ISO strings or `null`) |
+| `generatedAt` | Server ISO timestamp when the overview was computed |
+
+**Semantics (product sign-off recommended for `recentlySeen`):**
+
+- **`agents.byStatus`:** counts from the stored `Agent.status` column (not computed from `lastSeenAt`).
+- **`agents.recentlySeen`:** count of agents where `lastSeenAt >= now - 24h` (rolling window from server clock). Same 24h window as `telemetry.events24h`.
+- **`telemetry.events24h`:** tenant-scoped count where `receivedAt >= now - 24h`. Supported by index `@@index([tenantId, receivedAt])` on `telemetry_events`.
+
+**Audit / metrics:** No dedicated audit action or metric counter — matches `GET /api/tenant` (read-only profile) and avoids dashboard log flooding on every page load.
+
+---
 
 Import `prisma` from `src/lib/prisma.ts` in all services. Do not instantiate `PrismaClient` per module.

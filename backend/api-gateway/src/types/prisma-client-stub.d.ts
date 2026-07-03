@@ -271,6 +271,25 @@ declare module '@prisma/client' {
       where: { id: string; tenantId: string; status: AgentStatus };
       data: Partial<Pick<Agent, 'status'>>;
     }): Promise<{ count: number }>;
+    groupBy(args: {
+      by: ['status'];
+      where: { tenantId: string };
+      _count: { _all: true };
+    }): Promise<Array<{ status: AgentStatus; _count: { _all: number } }>>;
+    count(args: {
+      where: {
+        tenantId: string;
+        lastSeenAt?: { gte: Date };
+      };
+    }): Promise<number>;
+    findFirst(args: {
+      where: {
+        tenantId: string;
+        lastSeenAt?: { not: null };
+      };
+      orderBy: { lastSeenAt: 'desc' };
+      select: { lastSeenAt: true };
+    }): Promise<{ lastSeenAt: Date | null } | null>;
   }
 
   type TelemetryEventRow = Pick<
@@ -316,6 +335,17 @@ declare module '@prisma/client' {
         payload: true;
       };
     }): Promise<TelemetryEventRow[]>;
+    count(args: {
+      where: {
+        tenantId: string;
+        receivedAt?: { gte: Date };
+      };
+    }): Promise<number>;
+    findFirst(args: {
+      where: { tenantId: string };
+      orderBy: { receivedAt: 'desc' };
+      select: { receivedAt: true };
+    }): Promise<{ receivedAt: Date } | null>;
   }
 
   type AlertSummaryRow = Pick<
@@ -415,6 +445,21 @@ declare module '@prisma/client' {
         status: AlertStatus;
       }>;
     }): Promise<{ count: number }>;
+    groupBy(args: {
+      by: ['status'];
+      where: { tenantId: string };
+      _count: { _all: true };
+    }): Promise<Array<{ status: AlertStatus; _count: { _all: number } }>>;
+    groupBy(args: {
+      by: ['severity'];
+      where: { tenantId: string };
+      _count: { _all: true };
+    }): Promise<Array<{ severity: string; _count: { _all: number } }>>;
+    findFirst(args: {
+      where: { tenantId: string };
+      orderBy: { createdAt: 'desc' };
+      select: { createdAt: true };
+    }): Promise<{ createdAt: Date } | null>;
   }
 
   type TransactionClient = {

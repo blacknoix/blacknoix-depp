@@ -7,12 +7,14 @@ import {
   listAgentsInTenant,
   revokeAgent,
 } from '../services/agentService';
+import { isolateAgent, restoreAgent } from '../services/agentIsolationService';
 import { listEventsForAgent } from '../services/telemetryService';
 import {
   CreateAgentInput,
   DEFAULT_ENROLLMENT_WINDOW_HOURS,
   MAX_ENROLLMENT_WINDOW_HOURS,
 } from '../types/agent';
+import { AgentIsolationError } from '../types/agentIsolation';
 
 export const agentRouter = Router();
 
@@ -134,6 +136,81 @@ agentRouter.post('/:agentId/revoke', requireRole('admin'), (req, res) => revokeH
  * Architecture alias for revocation.
  */
 agentRouter.patch('/:agentId/revoke', requireRole('admin'), (req, res) => revokeHandler(req, res));
+
+function readOptionalReason(body: unknown): string | undefined {
+  if (typeof body !== 'object' || body === null) {
+    return undefined;
+  }
+  const reason = (body as Record<string, unknown>).reason;
+  return typeof reason === 'string' ? reason.trim() : undefined;
+}
+
+function isValidAgentId(agentId: string): boolean {
+  return typeof agentId === 'string' && agentId.trim().length > 0;
+}
+
+async function isolateHandler(req: Parameters<typeof readTenantFromRequest>[0], res: Response): Promise<void> {
+  const { agentId } = req.params;
+  if (!isValidAgentId(agentId)) {
+    res.status(404).json({ error: 'Agent not found' });
+    return;
+  }
+
+  const { tenantId, actor } = readActor(req);
+  const reason = readOptionalReason(req.body);
+
+  try {
+    const isolation = await isolateAgent(tenantId, agentId, actor, reason);
+    if (!isolation) {
+      res.status(404).json({ error: 'Agent not found' });
+      return;
+    }
+    res.json(isolation);
+  } catch (error) {
+    if (error instanceof AgentIsolationError) {
+      res.status(409).json({ error: error.message });
+      return;
+    }
+    throw error;
+  }
+}
+
+async function restoreHandler(req: Parameters<typeof readTenantFromRequest>[0], res: Response): Promise<void> {
+  const { agentId } = req.params;
+  if (!isValidAgentId(agentId)) {
+    res.status(404).json({ error: 'Agent not found' });
+    return;
+  }
+
+  const { tenantId, actor } = readActor(req);
+
+  try {
+    const isolation = await restoreAgent(tenantId, agentId, actor);
+    if (!isolation) {
+      res.status(404).json({ error: 'Agent not found' });
+      return;
+    }
+    res.json(isolation);
+  } catch (error) {
+    if (error instanceof AgentIsolationError) {
+      res.status(409).json({ error: error.message });
+      return;
+    }
+    throw error;
+  }
+}
+
+/**
+ * POST /api/agents/:agentId/isolate
+ * Record platform-side isolation intent for an endpoint agent.
+ */
+agentRouter.post('/:agentId/isolate', requireRole('admin'), (req, res) => isolateHandler(req, res));
+
+/**
+ * POST /api/agents/:agentId/restore
+ * Lift platform-side isolation for an endpoint agent.
+ */
+agentRouter.post('/:agentId/restore', requireRole('admin'), (req, res) => restoreHandler(req, res));
 
 /**
  * GET /api/agents/:agentId/events

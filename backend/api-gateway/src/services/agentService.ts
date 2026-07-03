@@ -36,6 +36,7 @@ const AGENT_SUMMARY_SELECT = {
   enrolledByUserId: true,
   pendingExpiresAt: true,
   registeredAt: true,
+  isolatedAt: true,
 } as const;
 
 const MAX_TOKEN_CREATE_ATTEMPTS = 3;
@@ -87,6 +88,7 @@ function toAgentSummary(row: {
   enrolledByUserId: string;
   pendingExpiresAt: Date;
   registeredAt: Date;
+  isolatedAt?: Date | null;
 }): AgentSummary {
   return {
     id: row.id,
@@ -100,6 +102,7 @@ function toAgentSummary(row: {
     enrolledBy: row.enrolledByUserId,
     pendingExpiresAt: row.pendingExpiresAt,
     registeredAt: row.registeredAt,
+    isolatedAt: row.isolatedAt ?? null,
   };
 }
 

@@ -59,6 +59,7 @@ declare module '@prisma/client' {
     lastSeenAt: Date | null;
     createdAt: Date;
     updatedAt: Date;
+    isolatedAt: Date | null;
   }
 
   export interface TelemetryEvent {
@@ -138,6 +139,7 @@ declare module '@prisma/client' {
     | 'enrolledByUserId'
     | 'pendingExpiresAt'
     | 'registeredAt'
+    | 'isolatedAt'
   >;
 
   type AgentDetailRow = AgentSummaryRow &
@@ -169,6 +171,7 @@ declare module '@prisma/client' {
         enrolledByUserId: true;
         pendingExpiresAt: true;
         registeredAt: true;
+        isolatedAt: true;
       };
     }): Promise<AgentSummaryRow>;
     findFirst(args: {
@@ -203,6 +206,7 @@ declare module '@prisma/client' {
         enrolledByUserId: true;
         pendingExpiresAt: true;
         registeredAt: true;
+        isolatedAt: true;
       };
     }): Promise<AgentSummaryRow[]>;
     findFirst(args: {
@@ -224,6 +228,7 @@ declare module '@prisma/client' {
         lastAgentVersion: true;
         createdAt: true;
         updatedAt: true;
+        isolatedAt: true;
       };
     }): Promise<AgentDetailRow | null>;
     findFirst(args: {
@@ -240,8 +245,18 @@ declare module '@prisma/client' {
         enrolledByUserId: true;
         pendingExpiresAt: true;
         registeredAt: true;
+        isolatedAt: true;
       };
     }): Promise<AgentSummaryRow | null>;
+    findFirst(args: {
+      where: { id: string; tenantId: string };
+      select: {
+        id: true;
+        tenantId: true;
+        status: true;
+        isolatedAt: true;
+      };
+    }): Promise<Pick<Agent, 'id' | 'tenantId' | 'status' | 'isolatedAt'> | null>;
     findFirst(args: {
       where: { id: string; tenantId: string };
       select: { id: true; status: true };
@@ -252,7 +267,7 @@ declare module '@prisma/client' {
     }): Promise<Pick<Agent, 'id'> | null>;
     update(args: {
       where: { id: string };
-      data: Partial<Pick<Agent, 'status' | 'lastSeenAt' | 'lastIpHash'>>;
+      data: Partial<Pick<Agent, 'status' | 'lastSeenAt' | 'lastIpHash' | 'isolatedAt'>>;
       select?: {
         id: true;
         tenantId: true;
@@ -265,8 +280,23 @@ declare module '@prisma/client' {
         enrolledByUserId: true;
         pendingExpiresAt: true;
         registeredAt: true;
+        isolatedAt: true;
       };
     }): Promise<AgentSummaryRow | Agent>;
+    update(args: {
+      where: { id: string };
+      data: Partial<Pick<Agent, 'isolatedAt'>>;
+      select: {
+        id: true;
+        tenantId: true;
+        status: true;
+        isolatedAt: true;
+      };
+    }): Promise<Pick<Agent, 'id' | 'tenantId' | 'status' | 'isolatedAt'>>;
+    updateMany(args: {
+      where: { id: string; tenantId: string };
+      data: Partial<Pick<Agent, 'isolatedAt'>>;
+    }): Promise<{ count: number }>;
     updateMany(args: {
       where: { id: string; tenantId: string; status: AgentStatus };
       data: Partial<Pick<Agent, 'status'>>;

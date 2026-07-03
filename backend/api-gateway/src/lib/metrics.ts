@@ -12,6 +12,8 @@ export interface MetricsSnapshot {
   agentActivated: number;
   agentExpired: number;
   agentRevoked: number;
+  agentsIsolated: number;
+  agentsRestored: number;
   unauthorizedCount: number;
   forbiddenCount: number;
   rateLimitedCount: number;
@@ -34,6 +36,8 @@ const counters = {
   agentActivated: 0,
   agentExpired: 0,
   agentRevoked: 0,
+  agentsIsolated: 0,
+  agentsRestored: 0,
   unauthorizedCount: 0,
   forbiddenCount: 0,
   rateLimitedCount: 0,
@@ -93,6 +97,14 @@ export function recordAgentRevoked(): void {
   counters.agentRevoked += 1;
 }
 
+export function recordAgentIsolated(): void {
+  counters.agentsIsolated += 1;
+}
+
+export function recordAgentRestored(): void {
+  counters.agentsRestored += 1;
+}
+
 export function recordUnauthorized(): void {
   counters.unauthorizedCount += 1;
 }
@@ -129,6 +141,8 @@ export function getMetricsSnapshot(): MetricsSnapshot {
     agentActivated: counters.agentActivated,
     agentExpired: counters.agentExpired,
     agentRevoked: counters.agentRevoked,
+    agentsIsolated: counters.agentsIsolated,
+    agentsRestored: counters.agentsRestored,
     unauthorizedCount: counters.unauthorizedCount,
     forbiddenCount: counters.forbiddenCount,
     rateLimitedCount: counters.rateLimitedCount,
@@ -153,6 +167,8 @@ export function resetMetrics(): void {
   counters.agentActivated = 0;
   counters.agentExpired = 0;
   counters.agentRevoked = 0;
+  counters.agentsIsolated = 0;
+  counters.agentsRestored = 0;
   counters.unauthorizedCount = 0;
   counters.forbiddenCount = 0;
   counters.rateLimitedCount = 0;

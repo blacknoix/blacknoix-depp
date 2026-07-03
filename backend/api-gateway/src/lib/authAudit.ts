@@ -30,7 +30,10 @@ export type AuthAuditAction =
   | 'alert_read'
   | 'alert_access_denied'
   | 'alert_updated'
-  | 'alert_created';
+  | 'alert_created'
+  | 'agent_isolated'
+  | 'agent_restored'
+  | 'agent_isolation_access_denied';
 
 export interface AuthAuditEvent {
   timestamp?: string;
@@ -50,7 +53,7 @@ export interface AuthAuditEvent {
   reason?: string;
   fields?: string[];
   clientIpHash?: string;
-  meta?: Record<string, string | number | boolean>;
+  meta?: Record<string, unknown>;
 }
 
 const LOG_PREFIX = 'AUTH_EVENT';
@@ -92,6 +95,31 @@ function containsSensitiveValue(value: string): boolean {
   return /password|refreshToken|accessToken|Bearer\s+eyJ|depp_agt_[0-9a-f]+/i.test(value);
 }
 
+function sanitizeMetaValue(value: unknown): unknown {
+  if (typeof value === 'string' && containsSensitiveValue(value)) {
+    return undefined;
+  }
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => sanitizeMetaValue(item))
+      .filter((item) => item !== undefined);
+  }
+  if (value !== null && typeof value === 'object') {
+    const nested: Record<string, unknown> = {};
+    for (const [key, nestedValue] of Object.entries(value as Record<string, unknown>)) {
+      if (SENSITIVE_FIELD_NAMES.has(key)) {
+        continue;
+      }
+      const cleaned = sanitizeMetaValue(nestedValue);
+      if (cleaned !== undefined) {
+        nested[key] = cleaned;
+      }
+    }
+    return nested;
+  }
+  return value;
+}
+
 function sanitizeEvent(event: AuthAuditEvent): AuthAuditEvent {
   const clean: Record<string, unknown> = {
     ...event,
@@ -99,6 +127,9 @@ function sanitizeEvent(event: AuthAuditEvent): AuthAuditEvent {
   };
 
   for (const key of Object.keys(clean)) {
+    if (key === 'meta') {
+      continue;
+    }
     if (SENSITIVE_FIELD_NAMES.has(key)) {
       delete clean[key];
       continue;
@@ -113,21 +144,8 @@ function sanitizeEvent(event: AuthAuditEvent): AuthAuditEvent {
     clean.fields = (clean.fields as string[]).filter((f) => !SENSITIVE_FIELD_NAMES.has(f));
   }
 
-  if (clean.meta && typeof clean.meta === 'object' && !Array.isArray(clean.meta)) {
-    const meta: Record<string, string | number | boolean> = {
-      ...(clean.meta as Record<string, string | number | boolean>),
-    };
-    for (const key of Object.keys(meta)) {
-      if (SENSITIVE_FIELD_NAMES.has(key)) {
-        delete meta[key];
-        continue;
-      }
-      const value = meta[key];
-      if (typeof value === 'string' && containsSensitiveValue(value)) {
-        delete meta[key];
-      }
-    }
-    clean.meta = meta;
+  if (event.meta) {
+    clean.meta = sanitizeMetaValue(event.meta);
   }
 
   return clean as unknown as AuthAuditEvent;

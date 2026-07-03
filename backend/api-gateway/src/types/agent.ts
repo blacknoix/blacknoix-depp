@@ -26,6 +26,7 @@ export interface AgentSummary {
   enrolledBy: string;
   pendingExpiresAt: Date;
   registeredAt: Date;
+  isolatedAt?: Date | null;
 }
 
 export interface AgentDetail extends AgentSummary {

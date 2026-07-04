@@ -20,6 +20,7 @@ See also: [telemetry.md](./telemetry.md) for ingestion, [tenancy.md](./tenancy.m
 | `severity` | string | Copied from triggering event (`high`, `critical`, etc.) |
 | `status` | enum | `open`, `acknowledged`, `resolved` |
 | `ruleId` | string? | Correlation rule that produced the alert (`null` for legacy rows) |
+| `indicator` | string? | Queryable malware/IOC identifier when derivable from telemetry (`null` for legacy, burst, or when agents omit IOC data) |
 | `assignedToId` | UUID? | Assigned analyst (must be same tenant) |
 | `resolvedAt` | datetime? | Set when status becomes `resolved` |
 | `createdAt` | datetime | Alert creation time |
@@ -73,6 +74,16 @@ Alerts are created during telemetry ingest by a **pure in-memory correlation eng
 
 `GET /api/alerts?ruleId=malware-prefix` returns tenant-scoped alerts for that rule. Indexed by `(tenantId, ruleId)`.
 
+### Filtering by indicator
+
+`GET /api/alerts?indicator=<hash>` returns tenant-scoped alerts with that malware/IOC indicator. Indexed by `(tenantId, indicator)`. Useful for triage and future correlation-v2 outbreak grouping.
+
+### Indicator capture (dependency)
+
+At alert creation during telemetry ingest, the correlation engine copies an optional `fileHash` string from the triggering event's `payload` into `Alert.indicator`. If the agent does not emit `payload.fileHash`, `indicator` is stored as `null` — this is expected until agents send structured IOCs.
+
+Burst alerts (`batch-burst`) and legacy rows always have `indicator: null`.
+
 ---
 
 ## Auto-trigger rules (ingest)
@@ -98,6 +109,7 @@ Alert fields at creation:
 | `agentId` | Authenticated agent context |
 | `telemetryEventId` | Event UUID, or `null` for burst |
 | `ruleId` | Matching correlation rule id |
+| `indicator` | `payload.fileHash` when present on triggering event; otherwise `null` |
 | `title` | Rule title template |
 | `severity` | Rule output severity |
 | `status` | `open` |
@@ -142,6 +154,7 @@ List alerts in the caller's tenant.
 | `severity` | Filter by severity string |
 | `agentId` | Filter by source agent |
 | `ruleId` | Filter by correlation rule id |
+| `indicator` | Filter by malware/IOC indicator |
 | `limit` | Default 50, max 200 |
 | `before` | ISO datetime cursor on `createdAt` |
 

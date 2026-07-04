@@ -7,6 +7,7 @@ import {
   SeverityThresholdRule,
   TelemetryEventRow,
 } from '../types/correlationRule';
+import { extractAlertIndicator } from './alertIndicator';
 
 /** Replace `{token}` placeholders in alert title templates. */
 function applyTemplate(template: string, tokens: Record<string, string | number>): string {
@@ -81,6 +82,7 @@ function matchSeverityThreshold(
     }),
     severity: row.severity,
     ruleId: rule.id,
+    indicator: extractAlertIndicator(row.payload),
   };
 }
 
@@ -95,6 +97,7 @@ function matchEventTypePrefix(rule: EventTypeMatchRule, row: TelemetryEventRow):
     title: applyTemplate(rule.titleTemplate, { eventType: row.eventType }),
     severity: rule.alertSeverity,
     ruleId: rule.id,
+    indicator: extractAlertIndicator(row.payload),
   };
 }
 
@@ -114,6 +117,7 @@ function matchBatchBurst(
     title: applyTemplate(rule.titleTemplate, { count: matching.length }),
     severity: rule.alertSeverity,
     ruleId: rule.id,
+    indicator: null,
   };
 }
 

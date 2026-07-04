@@ -36,6 +36,7 @@ describe('updateAlert audit and metrics', () => {
       severity: 'high',
       status: 'acknowledged',
       ruleId: 'severity-threshold',
+      indicator: null,
       assignedToId: null,
       resolvedAt: null,
       createdAt: new Date(),

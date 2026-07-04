@@ -41,8 +41,8 @@ function auditBase(req: Parameters<typeof readTenantFromRequest>[0]) {
   };
 }
 
-function hasListFilters(filters: Pick<AlertFilterParams, 'status' | 'severity' | 'agentId' | 'ruleId'>): boolean {
-  return Boolean(filters.status || filters.severity || filters.agentId || filters.ruleId);
+function hasListFilters(filters: Pick<AlertFilterParams, 'status' | 'severity' | 'agentId' | 'ruleId' | 'indicator'>): boolean {
+  return Boolean(filters.status || filters.severity || filters.agentId || filters.ruleId || filters.indicator);
 }
 
 function isFirstPage(filters: Pick<AlertFilterParams, 'before'>): boolean {
@@ -69,12 +69,14 @@ alertRouter.get('/', requireRole('analyst'), async (req, res: Response): Promise
   const severity = typeof req.query.severity === 'string' ? req.query.severity : undefined;
   const agentId = typeof req.query.agentId === 'string' ? req.query.agentId : undefined;
   const ruleId = typeof req.query.ruleId === 'string' ? req.query.ruleId : undefined;
+  const indicator = typeof req.query.indicator === 'string' ? req.query.indicator : undefined;
 
   const filters: AlertFilterParams = {
     status,
     severity,
     agentId,
     ruleId,
+    indicator,
     limit: parseLimit(req.query.limit),
     before: parseBefore(req.query.before),
   };
@@ -93,6 +95,7 @@ alertRouter.get('/', requireRole('analyst'), async (req, res: Response): Promise
         ...(severity ? { severity } : {}),
         ...(agentId ? { agentId } : {}),
         ...(ruleId ? { ruleId } : {}),
+        ...(indicator ? { indicator } : {}),
         ...(filters.before ? { paginated: true } : {}),
       },
     });

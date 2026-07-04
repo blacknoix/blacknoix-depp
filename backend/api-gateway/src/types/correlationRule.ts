@@ -20,6 +20,7 @@ export interface AlertToCreate {
   title: string;
   severity: string;
   ruleId: string;
+  indicator: string | null;
 }
 
 interface CorrelationRuleBase {

@@ -22,6 +22,7 @@ const ALERT_SUMMARY_SELECT = {
   severity: true,
   status: true,
   ruleId: true,
+  indicator: true,
   assignedToId: true,
   createdAt: true,
   updatedAt: true,
@@ -46,6 +47,7 @@ function toAlertSummary(row: {
   severity: string;
   status: string;
   ruleId: string | null;
+  indicator: string | null;
   assignedToId: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -59,6 +61,7 @@ function toAlertSummary(row: {
     severity: row.severity,
     status: toAlertStatus(row.status),
     ruleId: row.ruleId,
+    indicator: row.indicator,
     assignedToId: row.assignedToId,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -74,6 +77,7 @@ function toAlertDetail(row: {
   severity: string;
   status: string;
   ruleId: string | null;
+  indicator: string | null;
   assignedToId: string | null;
   resolvedAt: Date | null;
   createdAt: Date;
@@ -97,6 +101,7 @@ export async function listAlerts(
       ...(filters.severity ? { severity: filters.severity } : {}),
       ...(filters.agentId ? { agentId: filters.agentId } : {}),
       ...(filters.ruleId ? { ruleId: filters.ruleId } : {}),
+      ...(filters.indicator ? { indicator: filters.indicator } : {}),
       ...(filters.before ? { createdAt: { lt: filters.before } } : {}),
     },
     orderBy: { createdAt: 'desc' },

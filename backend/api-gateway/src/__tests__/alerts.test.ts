@@ -41,6 +41,7 @@ const sampleAlertSummary = {
   severity: 'critical',
   status: 'open' as const,
   ruleId: 'severity-threshold',
+  indicator: null,
   assignedToId: null,
   createdAt: new Date('2024-06-02T10:00:00.000Z'),
   updatedAt: new Date('2024-06-02T10:00:00.000Z'),
@@ -145,6 +146,25 @@ describe('GET /api/alerts', () => {
       expect.objectContaining({
         action: 'alert_list',
         meta: expect.objectContaining({ ruleId: 'malware-prefix' }),
+      })
+    );
+  });
+
+  it('filter by indicator', async () => {
+    mockedListAlerts.mockResolvedValue([]);
+
+    await request(app)
+      .get('/api/alerts?indicator=abc123hash')
+      .set('Authorization', `Bearer ${makeUserToken()}`);
+
+    expect(mockedListAlerts).toHaveBeenCalledWith(
+      'tenant-a',
+      expect.objectContaining({ indicator: 'abc123hash' })
+    );
+    expect(logAuthEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'alert_list',
+        meta: expect.objectContaining({ indicator: 'abc123hash' }),
       })
     );
   });

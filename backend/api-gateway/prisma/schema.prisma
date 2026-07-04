@@ -17,6 +17,7 @@ model Tenant {
   agents          Agent[]
   telemetryEvents TelemetryEvent[]
   alerts          Alert[]
+  correlatedIncidents CorrelatedIncident[]
 
   @@map("tenants")
 }
@@ -166,4 +167,23 @@ enum AgentStatus {
   expired
 
   @@map("agent_status")
+}
+
+model CorrelatedIncident {
+  id         String   @id
+  tenantId   String
+  type       String
+  indicator  String
+  agentIds   String[]
+  alertIds   String[]
+  agentCount Int
+  firstSeen  DateTime
+  lastSeen   DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId, type])
+  @@map("correlated_incidents")
 }

@@ -9,6 +9,7 @@ export async function truncateAllIntegrationTables(): Promise<void> {
   const prisma = getIntegrationPrisma();
   await prisma.$executeRawUnsafe(`
     TRUNCATE TABLE
+      "correlated_incidents",
       "alerts",
       "telemetry_events",
       "refresh_tokens",

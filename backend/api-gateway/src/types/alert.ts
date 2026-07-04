@@ -18,6 +18,7 @@ export interface AlertSummary {
   severity: string;
   status: AlertStatus;
   ruleId: string | null;
+  indicator: string | null;
   assignedToId: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -37,6 +38,7 @@ export interface AlertFilterParams {
   severity?: string;
   agentId?: string;
   ruleId?: string;
+  indicator?: string;
   limit: number;
   before?: Date;
 }

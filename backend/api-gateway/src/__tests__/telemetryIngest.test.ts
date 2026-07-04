@@ -60,7 +60,22 @@ describe('ingestTelemetryBatch transaction', () => {
       severity: 'high',
       status: 'open',
       title: 'HIGH event: file.write',
+      indicator: null,
     });
+  });
+
+  it('persists indicator when payload.fileHash is present', async () => {
+    const hash = 'deadbeef'.repeat(8);
+    await ingestTelemetryBatch('agent-a', 'tenant-a', [
+      event({
+        severity: 'critical',
+        eventType: 'malware.detected',
+        payload: { fileHash: hash },
+      }),
+    ]);
+
+    const alertData = capturedTx.alert.createMany.mock.calls[0][0].data;
+    expect(alertData[0].indicator).toBe(hash);
   });
 
   it('alert createMany runs inside the same transaction callback', async () => {
@@ -158,6 +173,7 @@ describe('ingestTelemetryBatch transaction', () => {
       telemetryEventId: null,
       ruleId: 'batch-burst',
       severity: 'critical',
+      indicator: null,
     });
   });
 

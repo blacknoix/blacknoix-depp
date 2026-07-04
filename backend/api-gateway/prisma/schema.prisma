@@ -140,6 +140,7 @@ model Alert {
   severity         String
   status           AlertStatus @default(open)
   ruleId           String?
+  indicator        String?
   assignedToId     String?
   resolvedAt       DateTime?
   createdAt        DateTime    @default(now())
@@ -152,6 +153,7 @@ model Alert {
 
   @@index([tenantId, status, createdAt])
   @@index([tenantId, ruleId])
+  @@index([tenantId, indicator])
   @@index([agentId])
   @@map("alerts")
 }

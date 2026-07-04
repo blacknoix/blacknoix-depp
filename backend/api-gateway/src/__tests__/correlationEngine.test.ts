@@ -47,7 +47,24 @@ describe('evaluateRules', () => {
       ruleId: 'malware-prefix',
       severity: 'high',
       title: 'Malware event: malware.trojan',
+      indicator: null,
     });
+  });
+
+  it('populates indicator from payload.fileHash when present', () => {
+    const hash = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
+    const alerts = evaluateRules(
+      [
+        row({
+          id: 'e1',
+          severity: 'critical',
+          eventType: 'malware.detected',
+          payload: { fileHash: hash },
+        }),
+      ],
+      context
+    );
+    expect(alerts[0].indicator).toBe(hash);
   });
 
   it('malware-prefix wins over severity-threshold for critical malware events', () => {
@@ -88,6 +105,7 @@ describe('evaluateRules', () => {
     const burst = alerts.find((a) => a.ruleId === 'batch-burst');
     expect(burst).toBeDefined();
     expect(burst!.telemetryEventId).toBeNull();
+    expect(burst!.indicator).toBeNull();
     expect(burst!.title).toContain('3');
     expect(alerts.filter((a) => a.telemetryEventId)).toHaveLength(3);
   });

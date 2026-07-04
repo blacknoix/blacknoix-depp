@@ -39,6 +39,8 @@ Each event in a batch:
 | `occurredAt` | string | yes | ISO 8601 datetime when the event happened on the endpoint |
 | `payload` | object | yes | Arbitrary JSON object with event-specific fields (not an array) |
 
+For malware events (`eventType` starting with `malware.`), agents may include optional structured IOC fields. When present, `payload.fileHash` (string) is copied to `Alert.indicator` at alert creation for future correlation grouping. Agents that omit `fileHash` produce alerts with `indicator: null` until IOC emission is implemented on the endpoint.
+
 `tenantId` and `agentId` are **never** accepted from the request body — they are derived from the authenticated agent context.
 
 ---

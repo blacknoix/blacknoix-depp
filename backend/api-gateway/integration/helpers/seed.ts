@@ -55,6 +55,7 @@ export interface CreateAlertInput {
   status?: AlertStatus;
   createdAt?: Date;
   ruleId?: string | null;
+  indicator?: string | null;
   telemetryEventId?: string | null;
 }
 
@@ -143,6 +144,7 @@ export async function createAlert(input: CreateAlertInput) {
       createdAt: input.createdAt ?? now,
       updatedAt: input.createdAt ?? now,
       ruleId: input.ruleId ?? null,
+      indicator: input.indicator ?? null,
       telemetryEventId: input.telemetryEventId ?? null,
     },
   });

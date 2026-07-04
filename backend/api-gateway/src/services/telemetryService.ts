@@ -116,6 +116,7 @@ export async function ingestTelemetryBatch(
           title: alert.title,
           severity: alert.severity,
           ruleId: alert.ruleId,
+          indicator: alert.indicator,
           status: 'open' as const,
         })),
       });

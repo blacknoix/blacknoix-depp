@@ -206,7 +206,7 @@ Six patterns are contemplated. **Only `malware_outbreak` is implemented.** The o
 | Pattern | Status | Telemetry / alert data today | Would need first |
 |---|---|---|---|
 | **Malware hash outbreak** | **Implemented** | `Alert.indicator` from `payload.fileHash` (capture path exists; values null without agent) | Real agent emitting `fileHash` on malware events |
-| Lateral movement chain | Not built | Generic `payload` JSON only | `payload.parentProcessId` or process-tree links across agents |
+| Lateral movement chain | **Data path only** (rule not implemented) | `auth.remote_logon` / `auth.privilege_change` → `authAccount`, `authHost`, `authGrantedTo`, `authSourceHost` on `TelemetryEvent`; `listAuthTelemetryForTenant` (columns null without agent) | v2 correlation rule; agent emitting `auth.*` events per `docs/telemetry.md` |
 | Credential spray | Not built | No auth-failure event types | Structured auth-failure events with `payload.targetUser` |
 | C2 beaconing | Not built | No network beacon event types | Network events with `payload.destinationHost` + timing |
 | Privilege escalation burst | Not built | No elevation event types | `payload.elevatedTo` / role-change events across agents |
@@ -224,7 +224,7 @@ Outbreak defaults (in code): `OUTBREAK_WINDOW_MS` = 24h, `OUTBREAK_MIN_AGENTS` =
 
 **Agent** — endpoint identity (`displayName`, `hostname`, `os`, `agentVersion`), lifecycle status (`pending`, `active`, `inactive`, `revoked`, `expired`), credential hash, `lastSeenAt`, optional `isolatedAt`.
 
-**TelemetryEvent** — append-only: `eventType`, `severity`, `occurredAt`, `payload` (JSON), `receivedAt`. No enforced payload schema except “JSON object.”
+**TelemetryEvent** — append-only: `eventType`, `severity`, `occurredAt`, `payload` (JSON), `receivedAt`, plus nullable `authAccount`, `authHost`, `authGrantedTo`, `authSourceHost` (populated from `auth.remote_logon` / `auth.privilege_change` at ingest; null without agent). No enforced payload schema except “JSON object.”
 
 **Alert** — tenant-owned, links optional `telemetryEventId`, carries `ruleId`, nullable `indicator`, triage `status`, assignee.
 

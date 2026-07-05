@@ -5,6 +5,7 @@ import {
   Prisma,
   Role,
 } from '@prisma/client';
+import { authTelemetryColumnsForEvent } from '../../src/lib/authTelemetryExtractors';
 import { getIntegrationPrisma } from './prisma';
 
 export interface CreateTenantInput {
@@ -114,16 +115,20 @@ export async function createTelemetryEvent(input: CreateTelemetryEventInput) {
   const prisma = getIntegrationPrisma();
   const id = input.id ?? crypto.randomUUID();
   const occurredAt = input.occurredAt ?? new Date();
+  const eventType = input.eventType ?? 'process.start';
+  const payload = (input.payload ?? { source: 'integration' }) as Record<string, unknown>;
+  const authColumns = authTelemetryColumnsForEvent(eventType, payload);
   return prisma.telemetryEvent.create({
     data: {
       id,
       tenantId: input.tenantId,
       agentId: input.agentId,
-      eventType: input.eventType ?? 'process.start',
+      eventType,
       severity: input.severity ?? 'low',
       occurredAt,
       receivedAt: input.receivedAt ?? occurredAt,
       payload: input.payload ?? { source: 'integration' },
+      ...authColumns,
     },
   });
 }

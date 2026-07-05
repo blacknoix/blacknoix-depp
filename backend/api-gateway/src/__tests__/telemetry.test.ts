@@ -248,6 +248,10 @@ describe('GET /api/agents/:agentId/events', () => {
       occurredAt: new Date('2024-06-01T12:00:00.000Z'),
       receivedAt: new Date('2024-06-01T12:01:00.000Z'),
       payload: { pid: 2 },
+      authAccount: null,
+      authHost: null,
+      authGrantedTo: null,
+      authSourceHost: null,
     },
     {
       id: 'evt-1',
@@ -258,6 +262,10 @@ describe('GET /api/agents/:agentId/events', () => {
       occurredAt: new Date('2024-06-01T11:00:00.000Z'),
       receivedAt: new Date('2024-06-01T11:30:00.000Z'),
       payload: { path: '/tmp/a' },
+      authAccount: null,
+      authHost: null,
+      authGrantedTo: null,
+      authSourceHost: null,
     },
   ];
 

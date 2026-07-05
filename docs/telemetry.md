@@ -41,6 +41,49 @@ Each event in a batch:
 
 For malware events (`eventType` starting with `malware.`), agents may include optional structured IOC fields. When present, `payload.fileHash` (string) is copied to `Alert.indicator` at alert creation for future correlation grouping. Agents that omit `fileHash` produce alerts with `indicator: null` until IOC emission is implemented on the endpoint.
 
+### Auth telemetry (`auth.*` event types)
+
+For lateral-movement and privilege-escalation correlation (future slice), agents may emit structured auth events. At ingest, the gateway copies selected payload fields into nullable `TelemetryEvent` columns (`authAccount`, `authHost`, `authGrantedTo`, `authSourceHost`). **There is no endpoint agent in this repository** — columns remain null until an agent emits these event types with the payload shapes below.
+
+| eventType | Required payload fields | Optional payload fields | Persisted columns |
+|---|---|---|---|
+| `auth.remote_logon` | `account` (string), `targetHost` (string) | `sourceHost`, `logonType` | `authAccount`, `authHost`, `authSourceHost` |
+| `auth.privilege_change` | `account` (string), `host` (string) | `grantedTo`, `mechanism` | `authAccount`, `authHost`, `authGrantedTo` |
+
+Example `auth.remote_logon`:
+
+```json
+{
+  "eventType": "auth.remote_logon",
+  "severity": "medium",
+  "occurredAt": "2026-06-15T10:00:00.000Z",
+  "payload": {
+    "account": "CORP\\jdoe",
+    "sourceHost": "jumpbox-01",
+    "targetHost": "workstation-42",
+    "logonType": "remoteInteractive"
+  }
+}
+```
+
+Example `auth.privilege_change`:
+
+```json
+{
+  "eventType": "auth.privilege_change",
+  "severity": "high",
+  "occurredAt": "2026-06-15T10:05:00.000Z",
+  "payload": {
+    "account": "jdoe",
+    "host": "workstation-42",
+    "grantedTo": "admin",
+    "mechanism": "sudo"
+  }
+}
+```
+
+If required payload fields are missing or not strings, auth columns are stored as `null` (same safe omission behavior as `Alert.indicator`). Correlation code can query via `listAuthTelemetryForTenant` (tenant + `authAccount` + `eventType` + `occurredAt` window).
+
 `tenantId` and `agentId` are **never** accepted from the request body — they are derived from the authenticated agent context.
 
 ---

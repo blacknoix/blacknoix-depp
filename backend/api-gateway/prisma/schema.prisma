@@ -115,11 +115,19 @@ model TelemetryEvent {
   payload    Json
   receivedAt DateTime @default(now())
 
+  // Structured auth telemetry (nullable; populated from auth.* event payloads when present)
+  authAccount    String?
+  authHost       String?
+  authGrantedTo  String?
+  authSourceHost String?
+
   tenant Tenant @relation(fields: [tenantId], references: [id])
   agent  Agent  @relation(fields: [agentId], references: [id])
   alert  Alert?
 
   @@index([tenantId, receivedAt])
+  @@index([tenantId, authAccount])
+  @@index([tenantId, eventType, occurredAt])
   @@index([agentId, receivedAt])
   @@map("telemetry_events")
 }

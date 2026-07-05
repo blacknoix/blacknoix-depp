@@ -25,6 +25,10 @@ export interface TelemetryEventRecord {
   occurredAt: Date;
   receivedAt: Date;
   payload: Record<string, unknown>;
+  authAccount: string | null;
+  authHost: string | null;
+  authGrantedTo: string | null;
+  authSourceHost: string | null;
 }
 
 /** Express Request augmented after authenticateAgent middleware runs. */

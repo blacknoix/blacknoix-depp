@@ -78,6 +78,28 @@ describe('ingestTelemetryBatch transaction', () => {
     expect(alertData[0].indicator).toBe(hash);
   });
 
+  it('persists auth columns for auth.remote_logon events', async () => {
+    await ingestTelemetryBatch('agent-a', 'tenant-a', [
+      event({
+        eventType: 'auth.remote_logon',
+        severity: 'medium',
+        payload: {
+          account: 'jdoe',
+          targetHost: 'workstation-1',
+          sourceHost: 'jumpbox',
+        },
+      }),
+    ]);
+
+    const eventData = capturedTx.telemetryEvent.createMany.mock.calls[0][0].data;
+    expect(eventData[0]).toMatchObject({
+      authAccount: 'jdoe',
+      authHost: 'workstation-1',
+      authSourceHost: 'jumpbox',
+      authGrantedTo: null,
+    });
+  });
+
   it('alert createMany runs inside the same transaction callback', async () => {
     await ingestTelemetryBatch('agent-a', 'tenant-a', [event({ severity: 'high' })]);
 

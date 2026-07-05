@@ -1,10 +1,12 @@
 import crypto from 'crypto';
 import { Prisma } from '@prisma/client';
+import { authTelemetryColumnsForEvent } from '../lib/authTelemetryExtractors';
 import { evaluateRules } from '../lib/correlationEngine';
 import { logAuthEvent } from '../lib/authAudit';
 import { prisma } from '../lib/prisma';
 import { recordAlertCreated } from '../lib/metrics';
-import { tenantOwnedWhere } from '../lib/tenantScope';
+import { tenantOwnedWhere, tenantWhere } from '../lib/tenantScope';
+import { AuthTelemetryQueryParams } from '../types/authTelemetry';
 import { TelemetryEventInput, TelemetryEventRecord } from '../types/telemetry';
 
 const EVENT_SELECT = {
@@ -16,6 +18,10 @@ const EVENT_SELECT = {
   occurredAt: true,
   receivedAt: true,
   payload: true,
+  authAccount: true,
+  authHost: true,
+  authGrantedTo: true,
+  authSourceHost: true,
 } as const;
 
 function toEventRecord(row: {
@@ -27,6 +33,10 @@ function toEventRecord(row: {
   occurredAt: Date;
   receivedAt: Date;
   payload: unknown;
+  authAccount: string | null;
+  authHost: string | null;
+  authGrantedTo: string | null;
+  authSourceHost: string | null;
 }): TelemetryEventRecord {
   return {
     id: row.id,
@@ -37,7 +47,15 @@ function toEventRecord(row: {
     occurredAt: row.occurredAt,
     receivedAt: row.receivedAt,
     payload: row.payload as Record<string, unknown>,
+    authAccount: row.authAccount,
+    authHost: row.authHost,
+    authGrantedTo: row.authGrantedTo,
+    authSourceHost: row.authSourceHost,
   };
+}
+
+function authColumnsFromInput(event: TelemetryEventInput) {
+  return authTelemetryColumnsForEvent(event.eventType, event.payload);
 }
 
 /** Persist telemetry events for an authenticated agent. */
@@ -55,6 +73,7 @@ export async function insertEvents(
       severity: event.severity,
       occurredAt: new Date(event.occurredAt),
       payload: event.payload as Prisma.InputJsonValue,
+      ...authColumnsFromInput(event),
     })),
   });
 }
@@ -87,6 +106,7 @@ export async function ingestTelemetryBatch(
     severity: event.severity,
     occurredAt: new Date(event.occurredAt),
     payload: event.payload,
+    ...authColumnsFromInput(event),
   }));
 
   const alertsToCreate = evaluateRules(eventRows, { agentId, tenantId });
@@ -168,6 +188,37 @@ export async function listEventsForAgent(
     },
     orderBy: { receivedAt: 'desc' },
     take: limit,
+    select: EVENT_SELECT,
+  });
+
+  return events.map(toEventRecord);
+}
+
+/**
+ * List tenant-scoped auth telemetry events for correlation queries.
+ * Filters on structured columns (authAccount, eventType) and occurredAt window.
+ */
+export async function listAuthTelemetryForTenant(
+  tenantId: string,
+  filters: AuthTelemetryQueryParams
+): Promise<TelemetryEventRecord[]> {
+  const events = await prisma.telemetryEvent.findMany({
+    where: {
+      ...tenantWhere(tenantId),
+      authAccount: { not: null },
+      ...(filters.eventType ? { eventType: filters.eventType } : {}),
+      ...(filters.authAccount ? { authAccount: filters.authAccount } : {}),
+      ...(filters.since || filters.until
+        ? {
+            occurredAt: {
+              ...(filters.since ? { gte: filters.since } : {}),
+              ...(filters.until ? { lte: filters.until } : {}),
+            },
+          }
+        : {}),
+    },
+    orderBy: { occurredAt: 'asc' },
+    take: filters.limit,
     select: EVENT_SELECT,
   });
 

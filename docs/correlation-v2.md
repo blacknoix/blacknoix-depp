@@ -4,6 +4,8 @@ Correlation **v1** runs inline during telemetry ingest (`evaluateRules`) and pro
 
 v1 behavior is unchanged. v2 detection runners are **not** wired into the ingest hot path; scheduling (interval/worker) is deferred.
 
+Correlation v2 today is three idempotent detection patterns sharing one `CorrelatedIncident` model, each with an explicit false-positive guard tested at unit and integration level and documented tunable thresholds — not a full detection suite.
+
 ---
 
 ## Implemented patterns

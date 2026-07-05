@@ -25,7 +25,7 @@ This document describes **what exists in the repository today**. It is not a pro
 - **Agents:** enroll (`POST /agents`, `/agents/enroll`), list/get, revoke, **isolate/restore**, list telemetry events
 - **Alerts:** list/get/patch (triage)
 
-**Not exposed as HTTP:** `runOutbreakDetection()` (correlation v2 runner) — callable from code/tests only.
+**Not exposed as HTTP:** `runOutbreakDetection()`, `runLateralMovementDetection()`, `runTelemetryGapDetection()` (correlation v2 runners) — callable from code/tests only.
 
 **Correction vs common assumptions:** There is no tenant self-registration or user signup route. Tenants and users are created via direct database inserts (integration helpers or Prisma), not via a public API.
 
@@ -72,17 +72,17 @@ Integration suites: database smoke, tenant overview aggregations, alert indicato
 
 - **No endpoint agent** in this repository. Telemetry in tests is synthetic (HTTP POST with a enrolled agent token, or direct DB seeding).
 - **`Alert.indicator` is null on typical ingest** unless `payload.fileHash` is present; agents do not emit it today.
-- **Correlation v2:** one implemented pattern (`malware_outbreak`); five additional patterns documented as requirements only (`docs/correlation-v2.md`).
-- **Outbreak scheduling deferred:** `runOutbreakDetection` is a plain function; no cron, worker, or ingest hook.
+- **Correlation v2:** three implemented patterns (see §4); runners callable from code/tests only; scheduling deferred for all three.
+- **Correlation v2 scheduling deferred:** `runOutbreakDetection`, `runLateralMovementDetection`, and `runTelemetryGapDetection` are plain functions; no cron, worker, or ingest hook.
 - **Isolation is platform intent only:** `Agent.isolatedAt` is set in Postgres; schema comments state endpoint enforcement is deferred.
 
 ---
 
 ## 1. Overview
 
-DEPP (Decentralized Endpoint Protection Platform) is, in **current code**, a **centralized multi-tenant API gateway** for endpoint security workflows: user authentication, agent enrollment, telemetry ingestion, alert generation, alert triage, tenant dashboard aggregates, platform-side isolation intent, and cross-agent incident correlation (one pattern implemented).
+DEPP (Decentralized Endpoint Protection Platform) is, in **current code**, a **centralized multi-tenant API gateway** for endpoint security workflows: user authentication, agent enrollment, telemetry ingestion, alert generation, alert triage, tenant dashboard aggregates, platform-side isolation intent, and cross-agent incident correlation (three patterns implemented).
 
-The problem it addresses at this stage: provide a **tenant-isolated control plane** where analysts can enroll agents, receive security events, triage alerts, see tenant-level posture, and (eventually) respond — with correlation logic that can group related signals across endpoints.
+The problem it addresses at this stage: provide a **tenant-isolated control plane** where analysts can enroll agents, receive security events, triage alerts, see tenant-level posture, and (eventually) respond — with correlation logic that can group related signals across endpoints (three v2 patterns implemented; see §4).
 
 ### Name vs reality (read this first)
 
@@ -190,26 +190,26 @@ Auto-created on ingest; analysts list/filter/patch status and assignee. Forward-
 
 Nullable `Alert.indicator`, populated from optional `payload.fileHash` at v1 alert creation. Indexed `(tenantId, indicator)`. **Null in practice** until an agent emits structured IOCs.
 
-### Correlation v2 — outbreak pattern only
+### Correlation v2 — three patterns implemented
 
-- Pure engine: `detectOutbreaks` groups non-null indicators across agents in a sliding window
-- Persistence: `CorrelatedIncident` model
-- Runner: `runOutbreakDetection(tenantId)` upserts by deterministic id
+- Pure engines: `detectOutbreaks`, `detectLateralMovement`, `detectTelemetryGaps` (sibling modules under `src/lib/`)
+- Persistence: shared `CorrelatedIncident` model
+- Runners: `runOutbreakDetection`, `runLateralMovementDetection`, `runTelemetryGapDetection` — each upserts by deterministic id
 - **Not on ingest path; not scheduled; not HTTP-exposed**
 
 ---
 
 ## 4. Correlation v2 backlog
 
-Six patterns are contemplated. **Only `malware_outbreak` is implemented.** The other five are documented requirements in `docs/correlation-v2.md` with named telemetry gaps.
+Six patterns were contemplated; **three are implemented and tested** (`malware_outbreak`, `lateral_movement_privilege_escalation`, `telemetry_gap_after_alert`). Correlation v2 is three idempotent detection patterns sharing one `CorrelatedIncident` model, each with an explicit false-positive guard tested at unit and integration level and documented tunable thresholds — not a full detection suite. The remaining three are documented requirements in `docs/correlation-v2.md`.
 
-| Pattern | Status | Telemetry / alert data today | Would need first |
+| Pattern | Status | Telemetry / alert data today | Real-traffic note |
 |---|---|---|---|
-| **Malware hash outbreak** | **Implemented** | `Alert.indicator` from `payload.fileHash` (capture path exists; values null without agent) | Real agent emitting `fileHash` on malware events |
-| Lateral movement chain | **Data path only** (rule not implemented) | `auth.remote_logon` / `auth.privilege_change` → `authAccount`, `authHost`, `authGrantedTo`, `authSourceHost` on `TelemetryEvent`; `listAuthTelemetryForTenant` (columns null without agent) | v2 correlation rule; agent emitting `auth.*` events per `docs/telemetry.md` |
+| **Malware hash outbreak** | **Implemented and tested** | `Alert.indicator` from `payload.fileHash` (capture path exists; values null without agent) | Waiting on agent-emitted `fileHash` on malware events |
+| **Lateral movement + privilege escalation** | **Implemented and tested** | `auth.remote_logon` / `auth.privilege_change` → auth columns on `TelemetryEvent` (null without agent) | Waiting on agent-emitted `auth.*` events per `docs/telemetry.md` |
+| **Telemetry gap after alert** | **Implemented and tested** | `TelemetryEvent` volume + high/critical `Alert` rows (exists today) | No new telemetry needed — can fire on real data once scheduling is wired |
 | Credential spray | Not built | No auth-failure event types | Structured auth-failure events with `payload.targetUser` |
 | C2 beaconing | Not built | No network beacon event types | Network events with `payload.destinationHost` + timing |
-| Privilege escalation burst | Not built | No elevation event types | `payload.elevatedTo` / role-change events across agents |
 | Data exfiltration spike | Not built | No egress volume fields | `payload.bytesOut` (or equivalent) per agent |
 
 Outbreak defaults (in code): `OUTBREAK_WINDOW_MS` = 24h, `OUTBREAK_MIN_AGENTS` = 3, lookback = 24h.
@@ -228,7 +228,7 @@ Outbreak defaults (in code): `OUTBREAK_WINDOW_MS` = 24h, `OUTBREAK_MIN_AGENTS` =
 
 **Alert** — tenant-owned, links optional `telemetryEventId`, carries `ruleId`, nullable `indicator`, triage `status`, assignee.
 
-**CorrelatedIncident** — v2 outbreak record: deterministic string `id`, `type` (`malware_outbreak`), `indicator`, `agentIds[]`, `alertIds[]`, `agentCount`, `firstSeen`, `lastSeen`.
+**CorrelatedIncident** — v2 incident record: deterministic string `id`, `type` (`malware_outbreak` \| `lateral_movement_privilege_escalation` \| `telemetry_gap_after_alert`), `indicator`, `agentIds[]`, `alertIds[]`, `agentCount`, `firstSeen`, `lastSeen`.
 
 ### How correlation works
 
@@ -310,14 +310,14 @@ Unit tests are the bulk of coverage. Integration tests target behaviors mocks ca
 - Tenant overview aggregates
 - Platform-side isolation timestamps
 - Alert indicator capture path (null without agent IOCs)
-- v2 outbreak engine + idempotent persistence (callable, tested via integration seeds)
+- v2 correlation engines (three patterns) + idempotent persistence (callable, tested via integration seeds)
 - Migration chain from empty Postgres
 
 ### Future work (named dependencies)
 
 - Build endpoint agent emitting structured telemetry (`fileHash`, process trees, network events, etc.)
 - Wire correlation v2 scheduling (interval/worker — design choice deferred)
-- Implement remaining five v2 patterns once telemetry exists
+- Implement remaining v2 patterns once telemetry exists (credential spray, C2 beaconing, data exfiltration)
 - HTTP API for incidents (none today)
 - Endpoint enforcement of `isolatedAt`
 - Frontend dashboard consuming these APIs (separate package)
@@ -442,7 +442,7 @@ Concrete decisions visible in the codebase — stated without adjectives.
 
 **Content-derived incident ids.** Outbreak ids hash `(tenantId, indicator, windowBucketStart)` rather than random UUIDs so repeated detection upserts instead of duplicating. The integration test runs the runner twice and counts rows — that test exists because random ids would hide idempotency bugs.
 
-**Honest telemetry dependencies.** v2 outbreak ignores null indicators rather than inferring IOCs from `eventType` or alert titles. The doc and code agree: without `payload.fileHash`, outbreak detection has nothing to group. Five future patterns are listed with **named missing fields**, not implied capabilities.
+**Honest telemetry dependencies.** v2 outbreak ignores null indicators rather than inferring IOCs from `eventType` or alert titles. The doc and code agree: without `payload.fileHash`, outbreak detection has nothing to group. Lateral-movement and telemetry-gap patterns have their own documented prerequisites; three future patterns are listed with **named missing fields**, not implied capabilities.
 
 **Tenant isolation as default.** `/api` mounts `tenantScoped` on the router, not per-handler opt-in. Cross-tenant IDs return 404. Agent tokens are a separate auth path from user JWTs.
 
@@ -461,7 +461,7 @@ Concrete decisions visible in the codebase — stated without adjectives.
 | `docs/agents.md` | Enrollment, tokens, isolation |
 | `docs/telemetry.md` | Event schema, ingest format |
 | `docs/alerts.md` | Alert lifecycle, v1 rules, indicator |
-| `docs/correlation-v2.md` | Outbreak pattern, deferred scheduling, future patterns |
+| `docs/correlation-v2.md` | Three implemented patterns, deferred scheduling, future patterns |
 | `CLAUDE.md` (repo root) | Project memory, dev commands, slice status |
 
 ---
@@ -473,5 +473,5 @@ Concrete decisions visible in the codebase — stated without adjectives.
 | Outbreak runner exposed via API | **No HTTP route** — `runOutbreakDetection` is service-only |
 | Dev Postgres compose file | Only `docker-compose.test.yml` exists |
 | Tenant/user creation via API | **No signup routes** — DB seed required |
-| Six fully planned patterns in code | **One implemented**, five documented as prerequisites only |
+| Six fully planned patterns in code | **Three implemented and tested**, three documented as prerequisites only |
 | “Decentralized” architecture | **Centralized** gateway + Postgres; mesh is vision only |

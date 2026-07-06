@@ -19,7 +19,6 @@ export interface MetricsSnapshot {
   rateLimitedCount: number;
   alertsCreated: number;
   alertsUpdated: number;
-  telemetryContractUnknownKeysStripped: number;
   collectedAt: string;
 }
 
@@ -44,7 +43,6 @@ const counters = {
   rateLimitedCount: 0,
   alertsCreated: 0,
   alertsUpdated: 0,
-  telemetryContractUnknownKeysStripped: 0,
 };
 
 export function recordLoginSuccess(): void {
@@ -128,11 +126,6 @@ export function recordAlertUpdated(): void {
   counters.alertsUpdated += 1;
 }
 
-/** Observability only — known eventType payload had keys outside the contract schema (stripped, not rejected). */
-export function recordTelemetryContractUnknownKeysStripped(): void {
-  counters.telemetryContractUnknownKeysStripped += 1;
-}
-
 export function getMetricsSnapshot(): MetricsSnapshot {
   return {
     loginSuccess: counters.loginSuccess,
@@ -155,7 +148,6 @@ export function getMetricsSnapshot(): MetricsSnapshot {
     rateLimitedCount: counters.rateLimitedCount,
     alertsCreated: counters.alertsCreated,
     alertsUpdated: counters.alertsUpdated,
-    telemetryContractUnknownKeysStripped: counters.telemetryContractUnknownKeysStripped,
     collectedAt: new Date().toISOString(),
   };
 }
@@ -182,5 +174,4 @@ export function resetMetrics(): void {
   counters.rateLimitedCount = 0;
   counters.alertsCreated = 0;
   counters.alertsUpdated = 0;
-  counters.telemetryContractUnknownKeysStripped = 0;
 }

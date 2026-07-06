@@ -28,85 +28,35 @@ Analysts and above use standard user JWT auth via the `/api` tenant-scoped middl
 
 ---
 
-## Event schema (telemetry contract)
+## Event schema
 
-Each event in a batch is a versioned envelope. `tenantId` and `agentId` are **never** accepted from the request body — they are derived from the authenticated agent context.
-
-### Envelope
+Each event in a batch:
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `eventType` | string | yes | Event category (e.g. `process.start`, `malware.detected`, `auth.remote_logon`) |
+| `eventType` | string | yes | Event category (e.g. `process.start`, `file.write`) |
 | `severity` | string | yes | One of: `info`, `low`, `medium`, `high`, `critical` |
 | `occurredAt` | string | yes | ISO 8601 datetime when the event happened on the endpoint |
-| `schemaVersion` | number | no | Contract version (current: `1`). Omitted values are treated as version `1`. Unsupported versions are rejected. |
-| `payload` | object | yes | Event-specific fields (not an array) |
+| `payload` | object | yes | Arbitrary JSON object with event-specific fields (not an array) |
 
-`schemaVersion` is the seam for future breaking payload changes — it is **not** a full multi-version runtime yet. Today only version `1` is accepted when the field is present.
+For malware events (`eventType` starting with `malware.`), agents may include optional structured IOC fields. When present, `payload.fileHash` (string) is copied to `Alert.indicator` at alert creation for future correlation grouping. Agents that omit `fileHash` produce alerts with `indicator: null` until IOC emission is implemented on the endpoint.
 
-### Progressive validation policy
+### Auth telemetry (`auth.*` event types)
 
-Validation at `POST /telemetry/events` is **progressive**:
+For lateral-movement and privilege-escalation correlation (future slice), agents may emit structured auth events. At ingest, the gateway copies selected payload fields into nullable `TelemetryEvent` columns (`authAccount`, `authHost`, `authGrantedTo`, `authSourceHost`). **There is no endpoint agent in this repository** — columns remain null until an agent emits these event types with the payload shapes below.
 
-| eventType | Payload validation |
-|---|---|
-| `malware.*` (prefix) | **Strict** — must match the malware payload schema below |
-| `auth.remote_logon` | **Strict** — must match the remote-logon schema below |
-| `auth.privilege_change` | **Strict** — must match the privilege-change schema below |
-| Any other / unrecognized type | **Opaque** — accepted and stored as today; no payload schema enforcement |
-
-A malformed payload for a **known** strict type — missing or wrong-typed **required** fields — is rejected with `400` and structured `details`. **Extra unrecognized fields on a known type are silently stripped** (forward-compatibility choice, not an oversight); they do not fail ingest. Unknown event types remain accepted so future telemetry can land before the contract catches up.
-
-When extra keys are stripped on a known type, the gateway increments an observability counter (`telemetryContractUnknownKeysStripped` via `GET /internal/metrics`) — counts occurrences only, never logs key values, and does not affect ingest success or failure.
-
-If **any** event in a batch fails validation, the **entire batch** is rejected (no partial acceptance). This matches existing batch ingest behavior.
-
-### Strict payload schemas (version 1)
-
-#### `malware.*`
-
-Used by v1 `malware-prefix` correlation and v2 outbreak grouping via `Alert.indicator`.
-
-| Field | Required | Type | Notes |
+| eventType | Required payload fields | Optional payload fields | Persisted columns |
 |---|---|---|---|
-| `fileHash` | no | non-empty string | Copied to `Alert.indicator` when present |
+| `auth.remote_logon` | `account` (string), `targetHost` (string) | `sourceHost`, `logonType` | `authAccount`, `authHost`, `authSourceHost` |
+| `auth.privilege_change` | `account` (string), `host` (string) | `grantedTo`, `mechanism` | `authAccount`, `authHost`, `authGrantedTo` |
 
-Empty `{}` is valid (indicator remains null).
-
-#### `auth.remote_logon`
-
-Used by lateral-movement correlation; fields are copied to `TelemetryEvent` auth columns at ingest.
-
-| Field | Required | Type | Persisted column |
-|---|---|---|---|
-| `account` | yes | non-empty string | `authAccount` |
-| `targetHost` | yes | non-empty string | `authHost` |
-| `sourceHost` | no | non-empty string | `authSourceHost` |
-| `logonType` | no | non-empty string | (payload only today) |
-
-#### `auth.privilege_change`
-
-Used by privilege-escalation follow-up in lateral-movement correlation.
-
-| Field | Required | Type | Persisted column |
-|---|---|---|---|
-| `account` | yes | non-empty string | `authAccount` |
-| `host` | yes | non-empty string | `authHost` |
-| `grantedTo` | no | non-empty string | `authGrantedTo` |
-| `mechanism` | no | non-empty string | (payload only today) |
-
-Known-type schemas validate required and optional field types; **extra unrecognized payload keys are silently ignored** (stripped at ingest). Wrong or missing **required** fields are hard rejections. Extraction helpers (`alertIndicator.ts`, `authTelemetryExtractors.ts`) are unchanged in this slice — consolidation into the contract module is deferred (Slice 2).
-
-**There is no endpoint agent in this repository.** Auth columns and `Alert.indicator` remain null on typical ingest until an agent emits these shapes.
-
-Example `auth.remote_logon` (strict schema — missing `targetHost` is rejected at ingest):
+Example `auth.remote_logon`:
 
 ```json
 {
   "eventType": "auth.remote_logon",
   "severity": "medium",
   "occurredAt": "2026-06-15T10:00:00.000Z",
-  "schemaVersion": 1,
   "payload": {
     "account": "CORP\\jdoe",
     "sourceHost": "jumpbox-01",
@@ -123,7 +73,6 @@ Example `auth.privilege_change`:
   "eventType": "auth.privilege_change",
   "severity": "high",
   "occurredAt": "2026-06-15T10:05:00.000Z",
-  "schemaVersion": 1,
   "payload": {
     "account": "jdoe",
     "host": "workstation-42",
@@ -133,7 +82,7 @@ Example `auth.privilege_change`:
 }
 ```
 
-If required payload fields are missing or wrong-typed, **strict auth event types are rejected at ingest** (`400`). Extra fields on known types are stripped, not rejected. Generic event types still store payloads without schema checks. Correlation code can query auth events via `listAuthTelemetryForTenant` (tenant + `authAccount` + `eventType` + `occurredAt` window).
+If required payload fields are missing or not strings, auth columns are stored as `null` (same safe omission behavior as `Alert.indicator`). Correlation code can query via `listAuthTelemetryForTenant` (tenant + `authAccount` + `eventType` + `occurredAt` window).
 
 `tenantId` and `agentId` are **never** accepted from the request body — they are derived from the authenticated agent context.
 

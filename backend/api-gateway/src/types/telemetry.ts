@@ -14,6 +14,8 @@ export interface TelemetryEventInput {
   severity: SeverityLevel;
   occurredAt: string;
   payload: Record<string, unknown>;
+  /** Contract version; optional on ingest (defaults to current). Not persisted. */
+  schemaVersion?: number;
 }
 
 export interface TelemetryEventRecord {

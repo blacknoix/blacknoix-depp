@@ -1,5 +1,6 @@
 import { Router, Response } from 'express';
 import { authenticateAgent } from '../middleware/authenticateAgent';
+import { validateTelemetryEventContract } from '../lib/telemetryContract';
 import { ingestTelemetryBatch } from '../services/telemetryService';
 import {
   AgentAuthenticatedRequest,
@@ -56,11 +57,36 @@ function validateEvents(
       details.push(`${prefix}.payload must be a JSON object`);
     }
 
+    if (data.schemaVersion !== undefined && typeof data.schemaVersion !== 'number') {
+      details.push(`${prefix}.schemaVersion must be a number`);
+    }
+
+    const eventType = typeof data.eventType === 'string' ? data.eventType.trim() : '';
+    let payload = isPlainObject(data.payload) ? data.payload : {};
+
+    if (eventType && isPlainObject(data.payload)) {
+      const contractResult = validateTelemetryEventContract({
+        eventType,
+        payload,
+        schemaVersion: data.schemaVersion,
+      });
+      if (!contractResult.ok) {
+        for (const error of contractResult.errors) {
+          details.push(`${prefix}.${error}`);
+        }
+      } else {
+        payload = contractResult.payload;
+      }
+    }
+
     return {
-      eventType: (data.eventType as string)?.trim() ?? '',
+      eventType: eventType || '',
       severity: data.severity as TelemetryEventInput['severity'],
       occurredAt: data.occurredAt as string,
-      payload: data.payload as Record<string, unknown>,
+      payload,
+      ...(data.schemaVersion !== undefined
+        ? { schemaVersion: data.schemaVersion as number }
+        : {}),
     };
   });
 

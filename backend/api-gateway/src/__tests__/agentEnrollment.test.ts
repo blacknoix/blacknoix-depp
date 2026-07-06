@@ -210,6 +210,7 @@ describe('agent Bearer token auth', () => {
   function mockAuthAgent(overrides?: Partial<{
     status: string;
     pendingExpiresAt: Date;
+    isolatedAt: Date | null;
   }>) {
     mockAgentFindFirstAuth.mockResolvedValue({
       id: agentId,
@@ -219,7 +220,11 @@ describe('agent Bearer token auth', () => {
       tokenPrefix: enrollmentToken.slice(0, 17),
       pendingExpiresAt: overrides?.pendingExpiresAt ?? pendingExpiresAt,
     });
-    mockAgentFindFirst.mockResolvedValue({ id: agentId, status: overrides?.status ?? 'pending' });
+    mockAgentFindFirst.mockResolvedValue({
+      id: agentId,
+      status: overrides?.status ?? 'pending',
+      isolatedAt: overrides?.isolatedAt ?? null,
+    });
   }
 
   it('heartbeat succeeds with valid pending token and activates agent', async () => {
@@ -230,7 +235,13 @@ describe('agent Bearer token auth', () => {
       .set('Authorization', `Bearer ${enrollmentToken}`);
 
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ status: 'ok', agentId, tenantId: 'tenant-a' });
+    expect(res.body).toMatchObject({
+      status: 'ok',
+      agentId,
+      tenantId: 'tenant-a',
+      isolated: false,
+      isolatedAt: null,
+    });
     expect(getMetricsSnapshot().agentAuthSuccess).toBe(1);
     expect(mockAgentUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -319,6 +330,31 @@ describe('agent Bearer token auth', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.tenantId).toBe('tenant-a');
+  });
+
+  it('heartbeat includes isolated:false and isolatedAt:null for non-isolated agent', async () => {
+    mockAuthAgent({ status: 'active', isolatedAt: null });
+
+    const res = await request(app)
+      .post('/agent/heartbeat')
+      .set('Authorization', `Bearer ${enrollmentToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.isolated).toBe(false);
+    expect(res.body.isolatedAt).toBeNull();
+  });
+
+  it('heartbeat includes isolated:true and isolatedAt ISO timestamp when agent is isolated', async () => {
+    const isolatedAt = new Date('2026-06-23T12:00:00.000Z');
+    mockAuthAgent({ status: 'active', isolatedAt });
+
+    const res = await request(app)
+      .post('/agent/heartbeat')
+      .set('Authorization', `Bearer ${enrollmentToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.isolated).toBe(true);
+    expect(res.body.isolatedAt).toBe(isolatedAt.toISOString());
   });
 });
 

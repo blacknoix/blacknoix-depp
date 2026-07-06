@@ -12,11 +12,17 @@ export const agentTrafficRouter = Router();
 agentTrafficRouter.post('/heartbeat', authenticateAgent, async (req, res: Response): Promise<void> => {
   const { agentId, tenantId } = (req as AgentAuthenticatedRequest).agent;
 
-  const ok = await recordAgentHeartbeat(agentId, tenantId);
-  if (!ok) {
+  const heartbeat = await recordAgentHeartbeat(agentId, tenantId);
+  if (heartbeat === null) {
     res.status(401).json(AGENT_UNAUTHORIZED_ERROR);
     return;
   }
 
-  res.json({ status: 'ok', agentId, tenantId });
+  res.json({
+    status: 'ok',
+    agentId,
+    tenantId,
+    isolated: heartbeat.isolated,
+    isolatedAt: heartbeat.isolatedAt,
+  });
 });

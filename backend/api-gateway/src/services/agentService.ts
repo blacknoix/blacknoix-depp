@@ -407,15 +407,24 @@ export async function getAgentInTenant(
   };
 }
 
+/** Heartbeat success payload — includes platform isolation intent for endpoint enforcement. */
+export interface AgentHeartbeatResult {
+  isolated: boolean;
+  isolatedAt: string | null;
+}
+
 /** Record agent heartbeat — marks active and updates lastSeenAt. */
-export async function recordAgentHeartbeat(agentId: string, tenantId: string): Promise<boolean> {
+export async function recordAgentHeartbeat(
+  agentId: string,
+  tenantId: string
+): Promise<AgentHeartbeatResult | null> {
   const agent = await prisma.agent.findFirst({
     where: tenantOwnedWhere(tenantId, agentId),
-    select: { id: true, status: true },
+    select: { id: true, status: true, isolatedAt: true },
   });
 
   if (!agent || agent.status === 'revoked' || agent.status === 'expired') {
-    return false;
+    return null;
   }
 
   await prisma.agent.update({
@@ -426,7 +435,10 @@ export async function recordAgentHeartbeat(agentId: string, tenantId: string): P
     },
   });
 
-  return true;
+  return {
+    isolated: agent.isolatedAt !== null,
+    isolatedAt: agent.isolatedAt ? agent.isolatedAt.toISOString() : null,
+  };
 }
 
 /** @deprecated Use hashAgentToken */

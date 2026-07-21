@@ -1,5 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
-import { SERVICE_NAME, writeLogLine } from "./logger";
+import { SERVICE_NAME, writeLogLine } from "../lib/log";
 
 /**
  * A failure the API is allowed to describe to the caller.

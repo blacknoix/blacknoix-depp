@@ -1,6 +1,9 @@
 import dotenv from "dotenv";
 
-dotenv.config();
+// quiet: true suppresses dotenv's startup banner, which it writes to stdout via
+// console.log. Left on, it interleaves free text with our structured JSON log
+// stream and breaks line-oriented log parsers.
+dotenv.config({ quiet: true });
 
 const port = Number(process.env.PORT ?? 3000);
 

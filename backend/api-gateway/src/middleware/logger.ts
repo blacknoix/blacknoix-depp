@@ -1,18 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
-
-export const SERVICE_NAME = "api-gateway";
-
-export type LogLevel = "info" | "warn" | "error";
-
-/**
- * Writes a single structured JSON line to stdout.
- *
- * Everything goes through JSON.stringify, so control characters in any value
- * are escaped rather than able to forge additional log entries.
- */
-export function writeLogLine(entry: Record<string, unknown>): void {
-  process.stdout.write(`${JSON.stringify(entry)}\n`);
-}
+import { SERVICE_NAME, writeLogLine, type LogLevel } from "../lib/log";
 
 function levelForStatus(statusCode: number): LogLevel {
   if (statusCode >= 500) {

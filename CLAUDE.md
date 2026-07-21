@@ -72,8 +72,9 @@ Implemented:
 - Routes: `GET /` (service identity), `GET /health`, `GET /v1/tenants/me` (tenant-scoped)
 - Error envelope: `{ ok: false, error: { code, message }, requestId }`
 - Success envelope on /v1: `{ ok: true, data, requestId }`
+- Tests: `node:test` integration suite against `createApp()` (`npm test`)
 
-Not implemented: auth, database, persistence, tests, Docker.
+Not implemented: auth, database, persistence, Docker.
 
 Known interim shortcut: tenant identity comes from the unverified client-supplied
 `x-tenant-id` header. This is a development stand-in and must be replaced by an
@@ -116,7 +117,8 @@ Run from `backend/api-gateway/`:
 - Build: `npm run build` (emits to dist/)
 - Start built: `npm start`
 - Lint: not configured yet
-- Test: not configured yet — the `test` script is still the npm default stub
+- Test: `npm test` (`node:test` + tsx; see `tests/`)
+- Typecheck tests: `npm run typecheck:test`
 
 No commands exist for frontend/ or infra/ yet.
 If a service is added, update these commands immediately.

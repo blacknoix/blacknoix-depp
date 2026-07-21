@@ -15,8 +15,16 @@ export type LogLevel = "info" | "warn" | "error";
  *
  * Values pass through JSON.stringify, so control characters are escaped rather
  * than able to forge additional log entries.
+ *
+ * Set LOG_SILENT=1 to suppress all output. This exists so the test runner's TAP
+ * stream stays clean; it is read at call time rather than cached so that it can
+ * be toggled without module-load ordering concerns.
  */
 export function writeLogLine(entry: Record<string, unknown>): void {
+  if (process.env.LOG_SILENT === "1") {
+    return;
+  }
+
   process.stdout.write(`${JSON.stringify(entry)}\n`);
 }
 

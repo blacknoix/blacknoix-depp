@@ -1,7 +1,7 @@
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 
-import { createApp } from "../../src/app";
+import { createApp, type AppOptions } from "../../src/app";
 
 export interface TestServer {
   /** Base URL, e.g. http://127.0.0.1:54321 */
@@ -19,8 +19,8 @@ export interface TestServer {
  * Port 0 lets the OS assign a free port, so test files can run in parallel
  * without collisions.
  */
-export async function startTestServer(): Promise<TestServer> {
-  const app = createApp();
+export async function startTestServer(options: AppOptions = {}): Promise<TestServer> {
+  const app = createApp(options);
 
   const server = await new Promise<Server>((resolve, reject) => {
     const s = app.listen(0, "127.0.0.1", () => resolve(s));

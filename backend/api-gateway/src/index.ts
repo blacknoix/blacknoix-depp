@@ -15,7 +15,7 @@ const SHUTDOWN_TIMEOUT_MS = 10_000;
  */
 const IDLE_REAP_INTERVAL_MS = 100;
 
-const app = createApp();
+const app = createApp({ jsonBodyLimit: env.jsonBodyLimit });
 
 const server = app.listen(env.port, () => {
   logLifecycle("info", "server_started", {

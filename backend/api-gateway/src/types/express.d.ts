@@ -1,3 +1,5 @@
+import type { AuthenticatedPrincipal } from "../auth/principal";
+
 /**
  * Express request augmentation for DEPP api-gateway.
  *
@@ -5,15 +7,15 @@
  * registered first in the middleware chain. It is declared non-optional so
  * downstream code does not need to null-check it.
  *
- * `tenantId` is optional: it is only populated when a valid x-tenant-id header
- * is present. Tenant-scoped routes must use the requireTenant guard rather than
- * assuming this value exists.
+ * `principal` is optional: it is only populated when the configured auth
+ * strategy resolves a credential. Tenant-scoped routes must use the
+ * requireTenant guard rather than assuming this value exists.
  */
 declare global {
   namespace Express {
     interface Request {
       requestId: string;
-      tenantId?: string;
+      principal?: AuthenticatedPrincipal;
     }
   }
 }

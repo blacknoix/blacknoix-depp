@@ -1,10 +1,13 @@
 import express from "express";
 
+import type { AuthStrategy } from "./auth/principal";
+import { devHeaderStrategy } from "./auth/strategies/dev-header";
+import { authenticate } from "./middleware/authenticate";
 import { errorHandler } from "./middleware/error-handler";
 import { requestLogger } from "./middleware/logger";
 import { notFound } from "./middleware/not-found";
 import { requestId } from "./middleware/request-id";
-import { attachTenantContext, requireTenant } from "./middleware/tenant-context";
+import { requireTenant } from "./middleware/tenant-context";
 
 import healthRouter from "./routes/health";
 import rootRouter from "./routes/root";
@@ -25,10 +28,18 @@ const DEFAULT_JSON_BODY_LIMIT = "100kb";
 export interface AppOptions {
   /** Accepts a `bytes` string such as "100kb" or "1mb", or a raw byte count. */
   jsonBodyLimit?: string | number;
+
+  /**
+   * How requests are turned into an authenticated principal. Defaults to the
+   * development header stand-in; index.ts selects it from AUTH_MODE, which
+   * refuses to allow an unverified strategy in production.
+   */
+  authStrategy?: AuthStrategy;
 }
 
 export function createApp(options: AppOptions = {}) {
   const jsonBodyLimit = options.jsonBodyLimit ?? DEFAULT_JSON_BODY_LIMIT;
+  const authStrategy = options.authStrategy ?? devHeaderStrategy;
 
   const app = express();
 
@@ -37,8 +48,9 @@ export function createApp(options: AppOptions = {}) {
   //   2. logger     - registered before body parsing so durationMs covers it and
   //                   malformed-body requests are still logged.
   //   3. json       - parse failures are surfaced by the centralized error handler.
-  //   4. tenant     - reads tenant identity without rejecting; the requireTenant
-  //                   guard is applied per-route at the mount point below.
+  //   4. authenticate - resolves the principal without rejecting; the
+  //                   requireTenant guard is applied per-route at the mount
+  //                   point below.
   app.use(requestId);
   app.use(requestLogger);
   // NOTE: this limit bounds only bodies that express.json() actually parses,
@@ -51,7 +63,7 @@ export function createApp(options: AppOptions = {}) {
   // must be mounted BEFORE this fallback, or this one will reject the request
   // first and the route-specific limit will never apply.
   app.use(express.json({ limit: jsonBodyLimit }));
-  app.use(attachTenantContext);
+  app.use(authenticate(authStrategy));
 
   // Infrastructure routes: no tenant context required.
   app.use("/", rootRouter);

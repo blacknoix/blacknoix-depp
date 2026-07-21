@@ -1,71 +1,37 @@
 import type { NextFunction, Request, Response } from "express";
+
+import type { AuthenticatedPrincipal } from "../auth/principal";
 import { AppError } from "./error-handler";
-
-const TENANT_HEADER = "x-tenant-id";
-
-/**
- * Interim validation.
- *
- * ADR-0001 specifies tenant IDs are UUIDs, resolved into the Postgres runtime
- * setting `app.current_tenant` for RLS. Until Postgres lands, tenant IDs are
- * treated as opaque bounded identifiers so local development can use readable
- * values such as "tenant-dev-001".
- *
- * TODO(depp): tighten to UUID validation when Postgres/RLS is introduced, and
- * replace the header with a verified claim once auth exists. See ADR-0001.
- */
-const MAX_TENANT_ID_LENGTH = 64;
-const SAFE_TENANT_ID = /^[A-Za-z0-9_-]+$/;
-
-function normalizeTenantId(value: string | undefined): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-
-  const trimmed = value.trim();
-
-  if (
-    trimmed.length === 0 ||
-    trimmed.length > MAX_TENANT_ID_LENGTH ||
-    !SAFE_TENANT_ID.test(trimmed)
-  ) {
-    return undefined;
-  }
-
-  return trimmed;
-}
-
-/**
- * Reads tenant identity from the request and attaches it when valid.
- *
- * Runs globally and never rejects, so unauthenticated infrastructure routes
- * (/ and /health) keep working while the request logger can still attach
- * tenantId to any request that carries one.
- *
- * SECURITY: this header is client-supplied and entirely unverified. It is a
- * development stand-in only. Tenant identity must come from an authenticated
- * principal before this service handles real tenant data.
- */
-export function attachTenantContext(req: Request, _res: Response, next: NextFunction): void {
-  const tenantId = normalizeTenantId(req.get(TENANT_HEADER));
-
-  if (tenantId) {
-    req.tenantId = tenantId;
-  }
-
-  next();
-}
 
 /**
  * Guard for tenant-scoped routes. Applied at the router mount point so that
  * "this route requires a tenant" is explicit and greppable, rather than an
  * implicit property of global middleware.
+ *
+ * The message is unchanged from when tenant identity was read directly from the
+ * header: under the dev-header strategy a missing principal and a missing
+ * x-tenant-id header are the same condition.
  */
 export function requireTenant(req: Request, _res: Response, next: NextFunction): void {
-  if (!req.tenantId) {
+  if (!req.principal) {
     next(new AppError("TENANT_REQUIRED", 400, "x-tenant-id header is required"));
     return;
   }
 
   next();
+}
+
+/**
+ * Narrows req.principal for handlers mounted behind requireTenant.
+ *
+ * req.principal is optional at the type level because most requests do not have
+ * one. This keeps route handlers free of non-null assertions while still
+ * failing closed if a handler is ever mounted without its guard.
+ */
+export function requirePrincipal(req: Request): AuthenticatedPrincipal {
+  if (!req.principal) {
+    throw new AppError("TENANT_REQUIRED", 400, "x-tenant-id header is required");
+  }
+
+  return req.principal;
 }

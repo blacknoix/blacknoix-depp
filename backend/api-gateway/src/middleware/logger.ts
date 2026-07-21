@@ -42,7 +42,7 @@ export function requestLogger(req: Request, res: Response, next: NextFunction): 
       statusCode: res.statusCode,
       durationMs: Math.round(durationMs * 1000) / 1000,
       requestId: req.requestId,
-      ...(req.tenantId ? { tenantId: req.tenantId } : {}),
+      ...(req.principal ? { tenantId: req.principal.tenantId } : {}),
     });
   });
 

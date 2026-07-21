@@ -1,3 +1,4 @@
+import { strategyForMode } from "./auth/auth-mode";
 import { createApp } from "./app";
 import { env } from "./config/env";
 import { logLifecycle } from "./lib/log";
@@ -15,12 +16,16 @@ const SHUTDOWN_TIMEOUT_MS = 10_000;
  */
 const IDLE_REAP_INTERVAL_MS = 100;
 
-const app = createApp({ jsonBodyLimit: env.jsonBodyLimit });
+const app = createApp({
+  jsonBodyLimit: env.jsonBodyLimit,
+  authStrategy: strategyForMode(env.authMode),
+});
 
 const server = app.listen(env.port, () => {
   logLifecycle("info", "server_started", {
     port: env.port,
     nodeEnv: env.nodeEnv,
+    authMode: env.authMode,
     pid: process.pid,
   });
 });

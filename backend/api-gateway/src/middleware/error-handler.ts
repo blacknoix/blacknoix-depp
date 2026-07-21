@@ -155,7 +155,7 @@ export function errorHandler(
       service: SERVICE_NAME,
       event: "unhandled_error",
       requestId: req.requestId,
-      ...(req.tenantId ? { tenantId: req.tenantId } : {}),
+      ...(req.principal ? { tenantId: req.principal.tenantId } : {}),
       errorName: described.name,
       errorMessage: described.message,
     });

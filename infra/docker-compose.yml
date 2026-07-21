@@ -1,0 +1,38 @@
+# Local development infrastructure for DEPP.
+#
+# LOCAL DEVELOPMENT ONLY. Credentials here are defaults for a disposable
+# container on a developer machine. Production databases are provisioned by
+# infrastructure, not by this file.
+#
+# Run from the repository root:
+#   docker compose -f infra/docker-compose.yml up -d
+#   docker compose -f infra/docker-compose.yml down          # keeps data
+#   docker compose -f infra/docker-compose.yml down -v       # discards data
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: depp-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-depp}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - depp-postgres-data:/var/lib/postgresql/data
+      # Init scripts run only on first initialisation of an empty data
+      # directory. Changing them requires `down -v` to take effect.
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test:
+        ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-depp}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  depp-postgres-data:
+    name: depp-postgres-data

@@ -9,7 +9,8 @@ import { notFound } from "./middleware/not-found";
 import { requestId } from "./middleware/request-id";
 import { requireTenant } from "./middleware/tenant-context";
 
-import healthRouter from "./routes/health";
+import type { DatabaseHealthCheck } from "./db/pool";
+import { createHealthRouter } from "./routes/health";
 import rootRouter from "./routes/root";
 import tenantsRouter from "./routes/tenants";
 
@@ -35,6 +36,13 @@ export interface AppOptions {
    * refuses to allow an unverified strategy in production.
    */
   authStrategy?: AuthStrategy;
+
+  /**
+   * Database reachability probe surfaced by /health. Omitted means "no database
+   * configured"; createApp itself never opens a connection, which keeps it free
+   * of side effects for tests.
+   */
+  checkDatabase?: DatabaseHealthCheck;
 }
 
 export function createApp(options: AppOptions = {}) {
@@ -67,7 +75,7 @@ export function createApp(options: AppOptions = {}) {
 
   // Infrastructure routes: no tenant context required.
   app.use("/", rootRouter);
-  app.use("/health", healthRouter);
+  app.use("/health", createHealthRouter({ checkDatabase: options.checkDatabase }));
 
   // Versioned API surface: tenant-scoped.
   app.use("/v1/tenants", requireTenant, tenantsRouter);

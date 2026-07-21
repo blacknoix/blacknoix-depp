@@ -1,6 +1,7 @@
 import { strategyForMode } from "./auth/auth-mode";
 import { createApp } from "./app";
 import { env } from "./config/env";
+import { closePool, createDatabaseHealthCheck, createPool } from "./db/pool";
 import { logLifecycle } from "./lib/log";
 
 /**
@@ -16,9 +17,14 @@ const SHUTDOWN_TIMEOUT_MS = 10_000;
  */
 const IDLE_REAP_INTERVAL_MS = 100;
 
+// Creating the pool does not connect: `pg` connects lazily on first use, so an
+// unavailable database does not prevent startup. /health reports the state.
+const pool = env.databaseUrl ? createPool(env.databaseUrl) : undefined;
+
 const app = createApp({
   jsonBodyLimit: env.jsonBodyLimit,
   authStrategy: strategyForMode(env.authMode),
+  checkDatabase: createDatabaseHealthCheck(pool),
 });
 
 const server = app.listen(env.port, () => {
@@ -26,6 +32,7 @@ const server = app.listen(env.port, () => {
     port: env.port,
     nodeEnv: env.nodeEnv,
     authMode: env.authMode,
+    database: pool ? "configured" : "not_configured",
     pid: process.pid,
   });
 });
@@ -81,8 +88,12 @@ function shutdown(signal: NodeJS.Signals): void {
       process.exit(1);
     }
 
-    logLifecycle("info", "shutdown_complete", { signal });
-    process.exit(0);
+    // Drain the pool only after in-flight requests have finished, so a request
+    // is never cut off from the database mid-flight. closePool never rejects.
+    void closePool(pool).then(() => {
+      logLifecycle("info", "shutdown_complete", { signal });
+      process.exit(0);
+    });
   });
 }
 

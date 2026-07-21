@@ -30,13 +30,75 @@ export interface ErrorResponseBody {
   requestId: string;
 }
 
-/** body-parser tags malformed JSON payloads with this type. */
-function isJsonParseError(err: unknown): boolean {
-  return (
-    typeof err === "object" &&
-    err !== null &&
-    (err as { type?: unknown }).type === "entity.parse.failed"
-  );
+interface ClientErrorShape {
+  statusCode: number;
+  code: string;
+  message: string;
+}
+
+/**
+ * body-parser tags its failures with a `type` string and an HTTP `status`.
+ *
+ * We map the known types explicitly and always substitute our own message:
+ * body-parser's text leaks internals (its parse error names the exact byte
+ * offset, e.g. "Expected property name or '}' in JSON at position 1").
+ */
+const BODY_PARSER_ERRORS: Record<string, ClientErrorShape> = {
+  "entity.parse.failed": {
+    statusCode: 400,
+    code: "INVALID_JSON",
+    message: "Request body is not valid JSON",
+  },
+  "entity.too.large": {
+    statusCode: 413,
+    code: "PAYLOAD_TOO_LARGE",
+    message: "Request body is too large",
+  },
+  "encoding.unsupported": {
+    statusCode: 415,
+    code: "UNSUPPORTED_ENCODING",
+    message: "Request body encoding is not supported",
+  },
+  "charset.unsupported": {
+    statusCode: 415,
+    code: "UNSUPPORTED_CHARSET",
+    message: "Request body charset is not supported",
+  },
+};
+
+/**
+ * Classifies a non-AppError as a client error where possible.
+ *
+ * The status-based fallback is deliberate: without it, any body-parser error
+ * type we have not enumerated would be reported as a 500, turning a client
+ * mistake into an apparent server fault and an error-level log line.
+ */
+function asClientError(err: unknown): ClientErrorShape | undefined {
+  if (typeof err !== "object" || err === null) {
+    return undefined;
+  }
+
+  const candidate = err as { type?: unknown; status?: unknown };
+
+  if (typeof candidate.type === "string") {
+    const mapped = BODY_PARSER_ERRORS[candidate.type];
+
+    if (mapped) {
+      return mapped;
+    }
+  }
+
+  const status = candidate.status;
+
+  if (typeof status === "number" && status >= 400 && status <= 499) {
+    return {
+      statusCode: status,
+      code: "REQUEST_INVALID",
+      message: "Request could not be processed",
+    };
+  }
+
+  return undefined;
 }
 
 function describeError(err: unknown): { name: string; message: string } {
@@ -74,10 +136,14 @@ export function errorHandler(
     statusCode = err.statusCode;
     code = err.code;
     message = err.message;
-  } else if (isJsonParseError(err)) {
-    statusCode = 400;
-    code = "INVALID_JSON";
-    message = "Request body is not valid JSON";
+  } else {
+    const clientError = asClientError(err);
+
+    if (clientError) {
+      statusCode = clientError.statusCode;
+      code = clientError.code;
+      message = clientError.message;
+    }
   }
 
   if (statusCode >= 500) {

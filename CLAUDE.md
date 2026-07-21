@@ -62,7 +62,7 @@ Treat this as the current priority order unless explicitly changed.
 - Backend implementation: api-gateway only — middleware baseline and one tenant-scoped route
 - Frontend implementation: not started
 - Infra setup: not started
-- Auth / RBAC: not started
+- Auth / RBAC: authentication seam only (ADR-0002); no verified mode, no RBAC
 - Database: not started
 - Enterprise hardening: not started
 
@@ -74,11 +74,30 @@ Implemented:
 - Success envelope on /v1: `{ ok: true, data, requestId }`
 - Tests: `node:test` integration suite against `createApp()` (`npm test`)
 
-Not implemented: auth, database, persistence, Docker.
+Not implemented: verified authentication, RBAC, database, persistence, Docker.
 
-Known interim shortcut: tenant identity comes from the unverified client-supplied
-`x-tenant-id` header. This is a development stand-in and must be replaced by an
-authenticated principal before the service handles real tenant data.
+## Authentication
+Authoritative decision: docs/architecture/adr/0002-authentication-seam.md.
+
+Requests are resolved into an `AuthenticatedPrincipal` by a pluggable
+`AuthStrategy` selected via `AUTH_MODE`. Route handlers read `req.principal` and
+never parse credentials themselves.
+
+The only implemented mode is `dev-header`, which trusts the client-supplied
+`x-tenant-id` header without verification. It is a development stand-in.
+
+**The service cannot start with `NODE_ENV=production`.** Unverified modes are
+rejected at startup, and `dev-header` is currently the only mode, so there is no
+configuration in which api-gateway runs in production. This is intentional and
+fail-closed; it lifts when a verified mode exists.
+
+An unrecognised `AUTH_MODE` also stops startup rather than falling back.
+
+The production authentication mechanism is decided in ADR-0003 but **not yet
+implemented**: per-tenant OIDC federation, no stored human credentials,
+DEPP-issued short-lived access tokens with server-side refresh, and a separate
+machine-identity path for agents. Roles come from IdP claims, with DEPP-persisted
+mappings only as a per-tenant compatibility layer.
 
 ## Tenancy model
 Authoritative decision: docs/architecture/adr/0001-tenancy-and-data-model.md.

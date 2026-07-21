@@ -1,4 +1,4 @@
-# DEPP � Decentralized Endpoint Protection Platform
+# DEPP — Decentralized Endpoint Protection Platform
 
 ## Project overview
 DEPP is an enterprise cybersecurity platform focused on decentralized endpoint protection, telemetry ingestion, detection, correlation, alerting, auditability, and enterprise readiness.
@@ -15,25 +15,31 @@ This project is being built by a solo founder using Claude Pro / Claude Code and
 - Prefer small, production-oriented slices over broad unfinished scaffolding.
 
 ## Current repo status
-This repository is at day zero.
+Early. One backend service exists; everything else is still scaffolding.
 
-Current files/folders:
+What actually exists:
 - CLAUDE.md
-- backend/ (planned, may still be empty)
-- frontend/ (planned, may still be empty)
-- docs/ (planned, may still be empty)
-- infra/ (planned, may still be empty)
+- docs/architecture/adr/ — ADR-0001 (tenancy and data model), Accepted
+- backend/api-gateway/ — running Express service, see below
+- frontend/ — empty
+- infra/ — empty
 
-These folders represent the intended project structure, not completed implementation.
+Anything not listed above does not exist yet.
 
-## Initial stack assumptions
-Until finalized, assume:
+## Stack
+Confirmed and in use (backend/api-gateway):
+- Runtime: Node.js
+- API framework: Express 5
+- Language: TypeScript (strict, CommonJS, rootDir src/)
+- Dev runner: tsx
+- Config: dotenv
+- Package manager: npm
+
+Still assumptions, not yet implemented:
 - Frontend: React + TypeScript
-- Backend API: Node.js + TypeScript
-- Database: PostgreSQL
+- Database: PostgreSQL (required by ADR-0001 for RLS)
 - Cache/queue: Redis
 - Infra: Docker
-- Package manager: npm unless changed explicitly
 
 If the actual stack changes, update this file immediately.
 
@@ -51,17 +57,40 @@ The platform should prioritize:
 Treat this as the current priority order unless explicitly changed.
 
 ## Current status
-- Repository setup: in progress
-- Product docs: not started
-- Backend implementation: not started
+- Repository setup: done (git, hygiene files, ADR log)
+- Product docs: ADR-0001 accepted; no product/spec docs yet
+- Backend implementation: api-gateway only — middleware baseline and one tenant-scoped route
 - Frontend implementation: not started
 - Infra setup: not started
+- Auth / RBAC: not started
+- Database: not started
 - Enterprise hardening: not started
 
+## backend/api-gateway
+Implemented:
+- Middleware: request ID, structured JSON request logging, tenant context, 404 handler, centralized error handler
+- Routes: `GET /` (service identity), `GET /health`, `GET /v1/tenants/me` (tenant-scoped)
+- Error envelope: `{ ok: false, error: { code, message }, requestId }`
+- Success envelope on /v1: `{ ok: true, data, requestId }`
+
+Not implemented: auth, database, persistence, tests, Docker.
+
+Known interim shortcut: tenant identity comes from the unverified client-supplied
+`x-tenant-id` header. This is a development stand-in and must be replaced by an
+authenticated principal before the service handles real tenant data.
+
 ## Tenancy model
-Target model: shared application with strict tenant scoping on every tenant-owned record using tenant_id.
+Authoritative decision: docs/architecture/adr/0001-tenancy-and-data-model.md.
+
+Summary: shared-schema PostgreSQL with `tenant_id` on every tenant-owned table,
+isolation enforced primarily by Postgres RLS via `app.current_tenant`, with
+explicit application-layer tenant scoping as a second layer.
 No query for tenant-owned data should run without tenant scope.
 No cross-tenant access is allowed unless explicitly designed and documented for platform-admin behavior.
+
+ADR-0001 specifies tenant IDs as UUIDs. api-gateway currently accepts bounded
+opaque strings so local development can use readable values; tighten to UUID
+when Postgres lands.
 
 ## Engineering principles
 - Security and tenant isolation come before speed.
@@ -80,14 +109,16 @@ No cross-tenant access is allowed unless explicitly designed and documented for 
 - Never describe something as implemented unless it exists in the repo.
 
 ## Standard commands
-These are placeholders until the real services exist:
-- Install dependencies: TBD
-- Start dev: TBD
-- Typecheck: TBD
-- Lint: TBD
-- Test: TBD
-- Build: TBD
+Run from `backend/api-gateway/`:
+- Install dependencies: `npm install`
+- Start dev: `npm run dev` (tsx, no build step)
+- Typecheck: `npm run typecheck`
+- Build: `npm run build` (emits to dist/)
+- Start built: `npm start`
+- Lint: not configured yet
+- Test: not configured yet — the `test` script is still the npm default stub
 
+No commands exist for frontend/ or infra/ yet.
 If a service is added, update these commands immediately.
 
 ## How Claude should work in this repo

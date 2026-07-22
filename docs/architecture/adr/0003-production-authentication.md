@@ -113,6 +113,24 @@ production ban. A mock-OIDC development mode was considered and rejected for now
 more machinery for the same outcome. Worth revisiting when the OIDC strategy is
 implemented.
 
+### 9. Federated identity resolves to a stable DEPP user record.
+Every authenticated human maps to a row in the tenant-owned `users` table
+(ADR-0001). The mapping key is the pair `(issuer, subject)` from the IdP token,
+not email: email is mutable and can be reassigned, whereas the IdP `sub` is
+stable for the life of the account. `users` stores that issuer and subject
+alongside a DEPP-generated `user_id`; email and display name are cached for
+presentation only and are never an identity key.
+
+A user row is created or linked on the first successful OIDC exchange
+(just-in-time provisioning), scoped to the tenant whose IdP authenticated the
+request. `sessions`, `refresh_tokens`, and `user_roles` all reference the DEPP
+`user_id`, so identity survives an email change or an IdP-side rename.
+
+Rationale: without a stable internal identifier, sessions and role assignments
+would be pinned to a mutable external attribute. A tenant administrator renaming
+a user in their IdP could then silently orphan that user's sessions or, worse,
+hand their access to whoever next received the old email.
+
 ## Effect on ADR-0002 and existing code
 - `AuthStrategy.authenticate` must widen to permit a promise. OIDC verification
   requires fetching and caching JWKS. ADR-0002 named this as the expected trigger.
@@ -127,6 +145,9 @@ implemented.
 Extending, not rewriting, ADR-0001's entity list.
 
 Tenant-owned:
+- `users` — extends ADR-0001's entry: holds the `(issuer, subject)` IdP linkage
+  and a DEPP-generated `user_id`, with email and display name cached for
+  presentation only. It is the identity anchor that sessions and roles reference.
 - `tenant_idp_configs`
 - `sessions`
 - `refresh_tokens`

@@ -33,13 +33,15 @@ Confirmed and in use (backend/api-gateway):
 - Language: TypeScript (strict, CommonJS, rootDir src/)
 - Dev runner: tsx
 - Config: dotenv
+- Database: PostgreSQL via Kysely (query builder) + pg; Kysely migrator
+- Local infra: Docker Compose (infra/docker-compose.yml)
 - Package manager: npm
+
+Data-access and migration choices are recorded in ADR-0004.
 
 Still assumptions, not yet implemented:
 - Frontend: React + TypeScript
-- Database: PostgreSQL (required by ADR-0001 for RLS)
 - Cache/queue: Redis
-- Infra: Docker
 
 If the actual stack changes, update this file immediately.
 
@@ -63,7 +65,7 @@ Treat this as the current priority order unless explicitly changed.
 - Frontend implementation: not started
 - Infra setup: not started
 - Auth / RBAC: authentication seam only (ADR-0002); no verified mode, no RBAC
-- Database: not started
+- Database: schema + RLS foundation (tenants, agents) via Kysely + migrator; not wired to any route yet
 - Enterprise hardening: not started
 
 ## backend/api-gateway
@@ -73,8 +75,28 @@ Implemented:
 - Error envelope: `{ ok: false, error: { code, message }, requestId }`
 - Success envelope on /v1: `{ ok: true, data, requestId }`
 - Tests: `node:test` integration suite against `createApp()` (`npm test`)
+- Persistence: Kysely + pg pool; `withTenantTransaction` is the only sanctioned
+  path to tenant-owned data; schema/RLS in `src/db/migrations`. See ADR-0004.
 
-Not implemented: verified authentication, RBAC, database, persistence, Docker.
+Not implemented: verified authentication, RBAC, persistence wired to routes.
+
+## Persistence and RLS
+Authoritative decision: docs/architecture/adr/0004-persistence-and-data-access.md.
+
+Postgres RLS enforces tenant isolation, keyed on `app.current_tenant`. Every
+access to tenant-owned data must go through `withTenantTransaction`, which sets
+that value transaction-locally via `set_config(..., true)`. Never set it at
+session level (it leaks across pooled connections), and never query tenant-owned
+data outside the helper.
+
+Two DB roles: `depp_migrator` owns tables and runs migrations
+(`DATABASE_MIGRATION_URL`); `depp_app` is the non-owner, NOBYPASSRLS application
+role (`DATABASE_URL`). Tenant-owned tables use ENABLE + FORCE ROW LEVEL SECURITY
+with a policy carrying both USING and WITH CHECK, and the fail-closed
+one-argument `current_setting`.
+
+The database-backed test suite (`*.dbtest.ts`, `npm run test:db`) requires a real
+Postgres and fails loudly if it is unavailable — it never skips.
 
 ## Authentication
 Authoritative decision: docs/architecture/adr/0002-authentication-seam.md.

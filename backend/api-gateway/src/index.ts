@@ -1,8 +1,10 @@
 import { strategyForMode } from "./auth/auth-mode";
 import { createApp } from "./app";
 import { env } from "./config/env";
+import { createKysely } from "./db/kysely";
 import { closePool, createDatabaseHealthCheck, createPool } from "./db/pool";
 import { logLifecycle } from "./lib/log";
+import { createTenantsRepository } from "./tenants/repository";
 
 /**
  * How long to wait for in-flight requests to finish before forcing exit.
@@ -21,10 +23,16 @@ const IDLE_REAP_INTERVAL_MS = 100;
 // unavailable database does not prevent startup. /health reports the state.
 const pool = env.databaseUrl ? createPool(env.databaseUrl) : undefined;
 
+// Kysely wraps the same pool; the repository is the tenant-scoped read path.
+// Without a database, lookupTenant is undefined and /v1/tenants/me fails closed.
+const db = pool ? createKysely(pool) : undefined;
+const tenants = db ? createTenantsRepository(db) : undefined;
+
 const app = createApp({
   jsonBodyLimit: env.jsonBodyLimit,
   authStrategy: strategyForMode(env.authMode),
   checkDatabase: createDatabaseHealthCheck(pool),
+  lookupTenant: tenants?.findById,
 });
 
 const server = app.listen(env.port, () => {

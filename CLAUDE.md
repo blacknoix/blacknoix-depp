@@ -61,7 +61,7 @@ Treat this as the current priority order unless explicitly changed.
 ## Current status
 - Repository setup: done (git, hygiene files, ADR log)
 - Product docs: ADR-0001 accepted; no product/spec docs yet
-- Backend implementation: api-gateway only — middleware baseline and one tenant-scoped route
+- Backend implementation: api-gateway — middleware baseline; `/v1/tenants/me` wired to a real, RLS-scoped tenant lookup
 - Frontend implementation: not started
 - Infra setup: not started
 - Auth / RBAC: authentication seam only (ADR-0002); no verified mode, no RBAC
@@ -97,6 +97,16 @@ one-argument `current_setting`.
 
 The database-backed test suite (`*.dbtest.ts`, `npm run test:db`) requires a real
 Postgres and fails loudly if it is unavailable — it never skips.
+
+`/v1/tenants/me` performs a real lookup through the sanctioned path (Kysely
+repository → `withTenantTransaction`). The `tenants` registry has RLS (ENABLE,
+not FORCE) with a self-read policy, so the app role sees only its own row; the
+migrator role still manages the whole registry. Tenant ids are UUIDs now:
+readable values like `tenant-dev-001` no longer resolve, and dev seed data must
+use real UUIDs. An unknown tenant returns the same `400 TENANT_REQUIRED` envelope
+as a missing one (no existence oracle); the distinction is logged server-side.
+Tenant existence is enforced at the data-access layer, not in the auth strategy,
+which stays synchronous until a verified mode lands.
 
 ## Authentication
 Authoritative decision: docs/architecture/adr/0002-authentication-seam.md.

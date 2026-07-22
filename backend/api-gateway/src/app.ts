@@ -12,7 +12,8 @@ import { requireTenant } from "./middleware/tenant-context";
 import type { DatabaseHealthCheck } from "./db/pool";
 import { createHealthRouter } from "./routes/health";
 import rootRouter from "./routes/root";
-import tenantsRouter from "./routes/tenants";
+import { createTenantsRouter } from "./routes/tenants";
+import type { TenantLookup } from "./tenants/repository";
 
 /**
  * Maximum accepted JSON request body.
@@ -43,6 +44,13 @@ export interface AppOptions {
    * of side effects for tests.
    */
   checkDatabase?: DatabaseHealthCheck;
+
+  /**
+   * Resolves the authenticated tenant to its registry record for
+   * /v1/tenants/me. Omitted means the route fails closed; index.ts wires it to
+   * the Kysely-backed repository when a database is configured.
+   */
+  lookupTenant?: TenantLookup;
 }
 
 export function createApp(options: AppOptions = {}) {
@@ -78,7 +86,11 @@ export function createApp(options: AppOptions = {}) {
   app.use("/health", createHealthRouter({ checkDatabase: options.checkDatabase }));
 
   // Versioned API surface: tenant-scoped.
-  app.use("/v1/tenants", requireTenant, tenantsRouter);
+  app.use(
+    "/v1/tenants",
+    requireTenant,
+    createTenantsRouter({ lookupTenant: options.lookupTenant }),
+  );
 
   // Terminal handlers, in order.
   app.use(notFound);

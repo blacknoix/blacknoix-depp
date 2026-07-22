@@ -67,6 +67,12 @@ export async function connectDb(): Promise<DbHandles> {
  * TRUNCATE is used rather than DELETE: RLS does not gate TRUNCATE, whereas a
  * DELETE issued by the owner with FORCE RLS and no tenant context would hit the
  * policy's one-argument current_setting and fail closed.
+ *
+ * IMPORTANT: every *.dbtest.ts file shares one Postgres database and resets it
+ * globally here. The suites must therefore run serially, or one file's TRUNCATE
+ * will pull fixtures out from under another's inserts (FK violations, duplicate
+ * slugs). This is enforced by `--test-concurrency=1` in the `test:db` script; do
+ * not remove it without giving each file its own isolated data.
  */
 export async function resetSchema(migrator: Pool): Promise<void> {
   await migrator.query("truncate table agents, tenants restart identity cascade");

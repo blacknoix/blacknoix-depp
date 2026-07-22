@@ -6,7 +6,7 @@
   "scripts": {
     "test": "npm run test:unit && npm run test:db",
     "test:unit": "node --env-file=tests/test.env --import tsx --test \"tests/**/*.test.ts\"",
-    "test:db": "node --env-file=tests/test.env --import tsx --test \"tests/**/*.dbtest.ts\"",
+    "test:db": "node --env-file=tests/test.env --import tsx --test --test-concurrency=1 \"tests/**/*.dbtest.ts\"",
     "test:watch": "node --env-file=tests/test.env --import tsx --test --watch \"tests/**/*.test.ts\"",
     "dev": "tsx src/index.ts",
     "build": "tsc -p tsconfig.json",

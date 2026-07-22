@@ -2,12 +2,24 @@ import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 
 import { createApp, type AppOptions } from "../../src/app";
+import type { TenantLookup } from "../../src/tenants/repository";
 
 export interface TestServer {
   /** Base URL, e.g. http://127.0.0.1:54321 */
   url: string;
   close: () => Promise<void>;
 }
+
+/**
+ * Default tenant lookup for tests that do not exercise the lookup itself: it
+ * resolves any id to a matching record, so a well-formed tenant is treated as
+ * existing. Tests that care about lookup behaviour override lookupTenant.
+ */
+const defaultLookupTenant: TenantLookup = async (tenantId) => ({
+  id: tenantId,
+  slug: tenantId,
+  name: tenantId,
+});
 
 /**
  * Boots the Express app on an ephemeral port for integration tests.
@@ -20,7 +32,7 @@ export interface TestServer {
  * without collisions.
  */
 export async function startTestServer(options: AppOptions = {}): Promise<TestServer> {
-  const app = createApp(options);
+  const app = createApp({ lookupTenant: defaultLookupTenant, ...options });
 
   const server = await new Promise<Server>((resolve, reject) => {
     const s = app.listen(0, "127.0.0.1", () => resolve(s));

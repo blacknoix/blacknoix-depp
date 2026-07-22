@@ -33,7 +33,24 @@ export interface AgentsTable {
   created_at: Generated<Timestamp>;
 }
 
+/**
+ * Tenant-owned. One row per authenticated human (ADR-0003 §9). Identity is
+ * keyed by (tenant_id, issuer, subject); email and display_name are cached
+ * presentation fields, never identity keys. `id` is the stable anchor that
+ * sessions, refresh tokens, and role grants reference.
+ */
+export interface UsersTable {
+  id: Generated<string>;
+  tenant_id: string;
+  issuer: string;
+  subject: string;
+  email: string | null;
+  display_name: string | null;
+  created_at: Generated<Timestamp>;
+}
+
 export interface Database {
   tenants: TenantsTable;
   agents: AgentsTable;
+  users: UsersTable;
 }

@@ -65,7 +65,7 @@ Treat this as the current priority order unless explicitly changed.
 - Frontend implementation: not started
 - Infra setup: not started
 - Auth / RBAC: authentication seam only (ADR-0002); no verified mode, no RBAC
-- Database: schema + RLS foundation (tenants, agents) via Kysely + migrator; not wired to any route yet
+- Database: schema + RLS foundation (tenants, agents, users) via Kysely + migrator; tenants wired to /v1/tenants/me; users JIT-provisioning path exists but is not called until the OIDC strategy lands (ADR-0003 §9)
 - Enterprise hardening: not started
 
 ## backend/api-gateway

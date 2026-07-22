@@ -75,7 +75,7 @@ export async function connectDb(): Promise<DbHandles> {
  * not remove it without giving each file its own isolated data.
  */
 export async function resetSchema(migrator: Pool): Promise<void> {
-  await migrator.query("truncate table agents, tenants restart identity cascade");
+  await migrator.query("truncate table users, agents, tenants restart identity cascade");
 }
 
 /** Inserts a tenant via the owner connection and returns its generated id. */

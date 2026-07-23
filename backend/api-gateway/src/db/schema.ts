@@ -9,6 +9,11 @@ import type { ColumnType, Generated } from "kysely";
  */
 
 type Timestamp = ColumnType<Date, Date | string | undefined, Date | string>;
+type NullableTimestamp = ColumnType<
+  Date | null,
+  Date | string | null | undefined,
+  Date | string | null
+>;
 
 /**
  * Platform-global tenant registry. No RLS: ADR-0001 permits truly global tables

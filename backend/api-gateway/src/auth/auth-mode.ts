@@ -1,5 +1,7 @@
+import type { JwtConfig } from "./jwt/access-token";
 import type { AuthStrategy } from "./principal";
 import { devHeaderStrategy } from "./strategies/dev-header";
+import { createJwtStrategy } from "./strategies/jwt";
 
 /**
  * Every authentication mode the service can run in.
@@ -8,14 +10,15 @@ import { devHeaderStrategy } from "./strategies/dev-header";
  * rather than falling back to a default, so a typo cannot silently downgrade
  * authentication.
  */
-export const AUTH_MODES = ["dev-header"] as const;
+export const AUTH_MODES = ["dev-header", "jwt"] as const;
 
 export type AuthMode = (typeof AUTH_MODES)[number];
 
 const DEFAULT_AUTH_MODE: AuthMode = "dev-header";
 
 /**
- * Modes that perform no verification and must never run in production.
+ * Modes that perform no verification and must never run in production. `jwt`
+ * verifies a signature, so it is not listed here and is allowed in production.
  */
 const UNVERIFIED_MODES: readonly AuthMode[] = ["dev-header"];
 
@@ -58,10 +61,29 @@ export function resolveAuthMode(
   return mode;
 }
 
-const STRATEGIES: Record<AuthMode, AuthStrategy> = {
-  "dev-header": devHeaderStrategy,
-};
+export interface AuthStrategyDeps {
+  /** Required for the jwt mode; validated at startup by resolveJwtConfig. */
+  jwtConfig?: JwtConfig;
+}
 
-export function strategyForMode(mode: AuthMode): AuthStrategy {
-  return STRATEGIES[mode];
+/**
+ * Builds the strategy for a mode. jwt needs verified configuration; if it is
+ * missing, this throws rather than returning a strategy that cannot verify,
+ * which keeps the failure at startup instead of at request time.
+ */
+export function createAuthStrategy(
+  mode: AuthMode,
+  deps: AuthStrategyDeps = {},
+): AuthStrategy {
+  switch (mode) {
+    case "dev-header":
+      return devHeaderStrategy;
+    case "jwt":
+      if (!deps.jwtConfig) {
+        throw new Error(
+          "AUTH_MODE=jwt requires JWT configuration (JWT_ACCESS_SECRET, JWT_ISSUER, JWT_AUDIENCE).",
+        );
+      }
+      return createJwtStrategy(deps.jwtConfig);
+  }
 }

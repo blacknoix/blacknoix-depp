@@ -9,7 +9,9 @@ import { notFound } from "./middleware/not-found";
 import { requestId } from "./middleware/request-id";
 import { requireTenant } from "./middleware/tenant-context";
 
+import type { AuthService } from "./auth/service";
 import type { DatabaseHealthCheck } from "./db/pool";
+import { createAuthRouter } from "./routes/auth";
 import { createHealthRouter } from "./routes/health";
 import rootRouter from "./routes/root";
 import { createTenantsRouter } from "./routes/tenants";
@@ -51,6 +53,13 @@ export interface AppOptions {
    * the Kysely-backed repository when a database is configured.
    */
   lookupTenant?: TenantLookup;
+
+  /**
+   * Backs POST /v1/auth/refresh (and future auth routes). Omitted means those
+   * routes fail closed; index.ts wires it only when a database and JWT
+   * configuration are both present.
+   */
+  authService?: AuthService;
 }
 
 export function createApp(options: AppOptions = {}) {
@@ -84,6 +93,11 @@ export function createApp(options: AppOptions = {}) {
   // Infrastructure routes: no tenant context required.
   app.use("/", rootRouter);
   app.use("/health", createHealthRouter({ checkDatabase: options.checkDatabase }));
+
+  // Auth endpoints are NOT behind requireTenant: refresh presents an opaque
+  // refresh token (its credential is in the body), not an authenticated
+  // principal, and the caller's access token is typically expired by then.
+  app.use("/v1/auth", createAuthRouter({ authService: options.authService }));
 
   // Versioned API surface: tenant-scoped.
   app.use(

@@ -13,6 +13,8 @@ import type { Request } from "express";
 export interface AuthenticatedPrincipal {
   readonly tenantId: string;
   readonly userId?: string;
+  /** The DEPP session this request was authenticated under, when known. */
+  readonly sessionId?: string;
   readonly roles?: readonly string[];
 }
 

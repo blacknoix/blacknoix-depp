@@ -1,10 +1,14 @@
-import { strategyForMode } from "./auth/auth-mode";
+import { createAuthStrategy } from "./auth/auth-mode";
+import { resolveJwtConfig } from "./auth/jwt/config";
+import { createAuthService } from "./auth/service";
 import { createApp } from "./app";
 import { env } from "./config/env";
 import { createKysely } from "./db/kysely";
 import { closePool, createDatabaseHealthCheck, createPool } from "./db/pool";
 import { logLifecycle } from "./lib/log";
+import { createSessionsRepository } from "./sessions/repository";
 import { createTenantsRepository } from "./tenants/repository";
+import { createUsersRepository } from "./users/repository";
 
 /**
  * How long to wait for in-flight requests to finish before forcing exit.
@@ -23,16 +27,30 @@ const IDLE_REAP_INTERVAL_MS = 100;
 // unavailable database does not prevent startup. /health reports the state.
 const pool = env.databaseUrl ? createPool(env.databaseUrl) : undefined;
 
-// Kysely wraps the same pool; the repository is the tenant-scoped read path.
-// Without a database, lookupTenant is undefined and /v1/tenants/me fails closed.
+// Kysely wraps the same pool; the repositories are the tenant-scoped data path.
+// Without a database, dependent routes fail closed.
 const db = pool ? createKysely(pool) : undefined;
 const tenants = db ? createTenantsRepository(db) : undefined;
+const users = db ? createUsersRepository(db) : undefined;
+const sessions = db ? createSessionsRepository(db) : undefined;
+
+// Resolved at startup so AUTH_MODE=jwt with invalid/missing JWT config fails to
+// boot rather than serving requests it cannot verify.
+const jwtConfig = env.authMode === "jwt" ? resolveJwtConfig(process.env) : undefined;
+
+// The auth service needs both persistence and signing; without either, the auth
+// routes report unavailable rather than pretending to work.
+const authService =
+  users && sessions && jwtConfig
+    ? createAuthService({ users, sessions, jwtConfig })
+    : undefined;
 
 const app = createApp({
   jsonBodyLimit: env.jsonBodyLimit,
-  authStrategy: strategyForMode(env.authMode),
+  authStrategy: createAuthStrategy(env.authMode, { jwtConfig }),
   checkDatabase: createDatabaseHealthCheck(pool),
   lookupTenant: tenants?.findById,
+  authService,
 });
 
 const server = app.listen(env.port, () => {

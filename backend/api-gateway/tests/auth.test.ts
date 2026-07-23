@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 
-import { AUTH_MODES, resolveAuthMode, strategyForMode } from "../src/auth/auth-mode";
+import { createAuthStrategy, resolveAuthMode } from "../src/auth/auth-mode";
+import type { JwtConfig } from "../src/auth/jwt/access-token";
 import { startTestServer, type TestServer } from "./helpers/test-server";
 
 let server: TestServer;
@@ -80,13 +81,18 @@ describe("AUTH_MODE resolution", () => {
   });
 
   it("rejects an unknown mode rather than falling back to a default", () => {
+    // "saml" is not implemented; "jwt" and "dev-header" are.
     assert.throws(
-      () => resolveAuthMode("jwt", "development"),
-      /Invalid AUTH_MODE "jwt"\. Supported modes: dev-header\./,
+      () => resolveAuthMode("saml", "development"),
+      /Invalid AUTH_MODE "saml"\. Supported modes: dev-header, jwt\./,
     );
 
     assert.throws(() => resolveAuthMode("", "development"), /Invalid AUTH_MODE/);
     assert.throws(() => resolveAuthMode("DEV-HEADER", "development"), /Invalid AUTH_MODE/);
+  });
+
+  it("allows the verified jwt mode in production", () => {
+    assert.equal(resolveAuthMode("jwt", "production"), "jwt");
   });
 
   it("refuses to run an unverified strategy in production", () => {
@@ -102,9 +108,19 @@ describe("AUTH_MODE resolution", () => {
     );
   });
 
-  it("maps every declared mode to a strategy", () => {
-    for (const mode of AUTH_MODES) {
-      assert.equal(strategyForMode(mode).name, mode);
-    }
+  it("builds a strategy for each mode", () => {
+    assert.equal(createAuthStrategy("dev-header").name, "dev-header");
+
+    const jwtConfig: JwtConfig = {
+      secret: "s".repeat(32),
+      issuer: "depp",
+      audience: "depp-api",
+      accessTtlSeconds: 900,
+    };
+    assert.equal(createAuthStrategy("jwt", { jwtConfig }).name, "jwt");
+  });
+
+  it("refuses to build the jwt strategy without configuration (fail closed)", () => {
+    assert.throws(() => createAuthStrategy("jwt"), /requires JWT configuration/);
   });
 });

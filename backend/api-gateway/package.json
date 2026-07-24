@@ -23,6 +23,7 @@
   "dependencies": {
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "jose": "^6.2.4",
     "kysely": "^0.29.4",
     "pg": "^8.22.0"
   },

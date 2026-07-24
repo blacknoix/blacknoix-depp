@@ -1,5 +1,6 @@
 import { type NextFunction, type Request, type Response, Router } from "express";
 
+import type { OidcLoginService } from "../auth/oidc/login";
 import type { AuthService } from "../auth/service";
 import { logLifecycle } from "../lib/log";
 import { AppError } from "../middleware/error-handler";
@@ -10,6 +11,16 @@ export interface AuthRouterOptions {
    * when a database and JWT configuration are both present.
    */
   authService?: AuthService;
+
+  /**
+   * Upstream OIDC callback verification. When absent, the callback route fails
+   * closed (503). The tenant is fixed by configuration — never taken from the
+   * request — because a single provider authenticates a single DEPP tenant in
+   * this slice.
+   */
+  oidc?: {
+    loginService: OidcLoginService;
+  };
 }
 
 const UUID =
@@ -67,7 +78,85 @@ export function createAuthRouter(options: AuthRouterOptions = {}): Router {
     }
   });
 
+  /**
+   * GET /v1/auth/oidc/start — begins login.
+   *
+   * Creates the server-side initiation record (state, nonce, PKCE) and redirects
+   * to the provider authorization endpoint. The tenant is fixed by configuration.
+   */
+  router.get(
+    "/oidc/start",
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        if (!options.oidc) {
+          throw new AppError("AUTH_UNAVAILABLE", 503, "Authentication is not available");
+        }
+
+        const { redirectUrl } = await options.oidc.loginService.start();
+        res.redirect(302, redirectUrl);
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  /**
+   * GET /v1/auth/oidc/callback — the provider's redirect target.
+   *
+   * completeOidcLogin is reached only after the login service has matched the
+   * returned `state` to a live, unconsumed initiation record and the ID token
+   * has passed jose verification bound to that record's PKCE verifier and nonce.
+   * The tenant comes from the record (config-owned), never the request. Every
+   * failure returns the same generic 401.
+   */
+  router.get(
+    "/oidc/callback",
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        if (!options.oidc || !options.authService) {
+          throw new AppError("AUTH_UNAVAILABLE", 503, "Authentication is not available");
+        }
+
+        const code = typeof req.query.code === "string" ? req.query.code : "";
+        const state = typeof req.query.state === "string" ? req.query.state : "";
+        if (code === "" || state === "") {
+          return rejectOidc(req, res);
+        }
+
+        let completed;
+        try {
+          completed = await options.oidc.loginService.complete({ state, code });
+        } catch (err) {
+          // Any binding or verification failure: no identity crosses the
+          // boundary and completeOidcLogin is never reached.
+          logLifecycle("warn", "oidc_callback_rejected", {
+            requestId: req.requestId,
+            errorName: err instanceof Error ? err.name : "UnknownError",
+          });
+          return rejectOidc(req, res);
+        }
+
+        const tokens = await options.authService.completeOidcLogin(
+          completed.tenantId,
+          completed.identity,
+        );
+
+        res.status(200).json({ ok: true, data: tokens, requestId: req.requestId });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
   return router;
+}
+
+function rejectOidc(req: Request, res: Response): void {
+  res.status(401).json({
+    ok: false,
+    error: { code: "OIDC_CALLBACK_FAILED", message: "Sign-in could not be completed" },
+    requestId: req.requestId,
+  });
 }
 
 function rejectRefresh(req: Request, res: Response): void {

@@ -9,6 +9,7 @@ import { notFound } from "./middleware/not-found";
 import { requestId } from "./middleware/request-id";
 import { requireTenant } from "./middleware/tenant-context";
 
+import type { OidcLoginService } from "./auth/oidc/login";
 import type { AuthService } from "./auth/service";
 import type { DatabaseHealthCheck } from "./db/pool";
 import { createAuthRouter } from "./routes/auth";
@@ -60,6 +61,15 @@ export interface AppOptions {
    * configuration are both present.
    */
   authService?: AuthService;
+
+  /**
+   * Upstream OIDC callback verification for /v1/auth/oidc/callback. Omitted means
+   * that route fails closed; index.ts wires it only when OIDC is configured and
+   * the auth service is available.
+   */
+  oidc?: {
+    loginService: OidcLoginService;
+  };
 }
 
 export function createApp(options: AppOptions = {}) {
@@ -97,7 +107,10 @@ export function createApp(options: AppOptions = {}) {
   // Auth endpoints are NOT behind requireTenant: refresh presents an opaque
   // refresh token (its credential is in the body), not an authenticated
   // principal, and the caller's access token is typically expired by then.
-  app.use("/v1/auth", createAuthRouter({ authService: options.authService }));
+  app.use(
+    "/v1/auth",
+    createAuthRouter({ authService: options.authService, oidc: options.oidc }),
+  );
 
   // Versioned API surface: tenant-scoped.
   app.use(

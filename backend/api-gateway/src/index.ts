@@ -1,5 +1,8 @@
 import { createAuthStrategy } from "./auth/auth-mode";
 import { resolveJwtConfig } from "./auth/jwt/config";
+import { resolveOidcConfig } from "./auth/oidc/config";
+import { createRemoteOidcLoginService } from "./auth/oidc/remote";
+import { createDbInitiationStore } from "./auth/oidc/store-db";
 import { createAuthService } from "./auth/service";
 import { createApp } from "./app";
 import { env } from "./config/env";
@@ -45,12 +48,30 @@ const authService =
     ? createAuthService({ users, sessions, jwtConfig })
     : undefined;
 
+// Resolved at startup: an enabled-but-misconfigured provider fails to boot.
+// undefined means OIDC login is not enabled. The callback also needs the auth
+// service (to mint DEPP tokens), so without it the route reports unavailable.
+const oidcConfig = resolveOidcConfig(process.env);
+// Postgres-backed initiation store: HA single-use + TTL semantics across
+// restarts and instances (see store-db.ts). OIDC requires the auth service,
+// which requires the database, so `db` is present whenever oidc is wired.
+const oidc =
+  oidcConfig && authService && db
+    ? {
+        loginService: createRemoteOidcLoginService(
+          oidcConfig,
+          createDbInitiationStore(db),
+        ),
+      }
+    : undefined;
+
 const app = createApp({
   jsonBodyLimit: env.jsonBodyLimit,
   authStrategy: createAuthStrategy(env.authMode, { jwtConfig }),
   checkDatabase: createDatabaseHealthCheck(pool),
   lookupTenant: tenants?.findById,
   authService,
+  oidc,
 });
 
 const server = app.listen(env.port, () => {

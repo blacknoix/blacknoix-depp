@@ -54,8 +54,49 @@ export interface UsersTable {
   created_at: Generated<Timestamp>;
 }
 
+/**
+ * Tenant-owned. One row per authenticated session, anchored to a users row
+ * (ADR-0003 §4). revoked_at null means active; setting it blocks future refresh.
+ */
+export interface SessionsTable {
+  id: Generated<string>;
+  tenant_id: string;
+  user_id: string;
+  created_at: Generated<Timestamp>;
+  revoked_at: NullableTimestamp;
+}
+
+/**
+ * Tenant-owned. Opaque, one-time-use refresh tokens bound to a session. Only the
+ * SHA-256 hash is stored; consumed_at null means usable.
+ */
+export interface RefreshTokensTable {
+  id: Generated<string>;
+  tenant_id: string;
+  session_id: string;
+  token_hash: string;
+  created_at: Generated<Timestamp>;
+  consumed_at: NullableTimestamp;
+}
+
+/**
+ * Platform-global (no RLS): OIDC login-initiation records, keyed by an
+ * unguessable single-use state. See migrations/005_oidc_initiations.ts.
+ */
+export interface OidcInitiationsTable {
+  state: string;
+  nonce: string;
+  code_verifier: string;
+  tenant_id: string;
+  created_at: Generated<Timestamp>;
+  expires_at: Timestamp;
+}
+
 export interface Database {
   tenants: TenantsTable;
   agents: AgentsTable;
   users: UsersTable;
+  sessions: SessionsTable;
+  refresh_tokens: RefreshTokensTable;
+  oidc_initiations: OidcInitiationsTable;
 }

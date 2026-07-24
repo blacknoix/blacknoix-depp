@@ -76,7 +76,7 @@ export async function connectDb(): Promise<DbHandles> {
  */
 export async function resetSchema(migrator: Pool): Promise<void> {
   await migrator.query(
-    "truncate table refresh_tokens, sessions, users, agents, tenants restart identity cascade",
+    "truncate table oidc_initiations, refresh_tokens, sessions, users, agents, tenants restart identity cascade",
   );
 }
 

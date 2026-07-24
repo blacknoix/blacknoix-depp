@@ -65,7 +65,7 @@ Treat this as the current priority order unless explicitly changed.
 - Frontend implementation: not started
 - Infra setup: not started
 - Auth / RBAC: authentication seam only (ADR-0002); no verified mode, no RBAC
-- Database: schema + RLS foundation (tenants, agents, users) via Kysely + migrator; tenants wired to /v1/tenants/me; users JIT-provisioning path exists but is not called until the OIDC strategy lands (ADR-0003 §9)
+- Database: schema + RLS foundation (tenants, agents, users, sessions, refresh_tokens) via Kysely + migrator, plus the platform-global `oidc_initiations` table backing the HA OIDC login store; tenants wired to /v1/tenants/me. NOTE: the auth/OIDC narrative below this line has drifted behind the committed code (JWT mode, refresh, OIDC callback + state/nonce/PKCE initiation are all implemented and committed) and needs a docs-sync pass.
 - Enterprise hardening: not started
 
 ## backend/api-gateway

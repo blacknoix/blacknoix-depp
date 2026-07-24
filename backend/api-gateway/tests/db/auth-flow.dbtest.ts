@@ -55,6 +55,8 @@ describe("auth flow over the real database", () => {
     const tokens = await service(db).completeOidcLogin(tenantA, IDENTITY);
 
     const claims = verifyAccessToken(JWT, tokens.accessToken);
+    assert.equal(claims.kind, "human");
+    if (claims.kind !== "human") return;
     assert.equal(claims.tenantId, tenantA);
     assert.ok(claims.userId);
     assert.ok(claims.sessionId);
@@ -79,6 +81,7 @@ describe("auth flow over the real database", () => {
     if (refreshed.ok) {
       assert.notEqual(refreshed.tokens.refreshToken, login.refreshToken);
       const claims = verifyAccessToken(JWT, refreshed.tokens.accessToken);
+      assert.equal(claims.kind, "human");
       assert.equal(claims.tenantId, tenantA);
     }
   });
@@ -97,7 +100,10 @@ describe("auth flow over the real database", () => {
     const svc = service(db);
     const sessions = createSessionsRepository(db.app);
     const login = await svc.completeOidcLogin(tenantA, IDENTITY);
-    const { sessionId } = verifyAccessToken(JWT, login.accessToken);
+    const verified = verifyAccessToken(JWT, login.accessToken);
+    assert.equal(verified.kind, "human");
+    if (verified.kind !== "human") return;
+    const { sessionId } = verified;
 
     assert.equal(await sessions.revokeSession(tenantA, sessionId), true);
 

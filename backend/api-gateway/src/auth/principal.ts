@@ -15,6 +15,11 @@ export interface AuthenticatedPrincipal {
   readonly userId?: string;
   /** The DEPP session this request was authenticated under, when known. */
   readonly sessionId?: string;
+  /**
+   * Set when the caller authenticated as an agent (machine identity).
+   * Telemetry ingest requires this; human JWTs omit it.
+   */
+  readonly agentId?: string;
   readonly roles?: readonly string[];
 }
 

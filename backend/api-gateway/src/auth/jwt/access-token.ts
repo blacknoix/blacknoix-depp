@@ -1,16 +1,17 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 /**
- * DEPP access-token issuing and verification (ADR-0003 §4).
+ * DEPP access-token issuing and verification (ADR-0003 §4 / §5).
  *
  * Synchronous by design: an HS256 signature is a local HMAC, so verification
  * needs no I/O and the auth strategy stays synchronous (ADR-0002). The algorithm
- * is hardcoded — the verifier never reads an attacker-supplied `alg`, which
- * removes the alg-confusion and `alg:none` attack classes outright.
+ * is hardcoded — the verifier never reads an attacker-supplied `alg`.
  *
- * Claims are minimal and stable: tenant, user (subject), and session identity,
- * plus issuer/audience/iat/exp. No mutable presentation fields (email, name)
- * ever go in a token.
+ * Two token kinds share the same issuer/audience/secret:
+ *   - human: tid + sub (userId) + sid (sessionId)
+ *   - agent: tid + aid (agentId) + token_use=agent
+ *
+ * No mutable presentation fields ever go in a token.
  */
 
 export interface JwtConfig {
@@ -21,10 +22,27 @@ export interface JwtConfig {
   readonly accessTtlSeconds: number;
 }
 
+/** Human session access-token claims (existing path). */
 export interface AccessTokenClaims {
   readonly tenantId: string;
   readonly userId: string;
   readonly sessionId: string;
+}
+
+/** Agent machine access-token claims (ADR-0003 §5). */
+export interface AgentAccessTokenClaims {
+  readonly tenantId: string;
+  readonly agentId: string;
+}
+
+export type VerifiedAccessToken =
+  | { kind: "human"; tenantId: string; userId: string; sessionId: string }
+  | { kind: "agent"; tenantId: string; agentId: string };
+
+export interface IssuedAgentTokens {
+  accessToken: string;
+  tokenType: "Bearer";
+  expiresIn: number;
 }
 
 export class AccessTokenError extends Error {
@@ -36,6 +54,7 @@ export class AccessTokenError extends Error {
 
 const ALG = "HS256";
 const TYP = "JWT";
+const AGENT_TOKEN_USE = "agent";
 
 function encodeSegment(value: unknown): string {
   return Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -70,12 +89,35 @@ export function issueAccessToken(
   return `${signingInput}.${signingSignature(config.secret, signingInput)}`;
 }
 
+export function issueAgentAccessToken(
+  config: JwtConfig,
+  claims: AgentAccessTokenClaims,
+  issuedAt: number = nowSeconds(),
+): string {
+  const header = { alg: ALG, typ: TYP };
+  const payload = {
+    iss: config.issuer,
+    aud: config.audience,
+    tid: claims.tenantId,
+    aid: claims.agentId,
+    token_use: AGENT_TOKEN_USE,
+    iat: issuedAt,
+    exp: issuedAt + config.accessTtlSeconds,
+  };
+
+  const signingInput = `${encodeSegment(header)}.${encodeSegment(payload)}`;
+
+  return `${signingInput}.${signingSignature(config.secret, signingInput)}`;
+}
+
 interface RawPayload {
   iss?: unknown;
   aud?: unknown;
   sub?: unknown;
   tid?: unknown;
   sid?: unknown;
+  aid?: unknown;
+  token_use?: unknown;
   iat?: unknown;
   exp?: unknown;
 }
@@ -86,15 +128,13 @@ function decodeJson(segment: string): unknown {
 
 /**
  * Verifies a token and returns its claims, or throws AccessTokenError on any
- * failure — malformed, wrong algorithm, bad signature, wrong issuer/audience,
- * expired, or missing a required claim. Callers treat a throw as "no principal"
- * and fail closed.
+ * failure. Callers treat a throw as "no principal" and fail closed.
  */
 export function verifyAccessToken(
   config: JwtConfig,
   token: string,
   at: number = nowSeconds(),
-): AccessTokenClaims {
+): VerifiedAccessToken {
   const parts = token.split(".");
 
   if (parts.length !== 3) {
@@ -110,8 +150,6 @@ export function verifyAccessToken(
     throw new AccessTokenError("malformed header");
   }
 
-  // Hardcoded algorithm: reject anything but our own HS256/JWT before doing any
-  // signature work.
   if (header.alg !== ALG || header.typ !== TYP) {
     throw new AccessTokenError("unexpected algorithm");
   }
@@ -147,6 +185,24 @@ export function verifyAccessToken(
     throw new AccessTokenError("expired");
   }
 
+  if (payload.token_use === AGENT_TOKEN_USE) {
+    const { tid, aid } = payload;
+    if (
+      typeof tid !== "string" ||
+      typeof aid !== "string" ||
+      tid === "" ||
+      aid === ""
+    ) {
+      throw new AccessTokenError("missing required claims");
+    }
+    return { kind: "agent", tenantId: tid, agentId: aid };
+  }
+
+  // Human tokens must not carry agent token_use.
+  if (payload.token_use !== undefined) {
+    throw new AccessTokenError("unexpected token_use");
+  }
+
   const { tid, sub, sid } = payload;
 
   if (
@@ -160,5 +216,5 @@ export function verifyAccessToken(
     throw new AccessTokenError("missing required claims");
   }
 
-  return { tenantId: tid, userId: sub, sessionId: sid };
+  return { kind: "human", tenantId: tid, userId: sub, sessionId: sid };
 }

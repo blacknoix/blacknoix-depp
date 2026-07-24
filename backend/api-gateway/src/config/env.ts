@@ -58,6 +58,25 @@ const nodeEnv = process.env.NODE_ENV ?? "development";
 // requests with weaker authentication than intended.
 const authMode = resolveAuthMode(process.env.AUTH_MODE, nodeEnv);
 
+/**
+ * Max events per POST /v1/telemetry/events/batch.
+ * Unset → 50. Invalid / out of range fails closed at startup.
+ */
+export function resolveTelemetryBatchMaxEvents(raw: string | undefined): number {
+  if (raw === undefined || raw.trim() === "") {
+    return 50;
+  }
+
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1 || value > 100) {
+    throw new Error(
+      "Invalid TELEMETRY_BATCH_MAX_EVENTS: must be an integer from 1 to 100.",
+    );
+  }
+
+  return value;
+}
+
 export const env = {
   nodeEnv,
   port,
@@ -72,4 +91,8 @@ export const env = {
   // Undefined when unset. The service starts and serves without a database;
   // /health reports it as not configured. See ADR-0004.
   databaseUrl: resolveDatabaseUrl(process.env.DATABASE_URL),
+
+  telemetryBatchMaxEvents: resolveTelemetryBatchMaxEvents(
+    process.env.TELEMETRY_BATCH_MAX_EVENTS,
+  ),
 };

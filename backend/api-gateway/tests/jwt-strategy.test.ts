@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { Request } from "express";
 
-import { issueAccessToken, type JwtConfig } from "../src/auth/jwt/access-token";
+import { issueAccessToken, issueAgentAccessToken, type JwtConfig } from "../src/auth/jwt/access-token";
 import { createJwtStrategy } from "../src/auth/strategies/jwt";
 
 const config: JwtConfig = {
@@ -38,6 +38,21 @@ describe("jwt auth strategy", () => {
       tenantId: CLAIMS.tenantId,
       userId: CLAIMS.userId,
       sessionId: CLAIMS.sessionId,
+    });
+  });
+
+  it("derives an agent principal from an agent access token", () => {
+    const token = issueAgentAccessToken(config, {
+      tenantId: CLAIMS.tenantId,
+      agentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    });
+    const principal = strategy.authenticate(
+      reqWith({ authorization: `Bearer ${token}` }),
+    );
+
+    assert.deepEqual(principal, {
+      tenantId: CLAIMS.tenantId,
+      agentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     });
   });
 

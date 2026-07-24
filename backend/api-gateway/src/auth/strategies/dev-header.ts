@@ -3,19 +3,18 @@ import type { Request } from "express";
 import type { AuthStrategy, AuthenticatedPrincipal } from "../principal";
 
 const TENANT_HEADER = "x-tenant-id";
+const AGENT_HEADER = "x-agent-id";
 
 /**
  * Interim validation.
  *
- * ADR-0001 specifies tenant IDs are UUIDs, resolved into the Postgres runtime
- * setting `app.current_tenant` for RLS. Until Postgres lands, tenant IDs are
- * treated as opaque bounded identifiers so local development can use readable
- * values such as "tenant-dev-001".
- *
- * TODO(depp): tighten to UUID validation when Postgres/RLS is introduced.
+ * ADR-0001 specifies tenant IDs are UUIDs. The opaque bounded form remains for
+ * local development readability under this stand-in strategy only.
  */
 const MAX_TENANT_ID_LENGTH = 64;
 const SAFE_TENANT_ID = /^[A-Za-z0-9_-]+$/;
+const UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function normalizeTenantId(value: string | undefined): string | undefined {
   if (typeof value !== "string") {
@@ -35,17 +34,23 @@ function normalizeTenantId(value: string | undefined): string | undefined {
   return trimmed;
 }
 
+function normalizeAgentId(value: string | undefined): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim().toLowerCase();
+  if (!UUID.test(trimmed)) {
+    return undefined;
+  }
+  return trimmed;
+}
+
 /**
- * Development-only strategy: trusts the client-supplied x-tenant-id header.
+ * Development-only strategy: trusts x-tenant-id (and optionally x-agent-id).
  *
- * SECURITY: this performs no verification whatsoever. Any caller can claim any
- * tenant. It exists so the service can be exercised before real authentication
- * is built, and config/auth-mode.ts refuses to start the service with this
- * strategy when NODE_ENV=production.
- *
- * It establishes no userId and no roles, because a bare header cannot prove
- * either. Authorization beyond "a tenant was supplied" must wait for a verified
- * strategy.
+ * SECURITY: no verification. Banned when NODE_ENV=production.
+ * x-agent-id exists so local telemetry ingest can exercise the agent
+ * principal boundary without minting JWTs.
  */
 export const devHeaderStrategy: AuthStrategy = {
   name: "dev-header",
@@ -57,6 +62,8 @@ export const devHeaderStrategy: AuthStrategy = {
       return undefined;
     }
 
-    return { tenantId };
+    const agentId = normalizeAgentId(req.get(AGENT_HEADER));
+
+    return agentId ? { tenantId, agentId } : { tenantId };
   },
 };

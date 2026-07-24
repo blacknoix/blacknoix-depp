@@ -61,24 +61,31 @@ Treat this as the current priority order unless explicitly changed.
 ## Current status
 - Repository setup: done (git, hygiene files, ADR log)
 - Product docs: ADR-0001 accepted; no product/spec docs yet
-- Backend implementation: api-gateway — middleware baseline; `/v1/tenants/me` wired to a real, RLS-scoped tenant lookup
+- Backend implementation: api-gateway — middleware baseline; `/v1/tenants/me`; tenant-scoped telemetry ingest; agent enrollment + hashed credentials + agent JWT exchange for authenticated ingest
 - Frontend implementation: not started
 - Infra setup: not started
-- Auth / RBAC: authentication seam only (ADR-0002); no verified mode, no RBAC
-- Database: schema + RLS foundation (tenants, agents, users, sessions, refresh_tokens) via Kysely + migrator, plus the platform-global `oidc_initiations` table backing the HA OIDC login store; tenants wired to /v1/tenants/me. NOTE: the auth/OIDC narrative below this line has drifted behind the committed code (JWT mode, refresh, OIDC callback + state/nonce/PKCE initiation are all implemented and committed) and needs a docs-sync pass.
+- Auth / RBAC: authentication seam (ADR-0002) with `dev-header` + `jwt`; human OIDC/refresh and agent credential exchange implemented; no RBAC
+- Database: schema + RLS (tenants, agents, agent_credentials, users, sessions, refresh_tokens, telemetry_events) via Kysely + migrator, plus platform-global `oidc_initiations`. NOTE: some auth narrative elsewhere may still need a docs-sync pass.
 - Enterprise hardening: not started
 
 ## backend/api-gateway
 Implemented:
 - Middleware: request ID, structured JSON request logging, tenant context, 404 handler, centralized error handler
-- Routes: `GET /` (service identity), `GET /health`, `GET /v1/tenants/me` (tenant-scoped)
+- Routes: `GET /`, `GET /health`, `GET /v1/tenants/me`, `POST /v1/agents` (enroll), `POST /v1/agents/:id/credentials/revoke`, `POST /v1/auth/agent/token`, `POST /v1/telemetry/events`, `POST /v1/telemetry/events/batch`
 - Error envelope: `{ ok: false, error: { code, message }, requestId }`
 - Success envelope on /v1: `{ ok: true, data, requestId }`
 - Tests: `node:test` integration suite against `createApp()` (`npm test`)
 - Persistence: Kysely + pg pool; `withTenantTransaction` is the only sanctioned
   path to tenant-owned data; schema/RLS in `src/db/migrations`. See ADR-0004.
+- Telemetry v1: auth/liveness events; append-only `telemetry_events`; tenant +
+  agent identity from verified principal (agent JWT / dev `x-agent-id`), not body.
+  Batch ingest: `POST /v1/telemetry/events/batch` (all-or-nothing, max events
+  via `TELEMETRY_BATCH_MAX_EVENTS`, default 50).
+- Agent identity (ADR-0003 §5 minimal): register agent → hashed credential once;
+  exchange for short-lived agent access JWT (`tid`+`aid`); revoke blocks exchange.
 
-Not implemented: verified authentication, RBAC, persistence wired to routes.
+Not implemented: RBAC, agent runtime, mTLS, enrollment UX, credential rotation UX,
+access-token denylist, policy/remediation, mesh, correlation, agent-side spool.
 
 ## Persistence and RLS
 Authoritative decision: docs/architecture/adr/0004-persistence-and-data-access.md.

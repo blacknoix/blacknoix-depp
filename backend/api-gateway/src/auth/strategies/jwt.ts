@@ -11,10 +11,8 @@ import type { AuthStrategy, AuthenticatedPrincipal } from "../principal";
  * Verified auth strategy: the principal comes only from a DEPP-signed access
  * token, never from request headers.
  *
- * A missing, malformed, expired, wrong-issuer, wrong-audience, or bad-signature
- * token yields no principal, so the request fails closed at requireTenant. Only
- * an AccessTokenError is swallowed into "no principal"; anything unexpected is
- * re-thrown so it cannot be silently treated as unauthenticated.
+ * Supports human session tokens (tid/sub/sid) and agent machine tokens
+ * (tid/aid). A missing or invalid token yields no principal.
  */
 export function createJwtStrategy(config: JwtConfig): AuthStrategy {
   return {
@@ -33,6 +31,13 @@ export function createJwtStrategy(config: JwtConfig): AuthStrategy {
 
       try {
         const claims = verifyAccessToken(config, token.trim());
+
+        if (claims.kind === "agent") {
+          return {
+            tenantId: claims.tenantId,
+            agentId: claims.agentId,
+          };
+        }
 
         return {
           tenantId: claims.tenantId,

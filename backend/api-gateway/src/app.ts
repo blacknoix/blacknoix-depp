@@ -11,12 +11,16 @@ import { requireTenant } from "./middleware/tenant-context";
 
 import type { OidcLoginService } from "./auth/oidc/login";
 import type { AuthService } from "./auth/service";
+import type { AgentsService } from "./agents/service";
 import type { DatabaseHealthCheck } from "./db/pool";
+import { createAgentsRouter } from "./routes/agents";
 import { createAuthRouter } from "./routes/auth";
 import { createHealthRouter } from "./routes/health";
 import rootRouter from "./routes/root";
 import { createTenantsRouter } from "./routes/tenants";
+import { createTelemetryRouter } from "./routes/telemetry";
 import type { TenantLookup } from "./tenants/repository";
+import type { TelemetryService } from "./telemetry/service";
 
 /**
  * Maximum accepted JSON request body.
@@ -70,6 +74,23 @@ export interface AppOptions {
   oidc?: {
     loginService: OidcLoginService;
   };
+
+  /**
+   * Backs POST /v1/telemetry/events. Omitted means the route fails closed;
+   * index.ts wires it when a database is configured.
+   */
+  telemetryService?: TelemetryService;
+
+  /**
+   * Max events for POST /v1/telemetry/events/batch. Validated in env when set.
+   */
+  telemetryBatchMaxEvents?: number;
+
+  /**
+   * Backs agent enrollment/revoke and credential exchange. Omitted means those
+   * routes fail closed; index.ts wires it when database + JWT config are present.
+   */
+  agentsService?: AgentsService;
 }
 
 export function createApp(options: AppOptions = {}) {
@@ -104,12 +125,15 @@ export function createApp(options: AppOptions = {}) {
   app.use("/", rootRouter);
   app.use("/health", createHealthRouter({ checkDatabase: options.checkDatabase }));
 
-  // Auth endpoints are NOT behind requireTenant: refresh presents an opaque
-  // refresh token (its credential is in the body), not an authenticated
-  // principal, and the caller's access token is typically expired by then.
+  // Auth endpoints are NOT behind requireTenant: refresh / agent token exchange
+  // present an opaque credential in the body, not an authenticated principal.
   app.use(
     "/v1/auth",
-    createAuthRouter({ authService: options.authService, oidc: options.oidc }),
+    createAuthRouter({
+      authService: options.authService,
+      agentsService: options.agentsService,
+      oidc: options.oidc,
+    }),
   );
 
   // Versioned API surface: tenant-scoped.
@@ -117,6 +141,23 @@ export function createApp(options: AppOptions = {}) {
     "/v1/tenants",
     requireTenant,
     createTenantsRouter({ lookupTenant: options.lookupTenant }),
+  );
+
+  // Agent enrollment (register + revoke). Credential exchange is under /v1/auth.
+  app.use(
+    "/v1/agents",
+    requireTenant,
+    createAgentsRouter({ agentsService: options.agentsService }),
+  );
+
+  // Telemetry ingest: requires an agent principal (agent JWT / x-agent-id).
+  app.use(
+    "/v1/telemetry",
+    requireTenant,
+    createTelemetryRouter({
+      telemetryService: options.telemetryService,
+      batchMaxEvents: options.telemetryBatchMaxEvents,
+    }),
   );
 
   // Terminal handlers, in order.

@@ -27,15 +27,29 @@ export interface TenantsTable {
 }
 
 /**
- * Tenant-owned. Isolation is enforced by PostgreSQL RLS keyed on
- * `app.current_tenant`, never by application-level filters (ADR-0001, ADR-0004).
- * Every access must go through withTenantTransaction.
+ * Tenant-owned. Stable agent identity (ADR-0001). `name` is mutable metadata
+ * only; identity is `id` within `tenant_id`. Credentials live in
+ * agent_credentials — never on this row.
  */
 export interface AgentsTable {
   id: Generated<string>;
   tenant_id: string;
   name: string;
   created_at: Generated<Timestamp>;
+}
+
+/**
+ * Tenant-owned. Hashed long-lived agent credential (ADR-0003 §5). Plaintext is
+ * returned once at enrollment and never stored. revoked_at null means usable
+ * for access-token exchange.
+ */
+export interface AgentCredentialsTable {
+  id: Generated<string>;
+  tenant_id: string;
+  agent_id: string;
+  credential_hash: string;
+  created_at: Generated<Timestamp>;
+  revoked_at: NullableTimestamp;
 }
 
 /**
@@ -92,11 +106,29 @@ export interface OidcInitiationsTable {
   expires_at: Timestamp;
 }
 
+/**
+ * Tenant-owned append-only telemetry (ADR-0001). Isolation via RLS +
+ * withTenantTransaction. payload is opaque JSON constrained at the contract
+ * layer; no mutable presentation fields live here.
+ */
+export interface TelemetryEventsTable {
+  id: Generated<string>;
+  tenant_id: string;
+  agent_id: string;
+  schema_version: number;
+  event_type: string;
+  occurred_at: Timestamp;
+  ingested_at: Generated<Timestamp>;
+  payload: Record<string, unknown>;
+}
+
 export interface Database {
   tenants: TenantsTable;
   agents: AgentsTable;
+  agent_credentials: AgentCredentialsTable;
   users: UsersTable;
   sessions: SessionsTable;
   refresh_tokens: RefreshTokensTable;
   oidc_initiations: OidcInitiationsTable;
+  telemetry_events: TelemetryEventsTable;
 }

@@ -2,6 +2,7 @@ import { type NextFunction, type Request, type Response, Router } from "express"
 
 import type { OidcLoginService } from "../auth/oidc/login";
 import type { AuthService } from "../auth/service";
+import type { AgentsService } from "../agents/service";
 import { logLifecycle } from "../lib/log";
 import { AppError } from "../middleware/error-handler";
 
@@ -11,6 +12,12 @@ export interface AuthRouterOptions {
    * when a database and JWT configuration are both present.
    */
   authService?: AuthService;
+
+  /**
+   * Agent credential → access-token exchange. When absent, that route fails
+   * closed (503).
+   */
+  agentsService?: AgentsService;
 
   /**
    * Upstream OIDC callback verification. When absent, the callback route fails
@@ -77,6 +84,59 @@ export function createAuthRouter(options: AuthRouterOptions = {}): Router {
       next(err);
     }
   });
+
+  /**
+   * POST /v1/auth/agent/token — exchange an agent credential for a short-lived
+   * access JWT (ADR-0003 §5). Not behind requireTenant: the credential is the
+   * proof; tenantId scopes the RLS lookup (same pattern as refresh).
+   *
+   * Every rejection is the same generic 401 so this is not an oracle for
+   * agent existence or revocation state.
+   */
+  router.post(
+    "/agent/token",
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        if (!options.agentsService) {
+          throw new AppError(
+            "AUTH_UNAVAILABLE",
+            503,
+            "Authentication is not available",
+          );
+        }
+
+        const tenantId = readString(req.body, "tenantId").trim();
+        const agentId = readString(req.body, "agentId").trim().toLowerCase();
+        const credential = readString(req.body, "credential");
+
+        if (!UUID.test(tenantId) || !UUID.test(agentId) || credential === "") {
+          return rejectAgentToken(req, res);
+        }
+
+        const outcome = await options.agentsService.exchangeForAccessToken(
+          tenantId,
+          agentId,
+          credential,
+        );
+
+        if (!outcome.ok) {
+          logLifecycle("warn", "agent_token_rejected", {
+            requestId: req.requestId,
+            reason: outcome.reason,
+          });
+          return rejectAgentToken(req, res);
+        }
+
+        res.status(200).json({
+          ok: true,
+          data: outcome.tokens,
+          requestId: req.requestId,
+        });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
 
   /**
    * GET /v1/auth/oidc/start — begins login.
@@ -163,6 +223,17 @@ function rejectRefresh(req: Request, res: Response): void {
   res.status(401).json({
     ok: false,
     error: { code: "REFRESH_REJECTED", message: "Refresh token is invalid or expired" },
+    requestId: req.requestId,
+  });
+}
+
+function rejectAgentToken(req: Request, res: Response): void {
+  res.status(401).json({
+    ok: false,
+    error: {
+      code: "AGENT_TOKEN_REJECTED",
+      message: "Agent credential is invalid or revoked",
+    },
     requestId: req.requestId,
   });
 }

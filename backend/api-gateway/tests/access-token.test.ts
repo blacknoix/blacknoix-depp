@@ -5,6 +5,7 @@ import { describe, it } from "node:test";
 import {
   AccessTokenError,
   issueAccessToken,
+  issueAgentAccessToken,
   type JwtConfig,
   verifyAccessToken,
 } from "../src/auth/jwt/access-token";
@@ -35,7 +36,23 @@ describe("access token issue/verify", () => {
     const token = issueAccessToken(config, CLAIMS, 1_000);
     const claims = verifyAccessToken(config, token, 1_000);
 
-    assert.deepEqual(claims, CLAIMS);
+    assert.deepEqual(claims, {
+      kind: "human",
+      tenantId: CLAIMS.tenantId,
+      userId: CLAIMS.userId,
+      sessionId: CLAIMS.sessionId,
+    });
+  });
+
+  it("round-trips agent claims", () => {
+    const agentClaims = {
+      tenantId: CLAIMS.tenantId,
+      agentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    };
+    const token = issueAgentAccessToken(config, agentClaims, 1_000);
+    const claims = verifyAccessToken(config, token, 1_000);
+
+    assert.deepEqual(claims, { kind: "agent", ...agentClaims });
   });
 
   it("rejects an expired token", () => {

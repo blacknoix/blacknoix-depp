@@ -4,6 +4,8 @@ import { resolveOidcConfig } from "./auth/oidc/config";
 import { createRemoteOidcLoginService } from "./auth/oidc/remote";
 import { createDbInitiationStore } from "./auth/oidc/store-db";
 import { createAuthService } from "./auth/service";
+import { createAgentsRepository } from "./agents/repository";
+import { createAgentsService } from "./agents/service";
 import { createApp } from "./app";
 import { env } from "./config/env";
 import { createKysely } from "./db/kysely";
@@ -11,6 +13,8 @@ import { closePool, createDatabaseHealthCheck, createPool } from "./db/pool";
 import { logLifecycle } from "./lib/log";
 import { createSessionsRepository } from "./sessions/repository";
 import { createTenantsRepository } from "./tenants/repository";
+import { createTelemetryRepository } from "./telemetry/repository";
+import { createTelemetryService } from "./telemetry/service";
 import { createUsersRepository } from "./users/repository";
 
 /**
@@ -36,16 +40,31 @@ const db = pool ? createKysely(pool) : undefined;
 const tenants = db ? createTenantsRepository(db) : undefined;
 const users = db ? createUsersRepository(db) : undefined;
 const sessions = db ? createSessionsRepository(db) : undefined;
+const agents = db ? createAgentsRepository(db) : undefined;
+const telemetry = db ? createTelemetryRepository(db) : undefined;
+const telemetryService = telemetry
+  ? createTelemetryService({ telemetry })
+  : undefined;
 
 // Resolved at startup so AUTH_MODE=jwt with invalid/missing JWT config fails to
-// boot rather than serving requests it cannot verify.
-const jwtConfig = env.authMode === "jwt" ? resolveJwtConfig(process.env) : undefined;
+// boot rather than serving requests it cannot verify. When AUTH_MODE is not jwt
+// but JWT_* is present (e.g. local agent exchange under dev-header), resolve it
+// too — a partial JWT config still fails closed via resolveJwtConfig.
+const jwtConfig =
+  env.authMode === "jwt" || Boolean(process.env.JWT_ACCESS_SECRET?.trim())
+    ? resolveJwtConfig(process.env)
+    : undefined;
 
 // The auth service needs both persistence and signing; without either, the auth
 // routes report unavailable rather than pretending to work.
 const authService =
   users && sessions && jwtConfig
     ? createAuthService({ users, sessions, jwtConfig })
+    : undefined;
+
+const agentsService =
+  agents && jwtConfig
+    ? createAgentsService({ agents, jwtConfig })
     : undefined;
 
 // Resolved at startup: an enabled-but-misconfigured provider fails to boot.
@@ -72,6 +91,9 @@ const app = createApp({
   lookupTenant: tenants?.findById,
   authService,
   oidc,
+  telemetryService,
+  telemetryBatchMaxEvents: env.telemetryBatchMaxEvents,
+  agentsService,
 });
 
 const server = app.listen(env.port, () => {

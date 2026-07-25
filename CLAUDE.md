@@ -21,7 +21,7 @@ What actually exists:
 - CLAUDE.md
 - docs/architecture/adr/ — ADR-0001 (tenancy and data model), Accepted
 - backend/api-gateway/ — running Express service, see below
-- frontend/ — empty
+- frontend/ — operator findings console (Vite + React + TypeScript)
 - infra/ — empty
 
 Anything not listed above does not exist yet.
@@ -40,8 +40,12 @@ Confirmed and in use (backend/api-gateway):
 Data-access and migration choices are recorded in ADR-0004.
 
 Still assumptions, not yet implemented:
-- Frontend: React + TypeScript
 - Cache/queue: Redis
+
+Frontend (confirmed in `frontend/`):
+- React 19 + TypeScript + Vite
+- Vitest + Testing Library
+- Local `/v1` proxy to api-gateway (CORS on gateway deferred)
 
 If the actual stack changes, update this file immediately.
 
@@ -62,7 +66,7 @@ Treat this as the current priority order unless explicitly changed.
 - Repository setup: done (git, hygiene files, ADR log)
 - Product docs: ADR-0001 accepted; no product/spec docs yet
 - Backend implementation: api-gateway — middleware baseline; `/v1/tenants/me`; tenant-scoped telemetry ingest + query/summary; minimal post-ingest correlation findings; agent enrollment + hashed credentials + agent JWT exchange for authenticated ingest
-- Frontend implementation: not started
+- Frontend implementation: operator findings console (session gate + summary/list/detail/snooze)
 - Infra setup: not started
 - Auth / RBAC: authentication seam (ADR-0002) with `dev-header` + `jwt`; human OIDC/refresh and agent credential exchange implemented; no RBAC
 - Database: schema + RLS (tenants, agents, agent_credentials, users, sessions, refresh_tokens, telemetry_events, correlation_findings, finding_suppressions) via Kysely + migrator, plus platform-global `oidc_initiations`. NOTE: some auth narrative elsewhere may still need a docs-sync pass.
@@ -103,9 +107,10 @@ Implemented:
   `POST/GET/DELETE /v1/findings/suppressions`; one uncleared snooze per rule.
   Operator dashboard: `GET /v1/findings/dashboard` — fixed 24h windows; counts by
   status and ruleId (zero-filled); recentCreated/recentChanged; active
-  suppression count; no query params; agents rejected. UI/charts, export,
-  scheduled digests, case management, comments, assignment, notifications,
-  rule DSL, malware, and remediation deferred.
+  suppression count; no query params; agents rejected. Frontend console consumes
+  these surfaces (see `frontend/`). Charts, export, scheduled digests, case
+  management, comments, assignment, notifications, rule DSL, malware, and
+  remediation deferred.
 - Agent identity (ADR-0003 §5 minimal): register agent → hashed credential once;
   exchange for short-lived agent access JWT (`tid`+`aid`); revoke blocks exchange.
 
@@ -204,8 +209,14 @@ Run from `backend/api-gateway/`:
 - Test: `npm test` (`node:test` + tsx; see `tests/`)
 - Typecheck tests: `npm run typecheck:test`
 
-No commands exist for frontend/ or infra/ yet.
-If a service is added, update these commands immediately.
+No commands exist for infra/ yet.
+
+Run from `frontend/`:
+- Install dependencies: `npm install`
+- Start dev (proxies `/v1` → api-gateway `:3000`): `npm run dev`
+- Typecheck: `npm run typecheck`
+- Build: `npm run build`
+- Test: `npm test` (Vitest + Testing Library)
 
 ## How Claude should work in this repo
 When asked to plan work:

@@ -122,6 +122,46 @@ export interface TelemetryEventsTable {
   payload: Record<string, unknown>;
 }
 
+<<<<<<< HEAD
+=======
+/**
+ * Tenant-owned correlation output (ADR-0001 alerts, minimal). Inserts are
+ * append-oriented; status is the only mutable triage field in this slice.
+ */
+export interface CorrelationFindingsTable {
+  id: Generated<string>;
+  tenant_id: string;
+  agent_id: string;
+  rule_id: string;
+  title: string;
+  severity: string;
+  evidence: Record<string, unknown>;
+  window_start: Timestamp;
+  window_end: Timestamp;
+  window_bucket: Timestamp;
+  created_at: Generated<Timestamp>;
+  status: string;
+  status_changed_at: NullableTimestamp;
+  status_changed_by_user_id: string | null;
+}
+
+/**
+ * Tenant-owned time-bounded snooze for a correlation rule. Soft-cleared via
+ * cleared_at; evaluation skips new findings while active.
+ */
+export interface FindingSuppressionsTable {
+  id: Generated<string>;
+  tenant_id: string;
+  rule_id: string;
+  starts_at: Timestamp;
+  ends_at: Timestamp;
+  created_at: Generated<Timestamp>;
+  created_by_user_id: string | null;
+  cleared_at: NullableTimestamp;
+  cleared_by_user_id: string | null;
+}
+
+>>>>>>> dec9ffc (feat(api-gateway): add findings snooze and operator dashboard summary)
 export interface Database {
   tenants: TenantsTable;
   agents: AgentsTable;
@@ -131,4 +171,9 @@ export interface Database {
   refresh_tokens: RefreshTokensTable;
   oidc_initiations: OidcInitiationsTable;
   telemetry_events: TelemetryEventsTable;
+<<<<<<< HEAD
+=======
+  correlation_findings: CorrelationFindingsTable;
+  finding_suppressions: FindingSuppressionsTable;
+>>>>>>> dec9ffc (feat(api-gateway): add findings snooze and operator dashboard summary)
 }

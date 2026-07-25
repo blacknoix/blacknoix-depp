@@ -44,6 +44,7 @@ Still assumptions, not yet implemented:
 
 Frontend (confirmed in `frontend/`):
 - React 19 + TypeScript + Vite
+- React Router (authenticated operator shell; Findings at `/findings`)
 - Vitest + Testing Library
 - Local `/v1` proxy to api-gateway (CORS on gateway deferred)
 
@@ -66,7 +67,7 @@ Treat this as the current priority order unless explicitly changed.
 - Repository setup: done (git, hygiene files, ADR log)
 - Product docs: ADR-0001 accepted; no product/spec docs yet
 - Backend implementation: api-gateway — middleware baseline; `/v1/tenants/me`; tenant-scoped telemetry ingest + query/summary; minimal post-ingest correlation findings; agent enrollment + hashed credentials + agent JWT exchange for authenticated ingest
-- Frontend implementation: operator findings console (session gate + summary/list/detail/snooze)
+- Frontend implementation: operator app shell + findings console (`/findings`; Agents placeholder)
 - Infra setup: not started
 - Auth / RBAC: authentication seam (ADR-0002) with `dev-header` + `jwt`; human OIDC/refresh and agent credential exchange implemented; no RBAC
 - Database: schema + RLS (tenants, agents, agent_credentials, users, sessions, refresh_tokens, telemetry_events, correlation_findings, finding_suppressions) via Kysely + migrator, plus platform-global `oidc_initiations`. NOTE: some auth narrative elsewhere may still need a docs-sync pass.

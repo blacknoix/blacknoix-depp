@@ -1,3 +1,5 @@
+import { useOutletContext } from "react-router-dom";
+
 import type { OperatorSession } from "../auth/session";
 import { FindingDetail } from "./FindingDetail";
 import { FindingsList } from "./FindingsList";
@@ -5,12 +7,20 @@ import { SnoozePanel } from "./SnoozePanel";
 import { SummaryStrip } from "./SummaryStrip";
 import { useFindingsConsole } from "./useFindingsConsole";
 
-interface Props {
+export interface FindingsOutletContext {
   session: OperatorSession;
-  onSignOut: () => void;
 }
 
-export function FindingsConsole({ session, onSignOut }: Props) {
+interface ViewProps {
+  session: OperatorSession;
+}
+
+/**
+ * Findings page body. Product chrome lives in OperatorShell.
+ * `FindingsConsoleView` is the testable surface; the route wrapper reads session
+ * from the shell outlet.
+ */
+export function FindingsConsoleView({ session }: ViewProps) {
   const {
     state,
     selected,
@@ -25,21 +35,11 @@ export function FindingsConsole({ session, onSignOut }: Props) {
 
   return (
     <div className="console">
-      <header className="topbar">
-        <div>
-          <p className="brand">DEPP</p>
-          <h1>Findings</h1>
-        </div>
-        <div className="topbar-meta">
-          <span className="mono muted tiny">
-            {session.kind === "tenant"
-              ? `tenant ${session.tenantId}`
-              : "bearer session"}
-          </span>
-          <button type="button" className="btn btn-secondary" onClick={onSignOut}>
-            Sign out
-          </button>
-        </div>
+      <header className="page-header">
+        <h1>Findings</h1>
+        <p className="muted">
+          Triage correlation findings and manage time-bounded rule snoozes.
+        </p>
       </header>
 
       {state.load === "loading" && !state.data.dashboard ? (
@@ -88,4 +88,9 @@ export function FindingsConsole({ session, onSignOut }: Props) {
       />
     </div>
   );
+}
+
+export function FindingsConsole() {
+  const { session } = useOutletContext<FindingsOutletContext>();
+  return <FindingsConsoleView session={session} />;
 }

@@ -7,12 +7,13 @@ import {
   parseTelemetryBatchV1,
   parseTelemetryEventV1,
 } from "../telemetry/contract";
+import { parseTelemetryQueryV1 } from "../telemetry/query";
 import type { TelemetryService } from "../telemetry/service";
 
 export interface TelemetryRouterOptions {
   /**
-   * Ingest path. When absent, the route fails closed rather than accepting
-   * events that cannot be persisted.
+   * Ingest/query path. When absent, the routes fail closed rather than
+   * accepting events or returning unscoped data.
    */
   telemetryService?: TelemetryService;
 
@@ -26,14 +27,11 @@ export interface TelemetryRouterOptions {
 const DEFAULT_BATCH_MAX_EVENTS = 50;
 
 /**
- * Tenant-scoped telemetry ingestion authenticated as an agent.
+ * Tenant-scoped telemetry ingest + query.
  *
- * Tenant and agent identity come from the verified principal (agent access JWT
- * or, in development, x-tenant-id + x-agent-id). Body agentId is only a
- * consistency check; it is never the source of truth.
- *
- * Batch ingest (POST /events/batch) is all-or-nothing: any invalid event
- * rejects the whole request with no writes.
+ * Ingest requires an agent principal. Query allows any tenant principal:
+ * agents are scoped to themselves; human operators must pass agentId.
+ * Tenant identity always comes from the principal.
  */
 export function createTelemetryRouter(
   options: TelemetryRouterOptions = {},
@@ -46,14 +44,7 @@ export function createTelemetryRouter(
     async (req: Request, res: Response, next: NextFunction) => {
       try {
         const principal = requireAgentPrincipal(req);
-
-        if (!options.telemetryService) {
-          throw new AppError(
-            "TELEMETRY_UNAVAILABLE",
-            503,
-            "Telemetry ingestion is not available",
-          );
-        }
+        const service = requireTelemetryService(options);
 
         const body = bindSingleEventBody(req.body, principal.agentId);
         const parsed = parseTelemetryEventV1(body);
@@ -61,10 +52,7 @@ export function createTelemetryRouter(
           throw new AppError("TELEMETRY_INVALID", 400, parsed.message);
         }
 
-        const outcome = await options.telemetryService.ingest(
-          principal.tenantId,
-          parsed.event,
-        );
+        const outcome = await service.ingest(principal.tenantId, parsed.event);
 
         if (!outcome.ok) {
           logLifecycle("warn", "telemetry_ingest_rejected", {
@@ -99,14 +87,7 @@ export function createTelemetryRouter(
     async (req: Request, res: Response, next: NextFunction) => {
       try {
         const principal = requireAgentPrincipal(req);
-
-        if (!options.telemetryService) {
-          throw new AppError(
-            "TELEMETRY_UNAVAILABLE",
-            503,
-            "Telemetry ingestion is not available",
-          );
-        }
+        const service = requireTelemetryService(options);
 
         const parsed = parseTelemetryBatchV1(req.body, {
           agentId: principal.agentId,
@@ -114,9 +95,6 @@ export function createTelemetryRouter(
         });
 
         if (!parsed.ok) {
-          // Agent identity mismatch is fail-closed and non-oracular at the
-          // client: same code family as other reject paths when message is the
-          // mismatch form; validation failures stay TELEMETRY_INVALID.
           if (parsed.message.includes("agent identity mismatch")) {
             throw new AppError(
               "TELEMETRY_REJECTED",
@@ -127,7 +105,7 @@ export function createTelemetryRouter(
           throw new AppError("TELEMETRY_INVALID", 400, parsed.message);
         }
 
-        const outcome = await options.telemetryService.ingestBatch(
+        const outcome = await service.ingestBatch(
           principal.tenantId,
           parsed.events,
         );
@@ -164,7 +142,111 @@ export function createTelemetryRouter(
     },
   );
 
+  /**
+   * GET /v1/telemetry/events — recent events + tiny operator summary.
+   *
+   * Correlation, export, and dashboards are deferred. Empty/unknown agent
+   * returns an empty page rather than an existence oracle.
+   */
+  router.get(
+    "/events",
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const principal = requirePrincipal(req);
+        const service = requireTelemetryService(options);
+
+        const parsed = parseTelemetryQueryV1(req.query, {
+          principalAgentId: principal.agentId,
+        });
+
+        if (!parsed.ok) {
+          if (parsed.message === "agent identity mismatch") {
+            throw new AppError(
+              "TELEMETRY_REJECTED",
+              400,
+              "Telemetry query cannot be accepted",
+            );
+          }
+          throw new AppError("TELEMETRY_INVALID", 400, parsed.message);
+        }
+
+        const outcome = await service.query(principal.tenantId, parsed.query);
+
+        if (!outcome.ok) {
+          // Non-oracular empty page for unknown / cross-tenant agent ids.
+          res.status(200).json({
+            ok: true,
+            data: {
+              events: [],
+              summary: {
+                agentId: parsed.query.agentId,
+                lastSeenAt: null,
+                lastHeartbeatAt: null,
+                countsByEventType: {},
+                totalInWindow: 0,
+              },
+              page: {
+                limit: parsed.query.limit,
+                offset: parsed.query.offset,
+                returned: 0,
+              },
+            },
+            requestId: req.requestId,
+          });
+          return;
+        }
+
+        res.status(200).json({
+          ok: true,
+          data: {
+            events: outcome.result.events.map((event) => ({
+              id: event.id,
+              agentId: event.agentId,
+              schemaVersion: event.schemaVersion,
+              eventType: event.eventType,
+              occurredAt: event.occurredAt.toISOString(),
+              ingestedAt: event.ingestedAt.toISOString(),
+              payload: event.payload,
+            })),
+            summary: {
+              agentId: outcome.result.summary.agentId,
+              lastSeenAt: outcome.result.summary.lastSeenAt
+                ? outcome.result.summary.lastSeenAt.toISOString()
+                : null,
+              lastHeartbeatAt: outcome.result.summary.lastHeartbeatAt
+                ? outcome.result.summary.lastHeartbeatAt.toISOString()
+                : null,
+              countsByEventType: outcome.result.summary.countsByEventType,
+              totalInWindow: outcome.result.summary.totalInWindow,
+            },
+            page: {
+              limit: parsed.query.limit,
+              offset: parsed.query.offset,
+              returned: outcome.result.events.length,
+            },
+          },
+          requestId: req.requestId,
+        });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
   return router;
+}
+
+function requireTelemetryService(
+  options: TelemetryRouterOptions,
+): TelemetryService {
+  if (!options.telemetryService) {
+    throw new AppError(
+      "TELEMETRY_UNAVAILABLE",
+      503,
+      "Telemetry ingestion is not available",
+    );
+  }
+  return options.telemetryService;
 }
 
 function requireAgentPrincipal(req: Request) {

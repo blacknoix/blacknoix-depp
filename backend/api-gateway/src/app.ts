@@ -19,8 +19,10 @@ import { createHealthRouter } from "./routes/health";
 import rootRouter from "./routes/root";
 import { createTenantsRouter } from "./routes/tenants";
 import { createTelemetryRouter } from "./routes/telemetry";
+import { createFindingsRouter } from "./routes/findings";
 import type { TenantLookup } from "./tenants/repository";
 import type { TelemetryService } from "./telemetry/service";
+import type { CorrelationService } from "./correlation/service";
 
 /**
  * Maximum accepted JSON request body.
@@ -76,8 +78,8 @@ export interface AppOptions {
   };
 
   /**
-   * Backs POST /v1/telemetry/events. Omitted means the route fails closed;
-   * index.ts wires it when a database is configured.
+   * Backs POST/GET /v1/telemetry/events (+ batch). Omitted means those routes
+   * fail closed; index.ts wires it when a database is configured.
    */
   telemetryService?: TelemetryService;
 
@@ -91,6 +93,12 @@ export interface AppOptions {
    * routes fail closed; index.ts wires it when database + JWT config are present.
    */
   agentsService?: AgentsService;
+
+  /**
+   * Backs GET /v1/findings. Omitted means the route fails closed; index.ts
+   * wires it when a database (and correlation) is configured.
+   */
+  correlationService?: CorrelationService;
 }
 
 export function createApp(options: AppOptions = {}) {
@@ -157,6 +165,15 @@ export function createApp(options: AppOptions = {}) {
     createTelemetryRouter({
       telemetryService: options.telemetryService,
       batchMaxEvents: options.telemetryBatchMaxEvents,
+    }),
+  );
+
+  // Correlation findings: narrow operator read surface (not an alert console).
+  app.use(
+    "/v1/findings",
+    requireTenant,
+    createFindingsRouter({
+      correlationService: options.correlationService,
     }),
   );
 

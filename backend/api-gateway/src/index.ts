@@ -15,6 +15,8 @@ import { createSessionsRepository } from "./sessions/repository";
 import { createTenantsRepository } from "./tenants/repository";
 import { createTelemetryRepository } from "./telemetry/repository";
 import { createTelemetryService } from "./telemetry/service";
+import { createCorrelationFindingsRepository } from "./correlation/repository";
+import { createCorrelationService } from "./correlation/service";
 import { createUsersRepository } from "./users/repository";
 
 /**
@@ -42,8 +44,16 @@ const users = db ? createUsersRepository(db) : undefined;
 const sessions = db ? createSessionsRepository(db) : undefined;
 const agents = db ? createAgentsRepository(db) : undefined;
 const telemetry = db ? createTelemetryRepository(db) : undefined;
+const findings = db ? createCorrelationFindingsRepository(db) : undefined;
+const correlationService =
+  telemetry && findings
+    ? createCorrelationService({ telemetry, findings })
+    : undefined;
 const telemetryService = telemetry
-  ? createTelemetryService({ telemetry })
+  ? createTelemetryService({
+      telemetry,
+      ...(correlationService ? { correlation: correlationService } : {}),
+    })
   : undefined;
 
 // Resolved at startup so AUTH_MODE=jwt with invalid/missing JWT config fails to
@@ -94,6 +104,7 @@ const app = createApp({
   telemetryService,
   telemetryBatchMaxEvents: env.telemetryBatchMaxEvents,
   agentsService,
+  correlationService,
 });
 
 const server = app.listen(env.port, () => {

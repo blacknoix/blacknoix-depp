@@ -60,6 +60,19 @@ function stubService(
         ingestedAt: new Date("2026-01-01T00:00:00.000Z"),
       })),
     }),
+    query: async () => ({
+      ok: true,
+      result: {
+        events: [],
+        summary: {
+          agentId: AGENT_ID,
+          lastSeenAt: null,
+          lastHeartbeatAt: null,
+          countsByEventType: {},
+          totalInWindow: 0,
+        },
+      },
+    }),
     ...overrides,
   };
 }

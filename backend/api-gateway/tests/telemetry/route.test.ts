@@ -58,6 +58,19 @@ function stubService(
       ok: true,
       events: [],
     }),
+    query: async () => ({
+      ok: true,
+      result: {
+        events: [],
+        summary: {
+          agentId: AGENT_ID,
+          lastSeenAt: null,
+          lastHeartbeatAt: null,
+          countsByEventType: {},
+          totalInWindow: 0,
+        },
+      },
+    }),
   };
 }
 

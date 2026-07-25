@@ -61,17 +61,17 @@ Treat this as the current priority order unless explicitly changed.
 ## Current status
 - Repository setup: done (git, hygiene files, ADR log)
 - Product docs: ADR-0001 accepted; no product/spec docs yet
-- Backend implementation: api-gateway — middleware baseline; `/v1/tenants/me`; tenant-scoped telemetry ingest; agent enrollment + hashed credentials + agent JWT exchange for authenticated ingest
+- Backend implementation: api-gateway — middleware baseline; `/v1/tenants/me`; tenant-scoped telemetry ingest + query/summary; minimal post-ingest correlation findings; agent enrollment + hashed credentials + agent JWT exchange for authenticated ingest
 - Frontend implementation: not started
 - Infra setup: not started
 - Auth / RBAC: authentication seam (ADR-0002) with `dev-header` + `jwt`; human OIDC/refresh and agent credential exchange implemented; no RBAC
-- Database: schema + RLS (tenants, agents, agent_credentials, users, sessions, refresh_tokens, telemetry_events) via Kysely + migrator, plus platform-global `oidc_initiations`. NOTE: some auth narrative elsewhere may still need a docs-sync pass.
+- Database: schema + RLS (tenants, agents, agent_credentials, users, sessions, refresh_tokens, telemetry_events, correlation_findings) via Kysely + migrator, plus platform-global `oidc_initiations`. NOTE: some auth narrative elsewhere may still need a docs-sync pass.
 - Enterprise hardening: not started
 
 ## backend/api-gateway
 Implemented:
 - Middleware: request ID, structured JSON request logging, tenant context, 404 handler, centralized error handler
-- Routes: `GET /`, `GET /health`, `GET /v1/tenants/me`, `POST /v1/agents` (enroll), `POST /v1/agents/:id/credentials/revoke`, `POST /v1/auth/agent/token`, `POST /v1/telemetry/events`, `POST /v1/telemetry/events/batch`
+- Routes: `GET /`, `GET /health`, `GET /v1/tenants/me`, `POST /v1/agents` (enroll), `POST /v1/agents/:id/credentials/revoke`, `POST /v1/auth/agent/token`, `POST /v1/telemetry/events`, `POST /v1/telemetry/events/batch`, `GET /v1/telemetry/events`, `GET /v1/findings`, `POST /v1/findings/evaluate-silence`, `PATCH /v1/findings/:id`
 - Error envelope: `{ ok: false, error: { code, message }, requestId }`
 - Success envelope on /v1: `{ ok: true, data, requestId }`
 - Tests: `node:test` integration suite against `createApp()` (`npm test`)
@@ -81,11 +81,30 @@ Implemented:
   agent identity from verified principal (agent JWT / dev `x-agent-id`), not body.
   Batch ingest: `POST /v1/telemetry/events/batch` (all-or-nothing, max events
   via `TELEMETRY_BATCH_MAX_EVENTS`, default 50).
+  Query: `GET /v1/telemetry/events` returns a recent page + tiny operator summary
+  (lastSeenAt, lastHeartbeatAt, countsByEventType). Tenant from principal only;
+  agents are self-scoped; human operators must pass `agentId`. Filters: eventType,
+  since/until (occurred_at, max 30d window), limit 1–100, offset 0–10000.
+  Unknown agents return an empty non-oracular page. Dashboards / export / indexing deferred.
+- Correlation v1 (minimal): after successful ingest, two deterministic count rules
+  run synchronously in a separate tenant transaction — `agent.lifecycle_churn`
+  (≥6 start/stop in 10m) and `agent.heartbeat_burst` (≥30 heartbeats in 60s).
+  Silence: `agent.heartbeat_silence` (≥5m since last heartbeat; never-heartbeated
+  agents do not fire) evaluated only via operator `POST /v1/findings/evaluate-silence`
+  (not on ingest; agent principals rejected). Findings persist in
+  `correlation_findings` (RLS, dedup by rule+window_bucket). Correlation failures
+  never fail ingest. `GET /v1/findings` lists findings (optional status filter).
+  Triage: `PATCH /v1/findings/:id` with explicit transitions
+  open↔acknowledged→resolved / reopen to open; same-status idempotent; last-change
+  audit (`status_changed_at`, nullable `status_changed_by_user_id`); agent
+  principals rejected. Full scheduler, status history, case management, comments,
+  assignment, notifications, rule DSL, malware, and remediation deferred.
 - Agent identity (ADR-0003 §5 minimal): register agent → hashed credential once;
   exchange for short-lived agent access JWT (`tid`+`aid`); revoke blocks exchange.
 
 Not implemented: RBAC, agent runtime, mTLS, enrollment UX, credential rotation UX,
-access-token denylist, policy/remediation, mesh, correlation, agent-side spool.
+access-token denylist, policy/remediation, mesh, in-process timers / job framework,
+agent-side spool, alert console / case management / finding comments.
 
 ## Persistence and RLS
 Authoritative decision: docs/architecture/adr/0004-persistence-and-data-access.md.

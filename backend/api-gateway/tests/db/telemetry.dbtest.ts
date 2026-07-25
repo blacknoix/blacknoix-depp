@@ -184,3 +184,188 @@ describe("telemetry_events persistence and isolation", () => {
     assert.equal(listed.every((row) => row.agentId === agentA), true);
   });
 });
+
+describe("telemetry query and summary", () => {
+  it("returns empty list and zeroed summary when the agent has no events", async () => {
+    const repo = createTelemetryRepository(db.app);
+    const service = createTelemetryService({ telemetry: repo });
+
+    const outcome = await service.query(tenantA, {
+      agentId: agentA,
+      limit: 50,
+      offset: 0,
+    });
+
+    assert.equal(outcome.ok, true);
+    if (!outcome.ok) return;
+    assert.equal(outcome.result.events.length, 0);
+    assert.equal(outcome.result.summary.totalInWindow, 0);
+    assert.equal(outcome.result.summary.lastSeenAt, null);
+    assert.equal(outcome.result.summary.lastHeartbeatAt, null);
+    assert.deepEqual(outcome.result.summary.countsByEventType, {});
+  });
+
+  it("lists recent events with summary counts and last heartbeat", async () => {
+    const repo = createTelemetryRepository(db.app);
+    const service = createTelemetryService({ telemetry: repo });
+
+    const t0 = new Date("2026-03-01T10:00:00.000Z");
+    const t1 = new Date("2026-03-01T11:00:00.000Z");
+    const t2 = new Date("2026-03-01T12:00:00.000Z");
+
+    await service.ingestBatch(tenantA, [
+      {
+        schemaVersion: 1,
+        agentId: agentA,
+        eventType: "agent.started",
+        occurredAt: t0,
+        payload: {},
+      },
+      {
+        schemaVersion: 1,
+        agentId: agentA,
+        eventType: "heartbeat",
+        occurredAt: t1,
+        payload: {},
+      },
+      {
+        schemaVersion: 1,
+        agentId: agentA,
+        eventType: "heartbeat",
+        occurredAt: t2,
+        payload: {},
+      },
+    ]);
+
+    const outcome = await service.query(tenantA, {
+      agentId: agentA,
+      limit: 50,
+      offset: 0,
+    });
+
+    assert.equal(outcome.ok, true);
+    if (!outcome.ok) return;
+    assert.equal(outcome.result.events.length, 3);
+    assert.equal(outcome.result.events[0].occurredAt.toISOString(), t2.toISOString());
+    assert.equal(outcome.result.summary.totalInWindow, 3);
+    assert.equal(outcome.result.summary.countsByEventType.heartbeat, 2);
+    assert.equal(outcome.result.summary.countsByEventType["agent.started"], 1);
+    assert.equal(
+      outcome.result.summary.lastHeartbeatAt?.toISOString(),
+      t2.toISOString(),
+    );
+    assert.ok(outcome.result.summary.lastSeenAt);
+  });
+
+  it("filters by eventType and time window and respects pagination", async () => {
+    const repo = createTelemetryRepository(db.app);
+    const service = createTelemetryService({ telemetry: repo });
+
+    const times = [
+      new Date("2026-03-10T01:00:00.000Z"),
+      new Date("2026-03-10T02:00:00.000Z"),
+      new Date("2026-03-10T03:00:00.000Z"),
+      new Date("2026-03-10T04:00:00.000Z"),
+    ];
+
+    await service.ingestBatch(tenantA, [
+      {
+        schemaVersion: 1,
+        agentId: agentA,
+        eventType: "heartbeat",
+        occurredAt: times[0],
+        payload: {},
+      },
+      {
+        schemaVersion: 1,
+        agentId: agentA,
+        eventType: "heartbeat",
+        occurredAt: times[1],
+        payload: {},
+      },
+      {
+        schemaVersion: 1,
+        agentId: agentA,
+        eventType: "agent.started",
+        occurredAt: times[2],
+        payload: {},
+      },
+      {
+        schemaVersion: 1,
+        agentId: agentA,
+        eventType: "heartbeat",
+        occurredAt: times[3],
+        payload: {},
+      },
+    ]);
+
+    const filtered = await service.query(tenantA, {
+      agentId: agentA,
+      eventType: "heartbeat",
+      since: times[1],
+      until: times[3],
+      limit: 1,
+      offset: 0,
+    });
+
+    assert.equal(filtered.ok, true);
+    if (!filtered.ok) return;
+    assert.equal(filtered.result.events.length, 1);
+    assert.equal(
+      filtered.result.events[0].occurredAt.toISOString(),
+      times[3].toISOString(),
+    );
+    assert.equal(filtered.result.summary.totalInWindow, 2);
+    assert.equal(filtered.result.summary.countsByEventType.heartbeat, 2);
+    assert.equal(
+      filtered.result.summary.lastHeartbeatAt?.toISOString(),
+      times[3].toISOString(),
+    );
+
+    const page2 = await service.query(tenantA, {
+      agentId: agentA,
+      eventType: "heartbeat",
+      since: times[1],
+      until: times[3],
+      limit: 1,
+      offset: 1,
+    });
+    assert.equal(page2.ok, true);
+    if (!page2.ok) return;
+    assert.equal(page2.result.events.length, 1);
+    assert.equal(
+      page2.result.events[0].occurredAt.toISOString(),
+      times[1].toISOString(),
+    );
+  });
+
+  it("does not expose another tenant's events via query", async () => {
+    const repo = createTelemetryRepository(db.app);
+    const service = createTelemetryService({ telemetry: repo });
+
+    await service.ingest(tenantB, {
+      schemaVersion: 1,
+      agentId: agentB,
+      eventType: "heartbeat",
+      occurredAt: new Date(),
+      payload: {},
+    });
+
+    const crossAgent = await service.query(tenantA, {
+      agentId: agentB,
+      limit: 50,
+      offset: 0,
+    });
+    assert.deepEqual(crossAgent, { ok: false, reason: "agent_not_found" });
+
+    const ownEmpty = await service.query(tenantA, {
+      agentId: agentA,
+      limit: 50,
+      offset: 0,
+    });
+    assert.equal(ownEmpty.ok, true);
+    if (!ownEmpty.ok) return;
+    assert.equal(ownEmpty.result.events.length, 0);
+    assert.equal(ownEmpty.result.summary.totalInWindow, 0);
+  });
+});

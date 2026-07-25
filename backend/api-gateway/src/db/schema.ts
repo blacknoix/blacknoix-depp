@@ -122,6 +122,27 @@ export interface TelemetryEventsTable {
   payload: Record<string, unknown>;
 }
 
+/**
+ * Tenant-owned correlation output (ADR-0001 alerts, minimal). Inserts are
+ * append-oriented; status is the only mutable triage field in this slice.
+ */
+export interface CorrelationFindingsTable {
+  id: Generated<string>;
+  tenant_id: string;
+  agent_id: string;
+  rule_id: string;
+  title: string;
+  severity: string;
+  evidence: Record<string, unknown>;
+  window_start: Timestamp;
+  window_end: Timestamp;
+  window_bucket: Timestamp;
+  created_at: Generated<Timestamp>;
+  status: string;
+  status_changed_at: NullableTimestamp;
+  status_changed_by_user_id: string | null;
+}
+
 export interface Database {
   tenants: TenantsTable;
   agents: AgentsTable;
@@ -131,4 +152,5 @@ export interface Database {
   refresh_tokens: RefreshTokensTable;
   oidc_initiations: OidcInitiationsTable;
   telemetry_events: TelemetryEventsTable;
+  correlation_findings: CorrelationFindingsTable;
 }

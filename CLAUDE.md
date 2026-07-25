@@ -73,6 +73,7 @@ Treat this as the current priority order unless explicitly changed.
 - Backend implementation: api-gateway — middleware baseline; `/v1/tenants/me`; tenant-scoped telemetry ingest + query/summary; minimal post-ingest correlation findings; agent enrollment + hashed credentials + agent JWT exchange for authenticated ingest
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 - Frontend implementation: operator findings console (session gate + summary/list/detail/snooze)
 >>>>>>> 67a715a (feat(frontend): add operator findings console)
 =======
@@ -81,6 +82,9 @@ Treat this as the current priority order unless explicitly changed.
 =======
 - Frontend implementation: operator app shell + findings console (`/findings`) + agents inventory (`/agents`)
 >>>>>>> 5d32e30 (feat(agents): add operator inventory API and Agents console)
+=======
+- Frontend implementation: operator app shell + findings (`/findings`) + agents (`/agents`) with URL cross-links (`agentId` / `findingId`)
+>>>>>>> 8d0bbe0 (feat(frontend): cross-link Findings and Agents via URL context)
 - Infra setup: not started
 - Auth / RBAC: authentication seam (ADR-0002) with `dev-header` + `jwt`; human OIDC/refresh and agent credential exchange implemented; no RBAC
 <<<<<<< HEAD
@@ -152,6 +156,8 @@ Implemented:
   open findings count, and heartbeat freshness (`recent`/`stale`/`unknown` using
   the silence threshold — not online/offline). Agent principals rejected.
   Frontend Agents page at `/agents` consumes this inventory + related findings.
+  Cross-links: `/agents?agentId=` focuses an agent; `/findings?agentId=&findingId=`
+  filters/selects findings. Invalid UUIDs fail closed.
 
 Not implemented: RBAC, agent runtime, mTLS, enrollment UX, credential rotation UX,
 access-token denylist, policy/remediation, mesh, correlation, agent-side spool.

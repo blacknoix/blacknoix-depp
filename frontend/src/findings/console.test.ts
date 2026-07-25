@@ -36,14 +36,15 @@ describe("authHeaders", () => {
 });
 
 describe("buildFindingsListPath", () => {
-  it("encodes status and rule filters", () => {
+  it("encodes status, rule, and agent filters", () => {
     expect(
       buildFindingsListPath({
+        agentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         status: "open",
         ruleId: "agent.lifecycle_churn",
       }),
     ).toBe(
-      "/v1/findings?status=open&ruleId=agent.lifecycle_churn&limit=50&offset=0",
+      "/v1/findings?agentId=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa&status=open&ruleId=agent.lifecycle_churn&limit=50&offset=0",
     );
   });
 });

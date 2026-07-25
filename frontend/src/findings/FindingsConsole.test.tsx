@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 
 import { SessionGate } from "../auth/SessionGate";
 import { FindingsConsoleView } from "./FindingsConsole";
@@ -179,9 +180,11 @@ describe("FindingsConsole", () => {
     mockConsoleApis();
 
     render(
-      <FindingsConsoleView
-        session={{ kind: "tenant", tenantId: TENANT }}
-      />,
+      <MemoryRouter>
+        <FindingsConsoleView
+          session={{ kind: "tenant", tenantId: TENANT }}
+        />
+      </MemoryRouter>,
     );
 
     await waitFor(() => {
@@ -218,9 +221,11 @@ describe("FindingsConsole", () => {
     mockConsoleApis({ suppressions });
 
     render(
-      <FindingsConsoleView
-        session={{ kind: "tenant", tenantId: TENANT }}
-      />,
+      <MemoryRouter>
+        <FindingsConsoleView
+          session={{ kind: "tenant", tenantId: TENANT }}
+        />
+      </MemoryRouter>,
     );
 
     await waitFor(() => {
@@ -266,9 +271,11 @@ describe("FindingsConsole", () => {
     );
 
     render(
-      <FindingsConsoleView
-        session={{ kind: "tenant", tenantId: TENANT }}
-      />,
+      <MemoryRouter>
+        <FindingsConsoleView
+          session={{ kind: "tenant", tenantId: TENANT }}
+        />
+      </MemoryRouter>,
     );
 
     await waitFor(() => {

@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 
 import type { Finding } from "../findings/types";
+import { findingsPath } from "../routing/crossLinks";
 import type { AgentInventoryItem } from "./types";
 import { freshnessLabel } from "./types";
 
@@ -64,6 +65,14 @@ export function AgentDetail({
 
       <div className="actions">
         <h3>Related findings</h3>
+        <div className="action-row" style={{ marginBottom: "0.75rem" }}>
+          <Link
+            className="btn btn-secondary"
+            to={findingsPath({ agentId: agent.id })}
+          >
+            Open in Findings
+          </Link>
+        </div>
         {detailPhase === "loading" ? (
           <p className="muted tiny" role="status">
             Loading findings…
@@ -83,19 +92,23 @@ export function AgentDetail({
           <ul className="related-findings">
             {relatedFindings.map((finding) => (
               <li key={finding.id}>
-                <span className={`status-pill status-${finding.status}`}>
-                  {finding.status}
-                </span>{" "}
-                <span>{finding.title}</span>
-                <span className="mono muted tiny"> {finding.ruleId}</span>
+                <Link
+                  className="related-finding-link"
+                  to={findingsPath({
+                    agentId: agent.id,
+                    findingId: finding.id,
+                  })}
+                >
+                  <span className={`status-pill status-${finding.status}`}>
+                    {finding.status}
+                  </span>{" "}
+                  <span>{finding.title}</span>
+                  <span className="mono muted tiny"> {finding.ruleId}</span>
+                </Link>
               </li>
             ))}
           </ul>
         ) : null}
-        <p className="muted tiny">
-          Triage happens on the{" "}
-          <Link to="/findings">Findings</Link> console.
-        </p>
       </div>
     </section>
   );

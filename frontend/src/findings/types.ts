@@ -54,6 +54,7 @@ export interface Suppression {
 }
 
 export interface FindingsFilters {
+  agentId?: string;
   status?: FindingStatus;
   ruleId?: CorrelationRuleId;
 }

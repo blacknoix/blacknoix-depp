@@ -11,6 +11,9 @@ import type {
 
 export function buildFindingsListPath(filters: FindingsFilters): string {
   const params = new URLSearchParams();
+  if (filters.agentId) {
+    params.set("agentId", filters.agentId);
+  }
   if (filters.status) {
     params.set("status", filters.status);
   }

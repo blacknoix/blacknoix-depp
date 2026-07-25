@@ -74,10 +74,12 @@ const authService =
     ? createAuthService({ users, sessions, jwtConfig })
     : undefined;
 
-const agentsService =
-  agents && jwtConfig
-    ? createAgentsService({ agents, jwtConfig })
-    : undefined;
+const agentsService = agents
+  ? createAgentsService({
+      agents,
+      ...(jwtConfig ? { jwtConfig } : {}),
+    })
+  : undefined;
 
 // Resolved at startup: an enabled-but-misconfigured provider fails to boot.
 // undefined means OIDC login is not enabled. The callback also needs the auth

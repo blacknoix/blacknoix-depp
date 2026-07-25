@@ -25,14 +25,74 @@ function readString(body: unknown, key: string): string {
 }
 
 /**
- * Tenant-scoped agent enrollment (register + revoke).
+ * Tenant-scoped agent enrollment (register + revoke) and operator inventory.
  *
- * Who may call: any authenticated tenant principal (human JWT / dev-header).
- * RBAC on enrollment is deferred. Agent machine identity is established by the
- * returned credential, not by this route's caller type.
+ * Who may call enrollment: any authenticated tenant principal (human JWT /
+ * dev-header). RBAC on enrollment is deferred. Agent machine identity is
+ * established by the returned credential, not by this route's caller type.
+ *
+ * Inventory (GET /) is operator-only — agent principals are rejected.
  */
 export function createAgentsRouter(options: AgentsRouterOptions = {}): Router {
   const router = Router();
+
+  /**
+   * GET /v1/agents — operator agent inventory (liveness + open findings).
+   * Agent principals rejected. Enrollment UX / remote actions deferred.
+   */
+  router.get("/", async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const principal = requirePrincipal(req);
+
+      if (principal.agentId) {
+        throw new AppError(
+          "AGENTS_REJECTED",
+          403,
+          "Agent inventory requires an operator principal",
+        );
+      }
+
+      if (!options.agentsService) {
+        throw new AppError(
+          "AGENTS_UNAVAILABLE",
+          503,
+          "Agent inventory is not available",
+        );
+      }
+
+      const queryKeys = Object.keys(req.query);
+      if (queryKeys.length > 0) {
+        throw new AppError(
+          "AGENT_INVALID",
+          400,
+          "agent inventory does not accept query parameters",
+        );
+      }
+
+      const agents = await options.agentsService.listInventory(
+        principal.tenantId,
+      );
+
+      res.status(200).json({
+        ok: true,
+        data: {
+          agents: agents.map((agent) => ({
+            id: agent.id,
+            name: agent.name,
+            createdAt: agent.createdAt.toISOString(),
+            lastHeartbeatAt: agent.lastHeartbeatAt
+              ? agent.lastHeartbeatAt.toISOString()
+              : null,
+            openFindingsCount: agent.openFindingsCount,
+            heartbeatFreshness: agent.heartbeatFreshness,
+          })),
+        },
+        requestId: req.requestId,
+      });
+    } catch (err) {
+      next(err);
+    }
+  });
 
   /**
    * POST /v1/agents — register an agent and mint its long-lived credential.

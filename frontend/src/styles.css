@@ -309,6 +309,36 @@ select {
   color: var(--resolved);
 }
 
+.freshness-recent {
+  background: #d9efe1;
+  color: var(--resolved);
+}
+
+.freshness-stale {
+  background: #f6e7d4;
+  color: var(--open);
+}
+
+.freshness-unknown {
+  background: #e7eef5;
+  color: var(--muted);
+}
+
+.related-findings {
+  list-style: none;
+  margin: 0 0 0.75rem;
+  padding: 0;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.related-findings li {
+  padding: 0.45rem 0.55rem;
+  border-radius: 8px;
+  background: #f5f8fb;
+  font-size: 0.9rem;
+}
+
 .detail-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

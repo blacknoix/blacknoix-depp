@@ -128,3 +128,62 @@ describe("agent enrollment + credential lifecycle (real database)", () => {
     assert.equal(seenByB[0].name, "b-1");
   });
 });
+
+describe("agent inventory (real database)", () => {
+  it("lists agents with heartbeat freshness and open findings, isolated by tenant", async () => {
+    const agents = createAgentsRepository(db.app);
+    const a = await agents.register(tenantA, "edge-a");
+    const b = await agents.register(tenantB, "edge-b");
+
+    await withTenantTransaction(db.app, tenantA, (trx) =>
+      trx
+        .insertInto("telemetry_events")
+        .values({
+          tenant_id: tenantA,
+          agent_id: a.agentId,
+          schema_version: 1,
+          event_type: "heartbeat",
+          occurred_at: new Date("2026-03-01T11:58:00.000Z"),
+          payload: {},
+        })
+        .execute(),
+    );
+
+    await withTenantTransaction(db.app, tenantA, (trx) =>
+      trx
+        .insertInto("correlation_findings")
+        .values({
+          tenant_id: tenantA,
+          agent_id: a.agentId,
+          rule_id: "agent.lifecycle_churn",
+          title: "Agent lifecycle churn",
+          severity: "medium",
+          evidence: {},
+          window_start: new Date("2026-03-01T11:50:00.000Z"),
+          window_end: new Date("2026-03-01T12:00:00.000Z"),
+          window_bucket: new Date("2026-03-01T11:50:00.000Z"),
+          status: "open",
+        })
+        .execute(),
+    );
+
+    const listedA = await agents.listInventory(tenantA, {
+      now: new Date("2026-03-01T12:00:00.000Z"),
+    });
+    assert.equal(listedA.length, 1);
+    assert.equal(listedA[0].id, a.agentId);
+    assert.equal(listedA[0].name, "edge-a");
+    assert.equal(listedA[0].heartbeatFreshness, "recent");
+    assert.equal(listedA[0].openFindingsCount, 1);
+    assert.ok(listedA[0].lastHeartbeatAt);
+
+    const listedB = await agents.listInventory(tenantB, {
+      now: new Date("2026-03-01T12:00:00.000Z"),
+    });
+    assert.equal(listedB.length, 1);
+    assert.equal(listedB[0].id, b.agentId);
+    assert.equal(listedB[0].heartbeatFreshness, "unknown");
+    assert.equal(listedB[0].openFindingsCount, 0);
+    assert.equal(listedB[0].lastHeartbeatAt, null);
+  });
+});

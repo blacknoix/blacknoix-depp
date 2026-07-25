@@ -3,6 +3,7 @@ import {
   type IssuedAgentTokens,
   type JwtConfig,
 } from "../auth/jwt/access-token";
+import type { AgentInventoryRow } from "./inventory";
 import type { AgentsRepository } from "./repository";
 
 export interface AgentsService {
@@ -25,11 +26,18 @@ export interface AgentsService {
   >;
 
   revokeCredential(tenantId: string, agentId: string): Promise<boolean>;
+
+  /** Operator inventory for the Agents console. */
+  listInventory(
+    tenantId: string,
+    options?: { limit?: number },
+  ): Promise<AgentInventoryRow[]>;
 }
 
 export interface AgentsServiceDeps {
   agents: AgentsRepository;
-  jwtConfig: JwtConfig;
+  /** Required for credential → access-token exchange; inventory does not need it. */
+  jwtConfig?: JwtConfig;
 }
 
 export function createAgentsService(deps: AgentsServiceDeps): AgentsService {
@@ -41,6 +49,10 @@ export function createAgentsService(deps: AgentsServiceDeps): AgentsService {
     },
 
     async exchangeForAccessToken(tenantId, agentId, credential) {
+      if (!jwtConfig) {
+        return { ok: false, reason: "invalid" };
+      }
+
       const outcome = await agents.exchangeCredential(
         tenantId,
         agentId,
@@ -68,6 +80,13 @@ export function createAgentsService(deps: AgentsServiceDeps): AgentsService {
 
     async revokeCredential(tenantId, agentId) {
       return agents.revokeActiveCredential(tenantId, agentId);
+    },
+
+    async listInventory(tenantId, options = {}) {
+      if (typeof tenantId !== "string" || tenantId.trim() === "") {
+        throw new Error("listInventory requires a non-empty tenantId");
+      }
+      return agents.listInventory(tenantId, options);
     },
   };
 }

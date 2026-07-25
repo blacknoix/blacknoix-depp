@@ -21,7 +21,7 @@ What actually exists:
 - CLAUDE.md
 - docs/architecture/adr/ — ADR-0001 (tenancy and data model), Accepted
 - backend/api-gateway/ — running Express service, see below
-- frontend/ — operator findings console (Vite + React + TypeScript)
+- frontend/ — operator app shell + findings + agents inventory (Vite + React + TypeScript)
 - infra/ — empty
 
 Anything not listed above does not exist yet.
@@ -67,7 +67,7 @@ Treat this as the current priority order unless explicitly changed.
 - Repository setup: done (git, hygiene files, ADR log)
 - Product docs: ADR-0001 accepted; no product/spec docs yet
 - Backend implementation: api-gateway — middleware baseline; `/v1/tenants/me`; tenant-scoped telemetry ingest + query/summary; minimal post-ingest correlation findings; agent enrollment + hashed credentials + agent JWT exchange for authenticated ingest
-- Frontend implementation: operator app shell + findings console (`/findings`; Agents placeholder)
+- Frontend implementation: operator app shell + findings console (`/findings`) + agents inventory (`/agents`)
 - Infra setup: not started
 - Auth / RBAC: authentication seam (ADR-0002) with `dev-header` + `jwt`; human OIDC/refresh and agent credential exchange implemented; no RBAC
 - Database: schema + RLS (tenants, agents, agent_credentials, users, sessions, refresh_tokens, telemetry_events, correlation_findings, finding_suppressions) via Kysely + migrator, plus platform-global `oidc_initiations`. NOTE: some auth narrative elsewhere may still need a docs-sync pass.
@@ -76,7 +76,7 @@ Treat this as the current priority order unless explicitly changed.
 ## backend/api-gateway
 Implemented:
 - Middleware: request ID, structured JSON request logging, tenant context, 404 handler, centralized error handler
-- Routes: `GET /`, `GET /health`, `GET /v1/tenants/me`, `POST /v1/agents` (enroll), `POST /v1/agents/:id/credentials/revoke`, `POST /v1/auth/agent/token`, `POST /v1/telemetry/events`, `POST /v1/telemetry/events/batch`, `GET /v1/telemetry/events`, `GET /v1/findings`, `GET /v1/findings/dashboard`, `POST /v1/findings/evaluate-silence`, `PATCH /v1/findings/:id`, `GET|POST /v1/findings/suppressions`, `DELETE /v1/findings/suppressions/:id`
+- Routes: `GET /`, `GET /health`, `GET /v1/tenants/me`, `GET /v1/agents` (operator inventory), `POST /v1/agents` (enroll), `POST /v1/agents/:id/credentials/revoke`, `POST /v1/auth/agent/token`, `POST /v1/telemetry/events`, `POST /v1/telemetry/events/batch`, `GET /v1/telemetry/events`, `GET /v1/findings`, `GET /v1/findings/dashboard`, `POST /v1/findings/evaluate-silence`, `PATCH /v1/findings/:id`, `GET|POST /v1/findings/suppressions`, `DELETE /v1/findings/suppressions/:id`
 - Error envelope: `{ ok: false, error: { code, message }, requestId }`
 - Success envelope on /v1: `{ ok: true, data, requestId }`
 - Tests: `node:test` integration suite against `createApp()` (`npm test`)
@@ -114,6 +114,10 @@ Implemented:
   remediation deferred.
 - Agent identity (ADR-0003 §5 minimal): register agent → hashed credential once;
   exchange for short-lived agent access JWT (`tid`+`aid`); revoke blocks exchange.
+  Operator inventory: `GET /v1/agents` returns name/id/createdAt, last heartbeat,
+  open findings count, and heartbeat freshness (`recent`/`stale`/`unknown` using
+  the silence threshold — not online/offline). Agent principals rejected.
+  Frontend Agents page at `/agents` consumes this inventory + related findings.
 
 Not implemented: RBAC, agent runtime, mTLS, enrollment UX, credential rotation UX,
 access-token denylist, policy/remediation, mesh, in-process timers / job framework,

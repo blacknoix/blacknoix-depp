@@ -38,6 +38,7 @@ function stubAgents(
       },
     }),
     revokeCredential: async () => true,
+    listInventory: async () => [],
     ...overrides,
   };
 }
@@ -165,5 +166,60 @@ describe("POST /v1/auth/agent/token", () => {
         },
       );
     }
+  });
+});
+
+describe("GET /v1/agents", () => {
+  it("rejects agent principals", async () => {
+    await withServer({ agentsService: stubAgents() }, async (server) => {
+      const res = await fetch(`${server.url}/v1/agents`, {
+        headers: {
+          "x-tenant-id": TENANT_ID,
+          "x-agent-id": AGENT_ID,
+        },
+      });
+      assert.equal(res.status, 403);
+      const body = await res.json();
+      assert.equal(body.error.code, "AGENTS_REJECTED");
+    });
+  });
+
+  it("rejects query parameters and returns inventory for operators", async () => {
+    await withServer(
+      {
+        agentsService: stubAgents({
+          listInventory: async (tenantId) => {
+            assert.equal(tenantId, TENANT_ID);
+            return [
+              {
+                id: AGENT_ID,
+                name: "edge-1",
+                createdAt: new Date("2026-03-01T12:00:00.000Z"),
+                lastHeartbeatAt: new Date("2026-03-01T11:58:00.000Z"),
+                openFindingsCount: 2,
+                heartbeatFreshness: "recent",
+              },
+            ];
+          },
+        }),
+      },
+      async (server) => {
+        const bad = await fetch(`${server.url}/v1/agents?limit=10`, {
+          headers: { "x-tenant-id": TENANT_ID },
+        });
+        assert.equal(bad.status, 400);
+
+        const res = await fetch(`${server.url}/v1/agents`, {
+          headers: { "x-tenant-id": TENANT_ID },
+        });
+        assert.equal(res.status, 200);
+        const body = await res.json();
+        assert.equal(body.ok, true);
+        assert.equal(body.data.agents.length, 1);
+        assert.equal(body.data.agents[0].id, AGENT_ID);
+        assert.equal(body.data.agents[0].heartbeatFreshness, "recent");
+        assert.equal(body.data.agents[0].openFindingsCount, 2);
+      },
+    );
   });
 });

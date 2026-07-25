@@ -1,4 +1,5 @@
 import type { Kysely } from "kysely";
+import { sql } from "kysely";
 
 import type { Database } from "../db/schema";
 import { withTenantTransaction } from "../db/tenant-context";
@@ -7,6 +8,9 @@ import {
   generateAgentCredential,
   hashAgentCredential,
 } from "./credential";
+import type { AgentInventoryRow } from "./inventory";
+import { deriveHeartbeatFreshness } from "./inventory";
+import { SILENCE_THRESHOLD_MS } from "../correlation/rules";
 
 export interface RegisteredAgent {
   agentId: string;
@@ -42,6 +46,15 @@ export interface AgentsRepository {
   ): Promise<boolean>;
 
   agentExists(tenantId: string, agentId: string): Promise<boolean>;
+
+  /**
+   * Operator inventory: agents + last heartbeat + open findings count.
+   * Heartbeat freshness uses the silence threshold (not online/offline).
+   */
+  listInventory(
+    tenantId: string,
+    options?: { limit?: number; now?: Date },
+  ): Promise<AgentInventoryRow[]>;
 }
 
 const MAX_NAME_LENGTH = 128;
@@ -150,5 +163,64 @@ export function createAgentsRepository(db: Kysely<Database>): AgentsRepository {
         return row !== undefined;
       });
     },
+
+    async listInventory(tenantId, options = {}) {
+      const limit = Math.min(Math.max(1, options.limit ?? 50), 100);
+      const now = options.now ?? new Date();
+
+      return withTenantTransaction(db, tenantId, async (trx) => {
+        const rows = await trx
+          .selectFrom("agents")
+          .select([
+            "id",
+            "name",
+            "created_at",
+            sql<Date | string | null>`(
+              select max(te.occurred_at)
+              from telemetry_events as te
+              where te.agent_id = agents.id
+                and te.event_type = 'heartbeat'
+            )`.as("last_heartbeat_at"),
+            sql<string>`(
+              select count(*)::text
+              from correlation_findings as cf
+              where cf.agent_id = agents.id
+                and cf.status = 'open'
+            )`.as("open_findings_count"),
+          ])
+          .orderBy("created_at", "desc")
+          .limit(limit)
+          .execute();
+
+        return rows.map((row) => {
+          const lastHeartbeatAt = row.last_heartbeat_at
+            ? asInventoryDate(row.last_heartbeat_at)
+            : null;
+
+          return {
+            id: row.id,
+            name: row.name,
+            createdAt: asInventoryDate(row.created_at),
+            lastHeartbeatAt,
+            openFindingsCount: Number(row.open_findings_count),
+            heartbeatFreshness: deriveHeartbeatFreshness(
+              lastHeartbeatAt,
+              now,
+              SILENCE_THRESHOLD_MS,
+            ),
+          };
+        });
+      });
+    },
   };
+}
+
+function asInventoryDate(value: unknown): Date {
+  if (value instanceof Date) {
+    return value;
+  }
+  if (typeof value === "string" || typeof value === "number") {
+    return new Date(value);
+  }
+  throw new Error("expected a timestamp value");
 }

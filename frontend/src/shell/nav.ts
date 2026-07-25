@@ -1,8 +1,8 @@
 /**
  * Operator nav destinations.
  *
- * Only Findings is implemented. Agents is an honest placeholder for the next
- * operator surface — it must not pretend to be a working product page.
+ * Findings and Agents are live. Keep this list honest — do not add destinations
+ * that pretend to be implemented.
  */
 
 export type NavKind = "live" | "soon";
@@ -16,7 +16,7 @@ export interface NavItem {
 
 export const OPERATOR_NAV: readonly NavItem[] = [
   { id: "findings", label: "Findings", to: "/findings", kind: "live" },
-  { id: "agents", label: "Agents", to: "/agents", kind: "soon" },
+  { id: "agents", label: "Agents", to: "/agents", kind: "live" },
 ] as const;
 
 export function isNavActive(pathname: string, to: string): boolean {

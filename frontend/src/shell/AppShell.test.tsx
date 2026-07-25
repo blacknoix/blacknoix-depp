@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
@@ -18,9 +18,9 @@ afterEach(() => {
 const TENANT = "11111111-1111-4111-8111-111111111111";
 
 describe("nav helpers", () => {
-  it("marks findings as live and agents as soon", () => {
+  it("marks findings and agents as live destinations", () => {
     expect(OPERATOR_NAV.map((n) => n.id)).toEqual(["findings", "agents"]);
-    expect(OPERATOR_NAV.find((n) => n.id === "agents")?.kind).toBe("soon");
+    expect(OPERATOR_NAV.every((n) => n.kind === "live")).toBe(true);
     expect(isNavActive("/findings", "/findings")).toBe(true);
     expect(isNavActive("/agents", "/findings")).toBe(false);
   });
@@ -55,8 +55,7 @@ describe("OperatorShell", () => {
     expect(findings.className).toContain("is-active");
 
     const agents = screen.getByRole("link", { name: /Agents/i });
-    expect(agents.className).toContain("is-soon");
-    expect(within(agents).getByText("Soon")).toBeInTheDocument();
+    expect(agents.className).not.toContain("is-soon");
     expect(screen.getByText("Findings content")).toBeInTheDocument();
   });
 
@@ -110,7 +109,7 @@ describe("App routing + auth gate", () => {
     expect(screen.queryByLabelText("Primary")).not.toBeInTheDocument();
   });
 
-  it("routes authenticated operators into the shell and navigates to Agents soon page", async () => {
+  it("routes authenticated operators into the shell and navigates to Agents", async () => {
     const user = userEvent.setup();
 
     vi.stubGlobal(
@@ -151,6 +150,17 @@ describe("App routing + auth gate", () => {
             }),
           } as Response;
         }
+        if (url.includes("/v1/agents")) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              ok: true,
+              data: { agents: [] },
+              requestId: "r",
+            }),
+          } as Response;
+        }
         return {
           ok: true,
           status: 200,
@@ -184,8 +194,14 @@ describe("App routing + auth gate", () => {
 
     await user.click(screen.getByRole("link", { name: /Agents/i }));
     expect(
-      await screen.findByRole("heading", { name: "Agents" }),
+      await screen.findByRole("heading", { level: 1, name: "Agents" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent(/not implemented/i);
+    expect(screen.getByRole("link", { name: /Agents/i })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(
+      screen.getByText(/No agents registered/i),
+    ).toBeInTheDocument();
   });
 });

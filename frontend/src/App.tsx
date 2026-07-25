@@ -6,6 +6,7 @@ import {
   Routes,
 } from "react-router-dom";
 
+import { AgentsConsole } from "./agents/AgentsConsole";
 import { SessionGate } from "./auth/SessionGate";
 import {
   clearSession,
@@ -14,7 +15,6 @@ import {
   type OperatorSession,
 } from "./auth/session";
 import { FindingsConsole } from "./findings/FindingsConsole";
-import { ComingSoonPage } from "./shell/ComingSoonPage";
 import { OperatorShell } from "./shell/OperatorShell";
 
 export function App() {
@@ -49,15 +49,7 @@ export function App() {
         >
           <Route index element={<Navigate to="/findings" replace />} />
           <Route path="findings" element={<FindingsConsole />} />
-          <Route
-            path="agents"
-            element={
-              <ComingSoonPage
-                title="Agents"
-                description="Agent enrollment, credential lifecycle, and fleet health will live here. Not available in this slice."
-              />
-            }
-          />
+          <Route path="agents" element={<AgentsConsole />} />
           <Route path="*" element={<Navigate to="/findings" replace />} />
         </Route>
       </Routes>

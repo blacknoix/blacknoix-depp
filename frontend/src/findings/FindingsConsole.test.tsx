@@ -3,7 +3,7 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 
 import { SessionGate } from "../auth/SessionGate";
-import { FindingsConsole } from "./FindingsConsole";
+import { FindingsConsoleView } from "./FindingsConsole";
 import type { Finding, FindingsDashboard, Suppression } from "./types";
 
 afterEach(() => {
@@ -179,9 +179,8 @@ describe("FindingsConsole", () => {
     mockConsoleApis();
 
     render(
-      <FindingsConsole
+      <FindingsConsoleView
         session={{ kind: "tenant", tenantId: TENANT }}
-        onSignOut={() => undefined}
       />,
     );
 
@@ -219,9 +218,8 @@ describe("FindingsConsole", () => {
     mockConsoleApis({ suppressions });
 
     render(
-      <FindingsConsole
+      <FindingsConsoleView
         session={{ kind: "tenant", tenantId: TENANT }}
-        onSignOut={() => undefined}
       />,
     );
 
@@ -268,9 +266,8 @@ describe("FindingsConsole", () => {
     );
 
     render(
-      <FindingsConsole
+      <FindingsConsoleView
         session={{ kind: "tenant", tenantId: TENANT }}
-        onSignOut={() => undefined}
       />,
     );
 

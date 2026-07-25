@@ -44,6 +44,7 @@ Still assumptions, not yet implemented:
 
 Frontend (confirmed in `frontend/`):
 - React 19 + TypeScript + Vite
+- React Router (authenticated operator shell; Findings at `/findings`)
 - Vitest + Testing Library
 - Local `/v1` proxy to api-gateway (CORS on gateway deferred)
 
@@ -70,8 +71,12 @@ Treat this as the current priority order unless explicitly changed.
 - Frontend implementation: not started
 =======
 - Backend implementation: api-gateway — middleware baseline; `/v1/tenants/me`; tenant-scoped telemetry ingest + query/summary; minimal post-ingest correlation findings; agent enrollment + hashed credentials + agent JWT exchange for authenticated ingest
+<<<<<<< HEAD
 - Frontend implementation: operator findings console (session gate + summary/list/detail/snooze)
 >>>>>>> 67a715a (feat(frontend): add operator findings console)
+=======
+- Frontend implementation: operator app shell + findings console (`/findings`; Agents placeholder)
+>>>>>>> 14caadf (feat(frontend): add operator app shell and routing)
 - Infra setup: not started
 - Auth / RBAC: authentication seam (ADR-0002) with `dev-header` + `jwt`; human OIDC/refresh and agent credential exchange implemented; no RBAC
 <<<<<<< HEAD

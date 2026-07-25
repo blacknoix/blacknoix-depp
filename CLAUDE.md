@@ -67,7 +67,7 @@ Treat this as the current priority order unless explicitly changed.
 - Repository setup: done (git, hygiene files, ADR log)
 - Product docs: ADR-0001 accepted; no product/spec docs yet
 - Backend implementation: api-gateway — middleware baseline; `/v1/tenants/me`; tenant-scoped telemetry ingest + query/summary; minimal post-ingest correlation findings; agent enrollment + hashed credentials + agent JWT exchange for authenticated ingest
-- Frontend implementation: operator app shell + findings console (`/findings`) + agents inventory (`/agents`)
+- Frontend implementation: operator app shell + findings (`/findings`) + agents (`/agents`) with URL cross-links (`agentId` / `findingId`)
 - Infra setup: not started
 - Auth / RBAC: authentication seam (ADR-0002) with `dev-header` + `jwt`; human OIDC/refresh and agent credential exchange implemented; no RBAC
 - Database: schema + RLS (tenants, agents, agent_credentials, users, sessions, refresh_tokens, telemetry_events, correlation_findings, finding_suppressions) via Kysely + migrator, plus platform-global `oidc_initiations`. NOTE: some auth narrative elsewhere may still need a docs-sync pass.
@@ -118,6 +118,8 @@ Implemented:
   open findings count, and heartbeat freshness (`recent`/`stale`/`unknown` using
   the silence threshold — not online/offline). Agent principals rejected.
   Frontend Agents page at `/agents` consumes this inventory + related findings.
+  Cross-links: `/agents?agentId=` focuses an agent; `/findings?agentId=&findingId=`
+  filters/selects findings. Invalid UUIDs fail closed.
 
 Not implemented: RBAC, agent runtime, mTLS, enrollment UX, credential rotation UX,
 access-token denylist, policy/remediation, mesh, in-process timers / job framework,

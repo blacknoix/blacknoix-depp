@@ -115,9 +115,11 @@ describe("AgentsConsoleView", () => {
     await waitFor(() => {
       expect(screen.getByText("Agent lifecycle churn")).toBeInTheDocument();
     });
-    expect(screen.getByRole("link", { name: /Findings/i })).toHaveAttribute(
+    expect(
+      screen.getByRole("link", { name: /Open in Findings/i }),
+    ).toHaveAttribute(
       "href",
-      "/findings",
+      "/findings?agentId=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     );
   });
 

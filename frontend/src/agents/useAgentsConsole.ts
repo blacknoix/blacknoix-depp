@@ -1,4 +1,4 @@
-import { useEffect, useReducer } from "react";
+import { useCallback, useEffect, useReducer } from "react";
 
 import { ApiError } from "../api/client";
 import { fetchAgentFindings, fetchAgentInventory } from "../api/agents";
@@ -62,6 +62,9 @@ export function agentsReducer(state: AgentsState, action: Action): AgentsState {
     case "load_error":
       return { ...state, load: "error", loadError: action.message };
     case "select":
+      if (state.selectedId === action.id) {
+        return state;
+      }
       return {
         ...state,
         selectedId: action.id,
@@ -146,9 +149,9 @@ export function useAgentsConsole(session: OperatorSession) {
   const selected =
     state.agents.find((a) => a.id === state.selectedId) ?? null;
 
-  function selectAgent(id: string | null) {
+  const selectAgent = useCallback((id: string | null) => {
     dispatch({ type: "select", id });
-  }
+  }, []);
 
   return { state, selected, selectAgent };
 }

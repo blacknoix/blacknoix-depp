@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useRef } from "react";
+import { useCallback, useEffect, useReducer, useRef } from "react";
 
 import {
   clearSuppression,
@@ -113,6 +113,9 @@ export function consoleReducer(
         selectedId: null,
       };
     case "select":
+      if (state.selectedId === action.id) {
+        return state;
+      }
       return { ...state, selectedId: action.id, mutationError: null };
     case "mutation_start":
       return {
@@ -198,13 +201,13 @@ export function useFindingsConsole(session: OperatorSession | null) {
     };
   }, [session, state.filters]);
 
-  function setFilters(filters: FindingsFilters) {
+  const setFilters = useCallback((filters: FindingsFilters) => {
     dispatch({ type: "set_filters", filters });
-  }
+  }, []);
 
-  function selectFinding(id: string | null) {
+  const selectFinding = useCallback((id: string | null) => {
     dispatch({ type: "select", id });
-  }
+  }, []);
 
   async function refreshAfterMutation(selectedId: string | null) {
     if (!session) return;

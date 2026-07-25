@@ -5,6 +5,8 @@ import {
   type Finding,
   type FindingStatus,
 } from "./types";
+import { agentsPath } from "../routing/crossLinks";
+import { Link } from "react-router-dom";
 
 interface Props {
   finding: Finding | null;
@@ -68,7 +70,11 @@ export function FindingDetail({
         </div>
         <div>
           <dt>Agent</dt>
-          <dd className="mono">{finding.agentId}</dd>
+          <dd>
+            <Link className="mono cross-link" to={agentsPath(finding.agentId)}>
+              {finding.agentId}
+            </Link>
+          </dd>
         </div>
         <div>
           <dt>Created</dt>
@@ -90,6 +96,18 @@ export function FindingDetail({
           </dd>
         </div>
       </dl>
+
+      <div className="actions">
+        <h3>Agent context</h3>
+        <div className="action-row">
+          <Link
+            className="btn btn-secondary"
+            to={agentsPath(finding.agentId)}
+          >
+            Open agent
+          </Link>
+        </div>
+      </div>
 
       <div className="actions">
         <h3>Lifecycle</h3>

@@ -29,6 +29,25 @@ export function FindingsList({
       <header className="panel-header">
         <h2>Findings</h2>
         <div className="filters">
+          {filters.agentId ? (
+            <div className="agent-filter-chip">
+              <span className="muted tiny">Agent</span>
+              <span className="mono tiny">{filters.agentId}</span>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={disabled}
+                onClick={() => {
+                  onFiltersChange({
+                    ...(filters.status ? { status: filters.status } : {}),
+                    ...(filters.ruleId ? { ruleId: filters.ruleId } : {}),
+                  });
+                }}
+              >
+                Clear
+              </button>
+            </div>
+          ) : null}
           <label>
             Status
             <select

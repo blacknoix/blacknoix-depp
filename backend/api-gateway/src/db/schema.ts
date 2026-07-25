@@ -143,6 +143,22 @@ export interface CorrelationFindingsTable {
   status_changed_by_user_id: string | null;
 }
 
+/**
+ * Tenant-owned time-bounded snooze for a correlation rule. Soft-cleared via
+ * cleared_at; evaluation skips new findings while active.
+ */
+export interface FindingSuppressionsTable {
+  id: Generated<string>;
+  tenant_id: string;
+  rule_id: string;
+  starts_at: Timestamp;
+  ends_at: Timestamp;
+  created_at: Generated<Timestamp>;
+  created_by_user_id: string | null;
+  cleared_at: NullableTimestamp;
+  cleared_by_user_id: string | null;
+}
+
 export interface Database {
   tenants: TenantsTable;
   agents: AgentsTable;
@@ -153,4 +169,5 @@ export interface Database {
   oidc_initiations: OidcInitiationsTable;
   telemetry_events: TelemetryEventsTable;
   correlation_findings: CorrelationFindingsTable;
+  finding_suppressions: FindingSuppressionsTable;
 }

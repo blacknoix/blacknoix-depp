@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { after, before, beforeEach, describe, it } from "node:test";
+import { sql } from "kysely";
 
 import { createCorrelationFindingsRepository } from "../../src/correlation/repository";
 import { createCorrelationService } from "../../src/correlation/service";
+import { createFindingSuppressionsRepository } from "../../src/correlation/suppression-repository";
 import { withTenantTransaction } from "../../src/db/tenant-context";
 import { createTelemetryRepository } from "../../src/telemetry/repository";
 import { createTelemetryService } from "../../src/telemetry/service";
@@ -13,6 +15,17 @@ let tenantA: string;
 let tenantB: string;
 let agentA: string;
 let agentB: string;
+
+function correlationFor(
+  now?: () => Date,
+): ReturnType<typeof createCorrelationService> {
+  return createCorrelationService({
+    telemetry: createTelemetryRepository(db.app),
+    findings: createCorrelationFindingsRepository(db.app),
+    suppressions: createFindingSuppressionsRepository(db.app),
+    ...(now ? { now } : {}),
+  });
+}
 
 before(async () => {
   db = await connectDb();
@@ -124,11 +137,7 @@ describe("post-ingest correlation evaluation", () => {
     const telemetry = createTelemetryRepository(db.app);
     const findings = createCorrelationFindingsRepository(db.app);
     const nowIso = "2026-03-01T12:10:00.000Z";
-    const correlation = createCorrelationService({
-      telemetry,
-      findings,
-      now: fixedNow(nowIso),
-    });
+    const correlation = correlationFor(fixedNow(nowIso));
     const service = createTelemetryService({ telemetry, correlation });
 
     const base = new Date("2026-03-01T12:05:00.000Z").getTime();
@@ -169,11 +178,7 @@ describe("post-ingest correlation evaluation", () => {
     const telemetry = createTelemetryRepository(db.app);
     const findings = createCorrelationFindingsRepository(db.app);
     const nowIso = "2026-03-01T12:00:30.000Z";
-    const correlation = createCorrelationService({
-      telemetry,
-      findings,
-      now: fixedNow(nowIso),
-    });
+    const correlation = correlationFor(fixedNow(nowIso));
     const service = createTelemetryService({ telemetry, correlation });
 
     const start = new Date("2026-03-01T12:00:00.000Z").getTime();
@@ -210,11 +215,7 @@ describe("post-ingest correlation evaluation", () => {
   it("does not create findings for another tenant's agent traffic", async () => {
     const telemetry = createTelemetryRepository(db.app);
     const findings = createCorrelationFindingsRepository(db.app);
-    const correlation = createCorrelationService({
-      telemetry,
-      findings,
-      now: fixedNow("2026-03-01T12:00:30.000Z"),
-    });
+    const correlation = correlationFor(fixedNow("2026-03-01T12:00:30.000Z"));
     const service = createTelemetryService({ telemetry, correlation });
 
     const start = new Date("2026-03-01T12:00:00.000Z").getTime();
@@ -256,7 +257,23 @@ describe("post-ingest correlation evaluation", () => {
           suppressed: 0,
         }),
         updateStatus: async () => ({ ok: false, reason: "not_found" }),
+        createSuppression: async () => ({ ok: false, reason: "conflict" }),
+        clearSuppression: async () => ({ ok: false, reason: "not_found" }),
+        listSuppressions: async () => [],
         list: async () => [],
+        dashboard: async () => ({
+          generatedAt: new Date(),
+          windowHours: 24,
+          countsByStatus: { open: 0, acknowledged: 0, resolved: 0 },
+          countsByRuleId: {
+            "agent.lifecycle_churn": 0,
+            "agent.heartbeat_burst": 0,
+            "agent.heartbeat_silence": 0,
+          },
+          recentCreatedCount: 0,
+          recentChangedCount: 0,
+          activeSuppressionCount: 0,
+        }),
       },
     });
 
@@ -279,11 +296,7 @@ describe("heartbeat silence evaluation", () => {
     const telemetry = createTelemetryRepository(db.app);
     const findingsRepo = createCorrelationFindingsRepository(db.app);
     const nowIso = "2026-03-01T12:10:00.000Z";
-    const correlation = createCorrelationService({
-      telemetry,
-      findings: findingsRepo,
-      now: fixedNow(nowIso),
-    });
+    const correlation = correlationFor(fixedNow(nowIso));
 
     // No heartbeat yet → never-heartbeated → no finding.
     let result = await correlation.evaluateSilence(tenantA, {
@@ -331,11 +344,7 @@ describe("heartbeat silence evaluation", () => {
   it("does not fire when a recent heartbeat exists", async () => {
     const telemetry = createTelemetryRepository(db.app);
     const findingsRepo = createCorrelationFindingsRepository(db.app);
-    const correlation = createCorrelationService({
-      telemetry,
-      findings: findingsRepo,
-      now: fixedNow("2026-03-01T12:10:00.000Z"),
-    });
+    const correlation = correlationFor(fixedNow("2026-03-01T12:10:00.000Z"));
 
     await telemetry.insertEvent(tenantA, {
       agentId: agentA,
@@ -361,11 +370,7 @@ describe("heartbeat silence evaluation", () => {
   it("isolates silence findings by tenant on a capped scan", async () => {
     const telemetry = createTelemetryRepository(db.app);
     const findingsRepo = createCorrelationFindingsRepository(db.app);
-    const correlation = createCorrelationService({
-      telemetry,
-      findings: findingsRepo,
-      now: fixedNow("2026-03-01T12:10:00.000Z"),
-    });
+    const correlation = correlationFor(fixedNow("2026-03-01T12:10:00.000Z"));
 
     await telemetry.insertEvent(tenantB, {
       agentId: agentB,
@@ -414,14 +419,9 @@ describe("findings lifecycle triage", () => {
   }
 
   it("inserts findings as open and transitions with audit stamps", async () => {
-    const telemetry = createTelemetryRepository(db.app);
     const findingsRepo = createCorrelationFindingsRepository(db.app);
     const changedAt = new Date("2026-03-01T15:00:00.000Z");
-    const correlation = createCorrelationService({
-      telemetry,
-      findings: findingsRepo,
-      now: () => changedAt,
-    });
+    const correlation = correlationFor(() => changedAt);
 
     const id = await seedOpenFinding();
     const before = await findingsRepo.getFindingById(tenantA, id);
@@ -462,11 +462,7 @@ describe("findings lifecycle triage", () => {
 
   it("does not update another tenant's finding", async () => {
     const findingsRepo = createCorrelationFindingsRepository(db.app);
-    const telemetry = createTelemetryRepository(db.app);
-    const correlation = createCorrelationService({
-      telemetry,
-      findings: findingsRepo,
-    });
+    const correlation = correlationFor();
 
     const id = await findingsRepo.insertFindingIgnoreDup(tenantB, {
       agentId: agentB,
@@ -493,12 +489,7 @@ describe("findings lifecycle triage", () => {
   });
 
   it("returns not_found for an unknown finding id", async () => {
-    const telemetry = createTelemetryRepository(db.app);
-    const findingsRepo = createCorrelationFindingsRepository(db.app);
-    const correlation = createCorrelationService({
-      telemetry,
-      findings: findingsRepo,
-    });
+    const correlation = correlationFor();
 
     const outcome = await correlation.updateStatus(
       tenantA,
@@ -507,5 +498,236 @@ describe("findings lifecycle triage", () => {
       {},
     );
     assert.deepEqual(outcome, { ok: false, reason: "not_found" });
+  });
+});
+
+describe("finding suppressions (snooze)", () => {
+  it("skips creating findings while a rule snooze is active, then resumes after clear/expiry", async () => {
+    const findingsRepo = createCorrelationFindingsRepository(db.app);
+    const suppressions = createFindingSuppressionsRepository(db.app);
+    const nowIso = "2026-03-01T12:10:00.000Z";
+    const correlation = correlationFor(fixedNow(nowIso));
+    const telemetry = createTelemetryRepository(db.app);
+
+    // Stale heartbeat would fire silence.
+    await telemetry.insertEvent(tenantA, {
+      agentId: agentA,
+      schemaVersion: 1,
+      eventType: "heartbeat",
+      occurredAt: new Date("2026-03-01T12:00:00.000Z"),
+      payload: {},
+    });
+
+    const created = await correlation.createSuppression(tenantA, {
+      ruleId: "agent.heartbeat_silence",
+      startsAt: new Date("2026-03-01T12:00:00.000Z"),
+      endsAt: new Date("2026-03-01T13:00:00.000Z"),
+      createdByUserId: null,
+    });
+    assert.equal(created.ok, true);
+    if (!created.ok) return;
+
+    const during = await correlation.evaluateSilence(tenantA, {
+      agentId: agentA,
+    });
+    assert.equal(during.created, 0);
+    assert.equal(
+      (await findingsRepo.listFindings(tenantA, { limit: 50, offset: 0 }))
+        .length,
+      0,
+    );
+
+    const cleared = await correlation.clearSuppression(
+      tenantA,
+      created.suppression.id,
+      {},
+    );
+    assert.equal(cleared.ok, true);
+
+    const after = await correlation.evaluateSilence(tenantA, {
+      agentId: agentA,
+    });
+    assert.equal(after.created, 1);
+    assert.equal(
+      (await findingsRepo.listFindings(tenantA, { limit: 50, offset: 0 }))
+        .length,
+      1,
+    );
+
+    // Expiry: uncleared but ends_at in the past is not active.
+    await suppressions.insertSuppression(tenantA, {
+      ruleId: "agent.lifecycle_churn",
+      startsAt: new Date("2026-03-01T12:00:00.000Z"),
+      endsAt: new Date("2026-03-01T13:00:00.000Z"),
+      createdByUserId: null,
+    });
+    assert.equal(
+      await suppressions.isRuleSuppressedAt(
+        tenantA,
+        "agent.lifecycle_churn",
+        new Date("2026-03-01T14:00:00.000Z"),
+      ),
+      false,
+    );
+  });
+
+  it("rejects a second uncleared snooze for the same rule and isolates tenants", async () => {
+    const correlation = correlationFor(fixedNow("2026-03-01T12:00:00.000Z"));
+
+    const first = await correlation.createSuppression(tenantA, {
+      ruleId: "agent.heartbeat_burst",
+      startsAt: new Date("2026-03-01T12:00:00.000Z"),
+      endsAt: new Date("2026-03-01T13:00:00.000Z"),
+      createdByUserId: null,
+    });
+    assert.equal(first.ok, true);
+
+    const conflict = await correlation.createSuppression(tenantA, {
+      ruleId: "agent.heartbeat_burst",
+      startsAt: new Date("2026-03-01T12:00:00.000Z"),
+      endsAt: new Date("2026-03-01T14:00:00.000Z"),
+      createdByUserId: null,
+    });
+    assert.deepEqual(conflict, { ok: false, reason: "conflict" });
+
+    const other = await correlation.createSuppression(tenantB, {
+      ruleId: "agent.heartbeat_burst",
+      startsAt: new Date("2026-03-01T12:00:00.000Z"),
+      endsAt: new Date("2026-03-01T13:00:00.000Z"),
+      createdByUserId: null,
+    });
+    assert.equal(other.ok, true);
+
+    const listedA = await correlation.listSuppressions(tenantA);
+    assert.equal(listedA.length, 1);
+    assert.equal(listedA[0].ruleId, "agent.heartbeat_burst");
+  });
+});
+
+describe("findings dashboard read-model", () => {
+  it("returns zero-filled empty state", async () => {
+    const correlation = correlationFor(fixedNow("2026-03-01T12:00:00.000Z"));
+    const dashboard = await correlation.dashboard(tenantA);
+
+    assert.deepEqual(dashboard.countsByStatus, {
+      open: 0,
+      acknowledged: 0,
+      resolved: 0,
+    });
+    assert.deepEqual(dashboard.countsByRuleId, {
+      "agent.lifecycle_churn": 0,
+      "agent.heartbeat_burst": 0,
+      "agent.heartbeat_silence": 0,
+    });
+    assert.equal(dashboard.recentCreatedCount, 0);
+    assert.equal(dashboard.recentChangedCount, 0);
+    assert.equal(dashboard.activeSuppressionCount, 0);
+    assert.equal(dashboard.windowHours, 24);
+  });
+
+  it("aggregates status/rule/recent windows and isolates tenants", async () => {
+    const findings = createCorrelationFindingsRepository(db.app);
+    const nowIso = "2026-03-01T12:00:00.000Z";
+    const correlation = correlationFor(fixedNow(nowIso));
+
+    await findings.insertFindingIgnoreDup(tenantA, {
+      agentId: agentA,
+      ruleId: "agent.lifecycle_churn",
+      title: "Agent lifecycle churn",
+      severity: "medium",
+      evidence: {},
+      windowStart: new Date("2026-03-01T11:50:00.000Z"),
+      windowEnd: new Date("2026-03-01T12:00:00.000Z"),
+      windowBucket: new Date("2026-03-01T11:50:00.000Z"),
+    });
+    await findings.insertFindingIgnoreDup(tenantA, {
+      agentId: agentA,
+      ruleId: "agent.heartbeat_burst",
+      title: "Agent heartbeat burst",
+      severity: "medium",
+      evidence: {},
+      windowStart: new Date("2026-03-01T11:59:00.000Z"),
+      windowEnd: new Date("2026-03-01T12:00:00.000Z"),
+      windowBucket: new Date("2026-03-01T11:59:00.000Z"),
+    });
+    await findings.insertFindingIgnoreDup(tenantB, {
+      agentId: agentB,
+      ruleId: "agent.lifecycle_churn",
+      title: "Agent lifecycle churn",
+      severity: "medium",
+      evidence: {},
+      windowStart: new Date("2026-03-01T11:50:00.000Z"),
+      windowEnd: new Date("2026-03-01T12:00:00.000Z"),
+      windowBucket: new Date("2026-03-01T11:50:00.000Z"),
+    });
+
+    const listed = await findings.listFindings(tenantA, {
+      limit: 50,
+      offset: 0,
+    });
+    const openId = listed.find((f) => f.ruleId === "agent.lifecycle_churn")?.id;
+    assert.ok(openId);
+    await correlation.updateStatus(tenantA, openId, "acknowledged", {});
+
+    await correlation.createSuppression(tenantA, {
+      ruleId: "agent.heartbeat_silence",
+      startsAt: new Date("2026-03-01T11:00:00.000Z"),
+      endsAt: new Date("2026-03-01T13:00:00.000Z"),
+      createdByUserId: null,
+    });
+
+    const dashboard = await correlation.dashboard(tenantA);
+    assert.deepEqual(dashboard.countsByStatus, {
+      open: 1,
+      acknowledged: 1,
+      resolved: 0,
+    });
+    assert.deepEqual(dashboard.countsByRuleId, {
+      "agent.lifecycle_churn": 1,
+      "agent.heartbeat_burst": 1,
+      "agent.heartbeat_silence": 0,
+    });
+    assert.equal(dashboard.recentCreatedCount, 2);
+    assert.equal(dashboard.recentChangedCount, 1);
+    assert.equal(dashboard.activeSuppressionCount, 1);
+
+    const other = await correlation.dashboard(tenantB);
+    assert.deepEqual(other.countsByStatus, {
+      open: 1,
+      acknowledged: 0,
+      resolved: 0,
+    });
+    assert.equal(other.countsByRuleId["agent.lifecycle_churn"], 1);
+    assert.equal(other.countsByRuleId["agent.heartbeat_burst"], 0);
+    assert.equal(other.activeSuppressionCount, 0);
+  });
+
+  it("excludes findings older than the fixed 24h recent window", async () => {
+    const findings = createCorrelationFindingsRepository(db.app);
+    const correlation = correlationFor(fixedNow("2026-03-03T12:00:00.000Z"));
+
+    await findings.insertFindingIgnoreDup(tenantA, {
+      agentId: agentA,
+      ruleId: "agent.heartbeat_silence",
+      title: "Agent heartbeat silence",
+      severity: "medium",
+      evidence: {},
+      windowStart: new Date("2026-03-01T11:55:00.000Z"),
+      windowEnd: new Date("2026-03-01T12:00:00.000Z"),
+      windowBucket: new Date("2026-03-01T11:55:00.000Z"),
+    });
+
+    // Age created_at under tenant scope (FORCE RLS applies even to the owner).
+    await withTenantTransaction(db.app, tenantA, async (trx) => {
+      await sql`
+        update correlation_findings
+        set created_at = ${new Date("2026-03-01T12:00:00.000Z")}
+      `.execute(trx);
+    });
+
+    const dashboard = await correlation.dashboard(tenantA);
+    assert.equal(dashboard.countsByStatus.open, 1);
+    assert.equal(dashboard.recentCreatedCount, 0);
+    assert.equal(dashboard.recentChangedCount, 0);
   });
 });

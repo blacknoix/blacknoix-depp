@@ -1,6 +1,11 @@
 import { logLifecycle } from "../lib/log";
 import type { TelemetryRepository } from "../telemetry/repository";
 import {
+  assembleFindingsDashboard,
+  DASHBOARD_RECENT_HOURS,
+  type FindingsDashboard,
+} from "./dashboard";
+import {
   assertFindingTransition,
   type FindingStatus,
 } from "./lifecycle";
@@ -16,6 +21,11 @@ import {
   SILENCE_THRESHOLD_MS,
   type CorrelationRuleId,
 } from "./rules";
+import type {
+  FindingSuppressionInsert,
+  FindingSuppressionRow,
+  FindingSuppressionsRepository,
+} from "./suppression-repository";
 
 export interface SilenceEvaluateOptions {
   /** When set, evaluate only this agent. */
@@ -35,17 +45,17 @@ export type UpdateStatusOutcome =
   | { ok: false; reason: "not_found" }
   | { ok: false; reason: "invalid_transition"; message: string };
 
+export type CreateSuppressionOutcome =
+  | { ok: true; suppression: FindingSuppressionRow }
+  | { ok: false; reason: "conflict" };
+
+export type ClearSuppressionOutcome =
+  | { ok: true; suppression: FindingSuppressionRow }
+  | { ok: false; reason: "not_found" };
+
 export interface CorrelationService {
-  /**
-   * Runs the fixed v1 count rule set for one agent after successful telemetry
-   * ingest. Silence is intentionally not included here.
-   */
   evaluateAfterIngest(tenantId: string, agentId: string): Promise<void>;
 
-  /**
-   * Operator maintenance path: evaluate heartbeat silence for one agent or a
-   * capped tenant scan of stale heartbeat candidates.
-   */
   evaluateSilence(
     tenantId: string,
     options?: SilenceEvaluateOptions,
@@ -56,20 +66,36 @@ export interface CorrelationService {
     query: ListFindingsQuery,
   ): Promise<CorrelationFindingRow[]>;
 
-  /**
-   * Operator triage: apply an allowed status transition (or idempotent noop).
-   */
+  /** Operator findings dashboard (fixed 24h windows, zero-filled aggregates). */
+  dashboard(tenantId: string): Promise<FindingsDashboard>;
+
   updateStatus(
     tenantId: string,
     findingId: string,
     nextStatus: FindingStatus,
     actor: { userId?: string },
   ): Promise<UpdateStatusOutcome>;
+
+  createSuppression(
+    tenantId: string,
+    input: FindingSuppressionInsert,
+  ): Promise<CreateSuppressionOutcome>;
+
+  clearSuppression(
+    tenantId: string,
+    id: string,
+    actor: { userId?: string },
+  ): Promise<ClearSuppressionOutcome>;
+
+  listSuppressions(
+    tenantId: string,
+  ): Promise<FindingSuppressionRow[]>;
 }
 
 export interface CorrelationServiceDeps {
   telemetry: TelemetryRepository;
   findings: CorrelationFindingsRepository;
+  suppressions: FindingSuppressionsRepository;
   /** Injectable clock for deterministic tests. Defaults to Date.now. */
   now?: () => Date;
 }
@@ -77,24 +103,46 @@ export interface CorrelationServiceDeps {
 const DEFAULT_SILENCE_SCAN_LIMIT = 100;
 const MAX_SILENCE_SCAN_LIMIT = 100;
 
+function isUniqueViolation(err: unknown): boolean {
+  if (!err || typeof err !== "object") {
+    return false;
+  }
+  const code = (err as { code?: string }).code;
+  return code === "23505";
+}
+
 export function createCorrelationService(
   deps: CorrelationServiceDeps,
 ): CorrelationService {
-  const { telemetry, findings } = deps;
+  const { telemetry, findings, suppressions } = deps;
   const now = deps.now ?? (() => new Date());
 
-  async function tryPersistSilence(
+  async function persistCandidate(
     tenantId: string,
     agentId: string,
-    lastHeartbeatAt: Date | null,
-    evaluatedAt: Date,
-  ): Promise<"created" | "suppressed" | "skipped"> {
-    const candidate = evaluateHeartbeatSilence({
-      lastHeartbeatAt,
-      now: evaluatedAt,
-    });
-    if (!candidate) {
-      return "skipped";
+    candidate: {
+      ruleId: CorrelationRuleId;
+      title: string;
+      severity: "low" | "medium" | "high";
+      evidence: Record<string, unknown>;
+      windowStart: Date;
+      windowEnd: Date;
+      windowBucket: Date;
+    },
+    at: Date,
+  ): Promise<"created" | "deduped" | "snoozed"> {
+    const snoozed = await suppressions.isRuleSuppressedAt(
+      tenantId,
+      candidate.ruleId,
+      at,
+    );
+    if (snoozed) {
+      logLifecycle("info", "correlation_finding_snoozed", {
+        tenantId,
+        agentId,
+        ruleId: candidate.ruleId,
+      });
+      return "snoozed";
     }
 
     const inserted = await findings.insertFindingIgnoreDup(tenantId, {
@@ -112,12 +160,38 @@ export function createCorrelationService(
       logLifecycle("info", "correlation_finding_created", {
         tenantId,
         agentId,
-        ruleId: candidate.ruleId as CorrelationRuleId,
+        ruleId: candidate.ruleId,
         findingId: inserted,
       });
       return "created";
     }
-    return "suppressed";
+    return "deduped";
+  }
+
+  async function tryPersistSilence(
+    tenantId: string,
+    agentId: string,
+    lastHeartbeatAt: Date | null,
+    evaluatedAt: Date,
+  ): Promise<"created" | "suppressed" | "skipped" | "snoozed"> {
+    const candidate = evaluateHeartbeatSilence({
+      lastHeartbeatAt,
+      now: evaluatedAt,
+    });
+    if (!candidate) {
+      return "skipped";
+    }
+
+    const outcome = await persistCandidate(
+      tenantId,
+      agentId,
+      candidate,
+      evaluatedAt,
+    );
+    if (outcome === "deduped") {
+      return "suppressed";
+    }
+    return outcome;
   }
 
   return {
@@ -149,25 +223,7 @@ export function createCorrelationService(
           continue;
         }
 
-        const inserted = await findings.insertFindingIgnoreDup(tenantId, {
-          agentId,
-          ruleId: candidate.ruleId,
-          title: candidate.title,
-          severity: candidate.severity,
-          evidence: candidate.evidence,
-          windowStart: candidate.windowStart,
-          windowEnd: candidate.windowEnd,
-          windowBucket: candidate.windowBucket,
-        });
-
-        if (inserted) {
-          logLifecycle("info", "correlation_finding_created", {
-            tenantId,
-            agentId,
-            ruleId: candidate.ruleId as CorrelationRuleId,
-            findingId: inserted,
-          });
-        }
+        await persistCandidate(tenantId, agentId, candidate, windowEnd);
       }
     },
 
@@ -206,6 +262,7 @@ export function createCorrelationService(
         } else if (outcome === "suppressed") {
           suppressed = 1;
         }
+        // snoozed / skipped: no create
         return { evaluated, created, suppressed };
       }
 
@@ -237,6 +294,23 @@ export function createCorrelationService(
         throw new Error("list requires a non-empty tenantId");
       }
       return findings.listFindings(tenantId, query);
+    },
+
+    async dashboard(tenantId) {
+      if (typeof tenantId !== "string" || tenantId.trim() === "") {
+        throw new Error("dashboard requires a non-empty tenantId");
+      }
+
+      const generatedAt = now();
+      const since = new Date(
+        generatedAt.getTime() - DASHBOARD_RECENT_HOURS * 60 * 60 * 1000,
+      );
+      const raw = await findings.getDashboardRawCounts(
+        tenantId,
+        since,
+        generatedAt,
+      );
+      return assembleFindingsDashboard(generatedAt, raw);
     },
 
     async updateStatus(tenantId, findingId, nextStatus, actor) {
@@ -276,6 +350,49 @@ export function createCorrelationService(
       }
 
       return { ok: true, finding: updated };
+    },
+
+    async createSuppression(tenantId, input) {
+      if (typeof tenantId !== "string" || tenantId.trim() === "") {
+        throw new Error("createSuppression requires a non-empty tenantId");
+      }
+
+      try {
+        const suppression = await suppressions.insertSuppression(
+          tenantId,
+          input,
+        );
+        return { ok: true, suppression };
+      } catch (err) {
+        if (isUniqueViolation(err)) {
+          return { ok: false, reason: "conflict" };
+        }
+        throw err;
+      }
+    },
+
+    async clearSuppression(tenantId, id, actor) {
+      if (typeof tenantId !== "string" || tenantId.trim() === "") {
+        throw new Error("clearSuppression requires a non-empty tenantId");
+      }
+
+      const cleared = await suppressions.clearSuppression(
+        tenantId,
+        id,
+        now(),
+        actor.userId ?? null,
+      );
+      if (!cleared) {
+        return { ok: false, reason: "not_found" };
+      }
+      return { ok: true, suppression: cleared };
+    },
+
+    async listSuppressions(tenantId) {
+      if (typeof tenantId !== "string" || tenantId.trim() === "") {
+        throw new Error("listSuppressions requires a non-empty tenantId");
+      }
+      return suppressions.listUncleared(tenantId);
     },
   };
 }

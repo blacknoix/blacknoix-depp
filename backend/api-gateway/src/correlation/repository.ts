@@ -1,7 +1,9 @@
 import type { Kysely } from "kysely";
+import { sql } from "kysely";
 
 import type { Database } from "../db/schema";
 import { withTenantTransaction } from "../db/tenant-context";
+import type { FindingsDashboardRawCounts } from "./dashboard";
 import type { FindingStatus } from "./lifecycle";
 import type { CorrelationRuleId, FindingSeverity } from "./rules";
 
@@ -73,6 +75,18 @@ export interface CorrelationFindingsRepository {
     findingId: string,
     update: UpdateFindingStatusInput,
   ): Promise<CorrelationFindingRow | undefined>;
+
+  /**
+   * Compact operator dashboard aggregates for one tenant.
+   * Caller supplies `since` (typically now − 24h) and `at` (evaluation now).
+   * Suppression active count is included so ops can see snooze coverage
+   * without a second round-trip.
+   */
+  getDashboardRawCounts(
+    tenantId: string,
+    since: Date,
+    at: Date,
+  ): Promise<FindingsDashboardRawCounts>;
 }
 
 function asDate(value: unknown): Date {
@@ -217,6 +231,57 @@ export function createCorrelationFindingsRepository(
           .executeTakeFirst();
 
         return row ? mapRow(row) : undefined;
+      });
+    },
+
+    async getDashboardRawCounts(tenantId, since, at) {
+      return withTenantTransaction(db, tenantId, async (trx) => {
+        const statusRows = await trx
+          .selectFrom("correlation_findings")
+          .select(["status", (eb) => eb.fn.countAll<string>().as("count")])
+          .groupBy("status")
+          .execute();
+
+        const ruleRows = await trx
+          .selectFrom("correlation_findings")
+          .select(["rule_id", (eb) => eb.fn.countAll<string>().as("count")])
+          .groupBy("rule_id")
+          .execute();
+
+        const recentCreated = await trx
+          .selectFrom("correlation_findings")
+          .select((eb) => eb.fn.countAll<string>().as("count"))
+          .where(sql<boolean>`created_at >= ${since}`)
+          .executeTakeFirstOrThrow();
+
+        const recentChanged = await trx
+          .selectFrom("correlation_findings")
+          .select((eb) => eb.fn.countAll<string>().as("count"))
+          .where(sql<boolean>`status_changed_at is not null`)
+          .where(sql<boolean>`status_changed_at >= ${since}`)
+          .executeTakeFirstOrThrow();
+
+        const activeSuppressions = await trx
+          .selectFrom("finding_suppressions")
+          .select((eb) => eb.fn.countAll<string>().as("count"))
+          .where("cleared_at", "is", null)
+          .where(sql<boolean>`starts_at <= ${at}`)
+          .where(sql<boolean>`ends_at > ${at}`)
+          .executeTakeFirstOrThrow();
+
+        return {
+          statusCounts: statusRows.map((row) => ({
+            status: row.status,
+            count: Number(row.count),
+          })),
+          ruleCounts: ruleRows.map((row) => ({
+            ruleId: row.rule_id,
+            count: Number(row.count),
+          })),
+          recentCreatedCount: Number(recentCreated.count),
+          recentChangedCount: Number(recentChanged.count),
+          activeSuppressionCount: Number(activeSuppressions.count),
+        };
       });
     },
   };

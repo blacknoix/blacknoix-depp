@@ -16,6 +16,7 @@ import { createTenantsRepository } from "./tenants/repository";
 import { createTelemetryRepository } from "./telemetry/repository";
 import { createTelemetryService } from "./telemetry/service";
 import { createCorrelationFindingsRepository } from "./correlation/repository";
+import { createFindingSuppressionsRepository } from "./correlation/suppression-repository";
 import { createCorrelationService } from "./correlation/service";
 import { createUsersRepository } from "./users/repository";
 
@@ -45,9 +46,10 @@ const sessions = db ? createSessionsRepository(db) : undefined;
 const agents = db ? createAgentsRepository(db) : undefined;
 const telemetry = db ? createTelemetryRepository(db) : undefined;
 const findings = db ? createCorrelationFindingsRepository(db) : undefined;
+const suppressions = db ? createFindingSuppressionsRepository(db) : undefined;
 const correlationService =
-  telemetry && findings
-    ? createCorrelationService({ telemetry, findings })
+  telemetry && findings && suppressions
+    ? createCorrelationService({ telemetry, findings, suppressions })
     : undefined;
 const telemetryService = telemetry
   ? createTelemetryService({

@@ -65,13 +65,13 @@ Treat this as the current priority order unless explicitly changed.
 - Frontend implementation: not started
 - Infra setup: not started
 - Auth / RBAC: authentication seam (ADR-0002) with `dev-header` + `jwt`; human OIDC/refresh and agent credential exchange implemented; no RBAC
-- Database: schema + RLS (tenants, agents, agent_credentials, users, sessions, refresh_tokens, telemetry_events, correlation_findings) via Kysely + migrator, plus platform-global `oidc_initiations`. NOTE: some auth narrative elsewhere may still need a docs-sync pass.
+- Database: schema + RLS (tenants, agents, agent_credentials, users, sessions, refresh_tokens, telemetry_events, correlation_findings, finding_suppressions) via Kysely + migrator, plus platform-global `oidc_initiations`. NOTE: some auth narrative elsewhere may still need a docs-sync pass.
 - Enterprise hardening: not started
 
 ## backend/api-gateway
 Implemented:
 - Middleware: request ID, structured JSON request logging, tenant context, 404 handler, centralized error handler
-- Routes: `GET /`, `GET /health`, `GET /v1/tenants/me`, `POST /v1/agents` (enroll), `POST /v1/agents/:id/credentials/revoke`, `POST /v1/auth/agent/token`, `POST /v1/telemetry/events`, `POST /v1/telemetry/events/batch`, `GET /v1/telemetry/events`, `GET /v1/findings`, `POST /v1/findings/evaluate-silence`, `PATCH /v1/findings/:id`
+- Routes: `GET /`, `GET /health`, `GET /v1/tenants/me`, `POST /v1/agents` (enroll), `POST /v1/agents/:id/credentials/revoke`, `POST /v1/auth/agent/token`, `POST /v1/telemetry/events`, `POST /v1/telemetry/events/batch`, `GET /v1/telemetry/events`, `GET /v1/findings`, `GET /v1/findings/dashboard`, `POST /v1/findings/evaluate-silence`, `PATCH /v1/findings/:id`, `GET|POST /v1/findings/suppressions`, `DELETE /v1/findings/suppressions/:id`
 - Error envelope: `{ ok: false, error: { code, message }, requestId }`
 - Success envelope on /v1: `{ ok: true, data, requestId }`
 - Tests: `node:test` integration suite against `createApp()` (`npm test`)
@@ -97,8 +97,15 @@ Implemented:
   Triage: `PATCH /v1/findings/:id` with explicit transitions
   open↔acknowledged→resolved / reopen to open; same-status idempotent; last-change
   audit (`status_changed_at`, nullable `status_changed_by_user_id`); agent
-  principals rejected. Full scheduler, status history, case management, comments,
-  assignment, notifications, rule DSL, malware, and remediation deferred.
+  principals rejected. Snooze: time-bounded `finding_suppressions` per
+  tenant+rule (max 30d); while active, evaluation skips creating new findings
+  for that rule (existing findings unchanged). Operator
+  `POST/GET/DELETE /v1/findings/suppressions`; one uncleared snooze per rule.
+  Operator dashboard: `GET /v1/findings/dashboard` — fixed 24h windows; counts by
+  status and ruleId (zero-filled); recentCreated/recentChanged; active
+  suppression count; no query params; agents rejected. UI/charts, export,
+  scheduled digests, case management, comments, assignment, notifications,
+  rule DSL, malware, and remediation deferred.
 - Agent identity (ADR-0003 §5 minimal): register agent → hashed credential once;
   exchange for short-lived agent access JWT (`tid`+`aid`); revoke blocks exchange.
 

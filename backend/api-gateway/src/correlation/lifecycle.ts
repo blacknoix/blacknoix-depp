@@ -1,7 +1,7 @@
 /**
  * Finding status lifecycle — explicit transitions only.
  *
- * Deferred: status history table, snooze, assignment, comments.
+ * Deferred: status history table, assignment, comments.
  */
 
 export const FINDING_STATUSES = ["open", "acknowledged", "resolved"] as const;

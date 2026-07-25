@@ -6,6 +6,9 @@ import {
 } from "../correlation/query";
 import type { CorrelationFindingRow } from "../correlation/repository";
 import type { CorrelationService } from "../correlation/service";
+import type { FindingSuppressionRow } from "../correlation/suppression-repository";
+import { parseSuppressionWindow } from "../correlation/suppression";
+import type { CorrelationRuleId } from "../correlation/rules";
 import { AppError } from "../middleware/error-handler";
 import { requirePrincipal } from "../middleware/tenant-context";
 
@@ -36,6 +39,19 @@ function serializeFinding(finding: CorrelationFindingRow) {
     windowStart: finding.windowStart.toISOString(),
     windowEnd: finding.windowEnd.toISOString(),
     createdAt: finding.createdAt.toISOString(),
+  };
+}
+
+function serializeSuppression(row: FindingSuppressionRow) {
+  return {
+    id: row.id,
+    ruleId: row.ruleId,
+    startsAt: row.startsAt.toISOString(),
+    endsAt: row.endsAt.toISOString(),
+    createdAt: row.createdAt.toISOString(),
+    createdByUserId: row.createdByUserId,
+    clearedAt: row.clearedAt ? row.clearedAt.toISOString() : null,
+    clearedByUserId: row.clearedByUserId,
   };
 }
 
@@ -92,6 +108,55 @@ export function createFindingsRouter(
   );
 
   /**
+   * GET /v1/findings/dashboard — operator current-state read-model.
+   * Fixed 24h windows; no query filters. Agents rejected. UI/charts deferred.
+   */
+  router.get(
+    "/dashboard",
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const principal = requirePrincipal(req);
+        const service = requireCorrelationService(options);
+
+        if (principal.agentId) {
+          throw new AppError(
+            "FINDINGS_REJECTED",
+            403,
+            "Findings dashboard requires an operator principal",
+          );
+        }
+
+        const queryKeys = Object.keys(req.query);
+        if (queryKeys.length > 0) {
+          throw new AppError(
+            "FINDINGS_INVALID",
+            400,
+            "dashboard does not accept query parameters",
+          );
+        }
+
+        const dashboard = await service.dashboard(principal.tenantId);
+
+        res.status(200).json({
+          ok: true,
+          data: {
+            generatedAt: dashboard.generatedAt.toISOString(),
+            window: { hours: dashboard.windowHours },
+            countsByStatus: dashboard.countsByStatus,
+            countsByRuleId: dashboard.countsByRuleId,
+            recentCreatedCount: dashboard.recentCreatedCount,
+            recentChangedCount: dashboard.recentChangedCount,
+            activeSuppressionCount: dashboard.activeSuppressionCount,
+          },
+          requestId: req.requestId,
+        });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  /**
    * POST /v1/findings/evaluate-silence — operator maintenance seam.
    * Agent principals are rejected. Full scheduler/job framework is deferred.
    */
@@ -123,6 +188,140 @@ export function createFindingsRouter(
         res.status(200).json({
           ok: true,
           data: result,
+          requestId: req.requestId,
+        });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  /**
+   * GET /v1/findings/suppressions — list uncleared snoozes (operator read).
+   */
+  router.get(
+    "/suppressions",
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const principal = requirePrincipal(req);
+        const service = requireCorrelationService(options);
+
+        if (principal.agentId) {
+          throw new AppError(
+            "FINDINGS_REJECTED",
+            403,
+            "Suppression management requires an operator principal",
+          );
+        }
+
+        const rows = await service.listSuppressions(principal.tenantId);
+        res.status(200).json({
+          ok: true,
+          data: {
+            suppressions: rows.map(serializeSuppression),
+          },
+          requestId: req.requestId,
+        });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  /**
+   * POST /v1/findings/suppressions — create a time-bounded rule snooze.
+   * Skips new finding creation while active; does not mutate existing findings.
+   */
+  router.post(
+    "/suppressions",
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const principal = requirePrincipal(req);
+        const service = requireCorrelationService(options);
+
+        if (principal.agentId) {
+          throw new AppError(
+            "FINDINGS_REJECTED",
+            403,
+            "Suppression management requires an operator principal",
+          );
+        }
+
+        const parsed = parseCreateSuppressionBody(req.body, new Date());
+        if (!parsed.ok) {
+          throw new AppError("FINDINGS_INVALID", 400, parsed.message);
+        }
+
+        const outcome = await service.createSuppression(principal.tenantId, {
+          ruleId: parsed.window.ruleId,
+          startsAt: parsed.window.startsAt,
+          endsAt: parsed.window.endsAt,
+          createdByUserId: principal.userId ?? null,
+        });
+
+        if (!outcome.ok) {
+          throw new AppError(
+            "FINDINGS_CONFLICT",
+            409,
+            "An uncleared suppression already exists for this rule",
+          );
+        }
+
+        res.status(201).json({
+          ok: true,
+          data: { suppression: serializeSuppression(outcome.suppression) },
+          requestId: req.requestId,
+        });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  /**
+   * DELETE /v1/findings/suppressions/:id — soft-clear a snooze.
+   */
+  router.delete(
+    "/suppressions/:id",
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const principal = requirePrincipal(req);
+        const service = requireCorrelationService(options);
+
+        if (principal.agentId) {
+          throw new AppError(
+            "FINDINGS_REJECTED",
+            403,
+            "Suppression management requires an operator principal",
+          );
+        }
+
+        const id = typeof req.params.id === "string" ? req.params.id : "";
+        if (!UUID.test(id)) {
+          throw new AppError(
+            "FINDINGS_NOT_FOUND",
+            404,
+            "Suppression not found",
+          );
+        }
+
+        const outcome = await service.clearSuppression(
+          principal.tenantId,
+          id.toLowerCase(),
+          { userId: principal.userId },
+        );
+
+        if (!outcome.ok) {
+          throw new AppError(
+            "FINDINGS_NOT_FOUND",
+            404,
+            "Suppression not found",
+          );
+        }
+
+        res.status(200).json({
+          ok: true,
+          data: { suppression: serializeSuppression(outcome.suppression) },
           requestId: req.requestId,
         });
       } catch (err) {
@@ -249,4 +448,47 @@ function parseEvaluateSilenceBody(body: unknown): ParseEvaluateSilenceResult {
     ok: true,
     options: { agentId: record.agentId.trim().toLowerCase() },
   };
+}
+
+type ParseCreateSuppressionResult =
+  | {
+      ok: true;
+      window: {
+        ruleId: CorrelationRuleId;
+        startsAt: Date;
+        endsAt: Date;
+      };
+    }
+  | { ok: false; message: string };
+
+function parseCreateSuppressionBody(
+  body: unknown,
+  now: Date,
+): ParseCreateSuppressionResult {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return { ok: false, message: "body must be a JSON object" };
+  }
+
+  const record = body as Record<string, unknown>;
+
+  for (const key of Object.keys(record)) {
+    if (key === "tenantId" || key === "tenant_id" || key === "tid") {
+      return {
+        ok: false,
+        message: "tenant identity must not be supplied in the body",
+      };
+    }
+    if (key !== "ruleId" && key !== "until" && key !== "startsAt") {
+      return { ok: false, message: `unknown field: ${key}` };
+    }
+  }
+
+  return parseSuppressionWindow(
+    {
+      ruleId: record.ruleId,
+      until: record.until,
+      startsAt: record.startsAt,
+    },
+    now,
+  );
 }

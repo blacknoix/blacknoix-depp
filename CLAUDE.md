@@ -178,14 +178,17 @@ Implemented:
   Agents URL state: shareable `freshness` / `hasOpenFindings` filters plus
   `agentId` selection (client-side on inventory; invalid values fail closed).
   Selected-agent detail prioritizes investigation CTAs into Findings and keeps
-  honest freshness language. Jump bar includes narrow Agents filter commands.
-  Remote actions, enrollment UX, bulk/tagging, and device management deferred.
+  honest freshness language. Jump bar includes narrow Agents filter commands
+  plus deterministic entity lookup (agent name/id prefix, finding UUID) via
+  inventory already loaded in the shell — not a search index. Full-text/fuzzy
+  search deferred. Remote actions, enrollment UX, bulk/tagging, and device
+  management deferred.
   Cross-links: `/agents?agentId=` focuses an agent (optional `freshness` /
   `hasOpenFindings` list filters); `/findings` carries
   shareable `status` / `ruleId` / `agentId` filters plus optional `findingId`
   selection. Invalid UUIDs/enums fail closed. Shell “Jump to…” bar (Ctrl/⌘K)
   offers nav + built-in findings filters + Agents freshness/open-findings
-  filters + local/shared views; actions navigate
+  filters + local/shared views + entity lookup; actions navigate
   via URL paths only (no search API). Shell Attention popover surfaces the
   pull-based findings digest.
 

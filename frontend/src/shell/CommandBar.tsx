@@ -9,15 +9,18 @@ import {
 } from "react";
 import { useNavigate } from "react-router-dom";
 
+import { fetchAgentInventory } from "../api/agents";
 import {
   fetchSharedFindingViews,
   type SharedFindingView,
 } from "../api/findings";
+import type { AgentInventoryItem } from "../agents/types";
 import type { OperatorSession } from "../auth/session";
 import {
   buildOperatorCommands,
+  commandKindLabel,
   commandTargetPath,
-  filterOperatorCommands,
+  resolveJumpMatches,
   type OperatorCommand,
 } from "./commands";
 
@@ -34,6 +37,7 @@ export function CommandBar({ session }: Props) {
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const [sharedViews, setSharedViews] = useState<SharedFindingView[]>([]);
+  const [agents, setAgents] = useState<AgentInventoryItem[]>([]);
 
   const commands = useMemo(
     () =>
@@ -43,8 +47,11 @@ export function CommandBar({ session }: Props) {
     [open, session, sharedViews],
   );
   const matches = useMemo(
-    () => filterOperatorCommands(commands, query),
-    [commands, query],
+    () =>
+      open
+        ? resolveJumpMatches({ commands, query, agents })
+        : [],
+    [open, commands, query, agents],
   );
 
   const close = useCallback(() => {
@@ -66,16 +73,19 @@ export function CommandBar({ session }: Props) {
     inputRef.current?.focus();
     let cancelled = false;
     void (async () => {
-      try {
-        const views = await fetchSharedFindingViews(session);
-        if (!cancelled) {
-          setSharedViews(views);
-        }
-      } catch {
-        if (!cancelled) {
-          setSharedViews([]);
-        }
+      const [viewsResult, agentsResult] = await Promise.allSettled([
+        fetchSharedFindingViews(session),
+        fetchAgentInventory(session),
+      ]);
+      if (cancelled) {
+        return;
       }
+      setSharedViews(
+        viewsResult.status === "fulfilled" ? viewsResult.value : [],
+      );
+      setAgents(
+        agentsResult.status === "fulfilled" ? agentsResult.value : [],
+      );
     })();
     return () => {
       cancelled = true;
@@ -175,7 +185,7 @@ export function CommandBar({ session }: Props) {
           className="command-bar-panel"
           id={panelId}
           role="dialog"
-          aria-label="Jump to destination or findings filter"
+          aria-label="Jump to destination, lookup, or filter"
         >
           <label className="command-bar-search">
             <span className="visually-hidden">Filter actions</span>
@@ -183,7 +193,7 @@ export function CommandBar({ session }: Props) {
               ref={inputRef}
               type="text"
               value={query}
-              placeholder="Findings, Agents, saved views…"
+              placeholder="Agent name/id, finding id, filters…"
               aria-label="Filter actions"
               aria-autocomplete="list"
               aria-controls={`${panelId}-list`}
@@ -199,7 +209,9 @@ export function CommandBar({ session }: Props) {
 
           {matches.length === 0 ? (
             <p className="empty tiny" role="status">
-              No matching actions.
+              {query.trim().length === 0
+                ? "No matching actions."
+                : "No matching agents, findings, or actions."}
             </p>
           ) : (
             <ul
@@ -227,13 +239,7 @@ export function CommandBar({ session }: Props) {
                     >
                       <span>{command.label}</span>
                       <span className="muted tiny">
-                        {command.kind === "nav"
-                          ? "Navigate"
-                          : command.kind === "saved-view"
-                            ? command.scope === "shared"
-                              ? "Shared view"
-                              : "Local view"
-                            : "Filter"}
+                        {commandKindLabel(command)}
                       </span>
                     </button>
                   </li>

@@ -36,8 +36,17 @@ function stubOperatorShellFetch(opts?: {
     agentId: string;
     at: string;
   }>;
+  agents?: Array<{
+    id: string;
+    name: string;
+    createdAt: string;
+    lastHeartbeatAt: string | null;
+    openFindingsCount: number;
+    heartbeatFreshness: "recent" | "stale" | "unknown";
+  }>;
 }) {
   const items = opts?.attentionItems ?? [];
+  const agents = opts?.agents ?? [];
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
@@ -55,6 +64,9 @@ function stubOperatorShellFetch(opts?: {
       }
       if (url.includes("/v1/findings/views")) {
         return jsonOk({ views: [] });
+      }
+      if (url.includes("/v1/agents")) {
+        return jsonOk({ agents });
       }
       return jsonOk({});
     }),
@@ -161,7 +173,7 @@ describe("OperatorShell", () => {
     await user.click(screen.getByRole("button", { name: /Jump to/i }));
     expect(
       screen.getByRole("dialog", {
-        name: /Jump to destination or findings filter/i,
+        name: /Jump to destination, lookup, or filter/i,
       }),
     ).toBeInTheDocument();
 
@@ -175,6 +187,92 @@ describe("OperatorShell", () => {
     );
     expect(screen.getByTestId("location-probe")).toHaveTextContent(
       "/findings?status=open",
+    );
+  });
+
+  it("looks up an agent by name prefix and a finding by exact id", async () => {
+    const user = userEvent.setup();
+    const agentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const findingId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    stubOperatorShellFetch({
+      agents: [
+        {
+          id: agentId,
+          name: "edge-west",
+          createdAt: "2026-03-01T12:00:00.000Z",
+          lastHeartbeatAt: "2026-03-01T11:58:00.000Z",
+          openFindingsCount: 1,
+          heartbeatFreshness: "recent",
+        },
+      ],
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/findings"]}>
+        <Routes>
+          <Route
+            element={
+              <OperatorShell
+                session={{ kind: "tenant", tenantId: TENANT }}
+                onSignOut={() => undefined}
+              />
+            }
+          >
+            <Route
+              path="findings"
+              element={
+                <>
+                  <div>Findings page</div>
+                  <LocationProbe />
+                </>
+              }
+            />
+            <Route
+              path="agents"
+              element={
+                <>
+                  <div>Agents page</div>
+                  <LocationProbe />
+                </>
+              }
+            />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await user.click(screen.getByRole("button", { name: /Jump to/i }));
+    await waitFor(() => {
+      expect(screen.getByLabelText(/Filter actions/i)).toBeInTheDocument();
+    });
+
+    await user.type(screen.getByLabelText(/Filter actions/i), "edge-w");
+    await waitFor(() => {
+      expect(
+        screen.getByRole("option", { name: /Agent · edge-west/i }),
+      ).toBeInTheDocument();
+    });
+    await user.click(
+      screen.getByRole("option", { name: /Agent · edge-west/i }),
+    );
+    expect(screen.getByTestId("location-probe")).toHaveTextContent(
+      `/agents?agentId=${agentId}`,
+    );
+
+    await user.click(screen.getByRole("button", { name: /Jump to/i }));
+    await user.type(screen.getByLabelText(/Filter actions/i), findingId);
+    await waitFor(() => {
+      expect(
+        screen.getByRole("option", { name: new RegExp(`Finding · ${findingId}`, "i") }),
+      ).toBeInTheDocument();
+    });
+    await user.click(
+      screen.getByRole("option", {
+        name: new RegExp(`Finding · ${findingId}`, "i"),
+      }),
+    );
+    expect(screen.getByTestId("location-probe")).toHaveTextContent(
+      `/findings?findingId=${findingId}`,
     );
   });
 
@@ -217,7 +315,9 @@ describe("OperatorShell", () => {
 
     await user.click(screen.getByRole("button", { name: /Jump to/i }));
     await user.type(screen.getByLabelText(/Filter actions/i), "zzzz-none");
-    expect(screen.getByText(/No matching actions/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/No matching agents, findings, or actions/i),
+    ).toBeInTheDocument();
 
     await user.clear(screen.getByLabelText(/Filter actions/i));
     await user.type(screen.getByLabelText(/Filter actions/i), "Open churn");

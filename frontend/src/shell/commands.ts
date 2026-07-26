@@ -1,12 +1,14 @@
 /**
- * Narrow operator jump/filter commands for the app shell.
+ * Narrow operator jump/filter/lookup commands for the app shell.
  *
- * Explicit set only — not a plugin registry or search platform.
- * Findings actions always resolve to URL paths via findingsPath().
+ * Explicit set + deterministic entity lookup — not a search platform.
+ * Findings filter actions resolve via findingsPath(); lookups use concrete URLs.
  */
 
 import type { OperatorSession } from "../auth/session";
 import type { SharedFindingView } from "../api/findings";
+import type { AgentInventoryItem } from "../agents/types";
+import { freshnessLabel } from "../agents/types";
 import {
   loadSavedViews,
   sanitizeSavedFilters,
@@ -20,7 +22,10 @@ import {
 } from "../findings/types";
 import { HEARTBEAT_FRESHNESS_VALUES } from "../routing/agentsUrlState";
 import { agentsPath, findingsPath } from "../routing/crossLinks";
-import { freshnessLabel } from "../agents/types";
+import {
+  buildEntityLookupResults,
+  type LookupEntity,
+} from "./entityLookup";
 
 export type OperatorCommand =
   | {
@@ -45,6 +50,14 @@ export type OperatorCommand =
       filters: FindingsFilters;
       viewId: string;
       scope: "local" | "shared";
+    }
+  | {
+      id: string;
+      kind: "lookup";
+      entity: LookupEntity;
+      label: string;
+      keywords: readonly string[];
+      to: string;
     };
 
 const NAV_COMMANDS: readonly OperatorCommand[] = [
@@ -141,6 +154,7 @@ export function buildOperatorCommands(opts: {
   session: OperatorSession;
   storage?: StorageLike;
   sharedViews?: readonly SharedFindingView[];
+  agents?: readonly AgentInventoryItem[];
 }): OperatorCommand[] {
   const local = loadSavedViews(opts.session, opts.storage ?? localStorage);
   return [
@@ -152,6 +166,33 @@ export function buildOperatorCommands(opts: {
     ...sharedViewCommands(opts.sharedViews ?? []),
     ...localViewCommands(local),
   ];
+}
+
+/**
+ * Merge entity lookup hits (ranked) ahead of static command substring matches.
+ * Lookup requires a non-empty query; empty query keeps the static catalog.
+ */
+export function resolveJumpMatches(opts: {
+  commands: readonly OperatorCommand[];
+  query: string;
+  agents?: readonly AgentInventoryItem[];
+}): OperatorCommand[] {
+  const lookups = buildEntityLookupResults(
+    opts.query,
+    opts.agents ?? [],
+  ).map(
+    (hit): OperatorCommand => ({
+      id: hit.id,
+      kind: "lookup",
+      entity: hit.entity,
+      label: hit.label,
+      keywords: [hit.entity, hit.label],
+      to: hit.to,
+    }),
+  );
+  const staticMatches = filterOperatorCommands(opts.commands, opts.query);
+  const lookupIds = new Set(lookups.map((c) => c.id));
+  return [...lookups, ...staticMatches.filter((c) => !lookupIds.has(c.id))];
 }
 
 /** Case-insensitive substring match over label + keywords. Not fuzzy search. */
@@ -171,10 +212,23 @@ export function filterOperatorCommands(
   });
 }
 
-/** Resolve a command to a navigable path. Findings actions never carry findingId. */
+/** Resolve a command to a navigable path. */
 export function commandTargetPath(command: OperatorCommand): string {
-  if (command.kind === "nav") {
+  if (command.kind === "nav" || command.kind === "lookup") {
     return command.to;
   }
   return findingsPath(command.filters);
+}
+
+export function commandKindLabel(command: OperatorCommand): string {
+  switch (command.kind) {
+    case "nav":
+      return "Navigate";
+    case "saved-view":
+      return command.scope === "shared" ? "Shared view" : "Local view";
+    case "lookup":
+      return command.entity === "agent" ? "Agent" : "Finding";
+    case "findings-filter":
+      return "Filter";
+  }
 }

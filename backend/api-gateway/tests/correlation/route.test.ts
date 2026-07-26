@@ -56,6 +56,15 @@ function stubCorrelation(
       recentChangedCount: 0,
       activeSuppressionCount: 0,
     }),
+    attention: async () => ({
+      generatedAt: new Date("2026-03-01T12:00:00.000Z"),
+      since: new Date("2026-02-28T12:00:00.000Z"),
+      maxLookbackHours: 24,
+      openCount: 0,
+      activeSuppressionCount: 0,
+      items: [],
+      truncated: false,
+    }),
     ...overrides,
   };
 }
@@ -250,6 +259,83 @@ describe("GET /v1/findings/dashboard", () => {
         });
         assert.equal(body.data.recentCreatedCount, 3);
         assert.equal(body.data.activeSuppressionCount, 1);
+      },
+    );
+  });
+});
+
+describe("GET /v1/findings/attention", () => {
+  it("rejects agent principals", async () => {
+    await withServer(
+      { correlationService: stubCorrelation() },
+      async (server) => {
+        const res = await fetch(`${server.url}/v1/findings/attention`, {
+          headers: tenantHeaders({ "x-agent-id": AGENT_ID }),
+        });
+        assert.equal(res.status, 403);
+        const body = await res.json();
+        assert.equal(body.error.code, "FINDINGS_REJECTED");
+      },
+    );
+  });
+
+  it("rejects bad since and returns operator digest items", async () => {
+    const generatedAt = new Date("2026-03-01T12:00:00.000Z");
+    const since = new Date("2026-03-01T10:00:00.000Z");
+    await withServer(
+      {
+        correlationService: stubCorrelation({
+          attention: async (tenantId, requestedSince) => {
+            assert.equal(tenantId, TENANT_ID);
+            assert.equal(
+              requestedSince?.toISOString(),
+              "2026-03-01T10:00:00.000Z",
+            );
+            return {
+              generatedAt,
+              since,
+              maxLookbackHours: 24,
+              openCount: 2,
+              activeSuppressionCount: 1,
+              truncated: false,
+              items: [
+                {
+                  kind: "finding.created",
+                  findingId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+                  title: "Agent lifecycle churn",
+                  status: "open",
+                  ruleId: "agent.lifecycle_churn",
+                  agentId: AGENT_ID,
+                  at: new Date("2026-03-01T11:00:00.000Z"),
+                },
+              ],
+            };
+          },
+        }),
+      },
+      async (server) => {
+        const bad = await fetch(
+          `${server.url}/v1/findings/attention?since=not-iso`,
+          { headers: tenantHeaders() },
+        );
+        assert.equal(bad.status, 400);
+
+        const res = await fetch(
+          `${server.url}/v1/findings/attention?since=2026-03-01T10:00:00.000Z`,
+          { headers: tenantHeaders() },
+        );
+        assert.equal(res.status, 200);
+        const body = await res.json();
+        assert.equal(body.ok, true);
+        assert.equal(body.data.generatedAt, generatedAt.toISOString());
+        assert.equal(body.data.since, since.toISOString());
+        assert.equal(body.data.openCount, 2);
+        assert.equal(body.data.items.length, 1);
+        assert.equal(body.data.items[0].kind, "finding.created");
+        assert.equal(
+          body.data.items[0].findingId,
+          "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        );
       },
     );
   });

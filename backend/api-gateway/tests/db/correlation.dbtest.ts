@@ -274,6 +274,15 @@ describe("post-ingest correlation evaluation", () => {
           recentChangedCount: 0,
           activeSuppressionCount: 0,
         }),
+        attention: async () => ({
+          generatedAt: new Date(),
+          since: new Date(),
+          maxLookbackHours: 24,
+          openCount: 0,
+          activeSuppressionCount: 0,
+          items: [],
+          truncated: false,
+        }),
       },
     });
 
@@ -729,5 +738,59 @@ describe("findings dashboard read-model", () => {
     assert.equal(dashboard.countsByStatus.open, 1);
     assert.equal(dashboard.recentCreatedCount, 0);
     assert.equal(dashboard.recentChangedCount, 0);
+  });
+});
+
+describe("findings attention digest (real database)", () => {
+  it("lists created and status-changed items and isolates tenants", async () => {
+    const findings = createCorrelationFindingsRepository(db.app);
+    const correlation = correlationFor(fixedNow("2026-03-01T12:00:00.000Z"));
+
+    await findings.insertFindingIgnoreDup(tenantA, {
+      agentId: agentA,
+      ruleId: "agent.lifecycle_churn",
+      title: "Agent lifecycle churn",
+      severity: "medium",
+      evidence: {},
+      windowStart: new Date("2026-03-01T11:50:00.000Z"),
+      windowEnd: new Date("2026-03-01T12:00:00.000Z"),
+      windowBucket: new Date("2026-03-01T11:50:00.000Z"),
+    });
+    await findings.insertFindingIgnoreDup(tenantB, {
+      agentId: agentB,
+      ruleId: "agent.lifecycle_churn",
+      title: "Agent lifecycle churn",
+      severity: "medium",
+      evidence: {},
+      windowStart: new Date("2026-03-01T11:50:00.000Z"),
+      windowEnd: new Date("2026-03-01T12:00:00.000Z"),
+      windowBucket: new Date("2026-03-01T11:50:00.000Z"),
+    });
+
+    const listed = await findings.listFindings(tenantA, {
+      limit: 10,
+      offset: 0,
+    });
+    assert.equal(listed.length, 1);
+    await correlation.updateStatus(tenantA, listed[0].id, "acknowledged", {});
+
+    const digest = await correlation.attention(
+      tenantA,
+      new Date("2026-03-01T00:00:00.000Z"),
+    );
+    assert.equal(digest.openCount, 0);
+    assert.ok(digest.items.some((i) => i.kind === "finding.created"));
+    assert.ok(digest.items.some((i) => i.kind === "finding.status_changed"));
+    assert.ok(
+      digest.items.every((i) => i.findingId === listed[0].id),
+    );
+
+    const other = await correlation.attention(
+      tenantB,
+      new Date("2026-03-01T00:00:00.000Z"),
+    );
+    assert.equal(other.openCount, 1);
+    assert.ok(other.items.every((i) => i.kind === "finding.created"));
+    assert.ok(other.items.every((i) => i.findingId !== listed[0].id));
   });
 });

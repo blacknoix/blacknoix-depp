@@ -60,6 +60,22 @@ function stubApis() {
       if (url.includes("/v1/findings/suppressions")) {
         return jsonOk({ suppressions: [] });
       }
+      if (url.includes("/v1/telemetry/events")) {
+        return jsonOk({
+          events: [],
+          summary: {
+            agentId: AGENT_ID,
+            lastSeenAt: null,
+            lastHeartbeatAt: null,
+            countsByEventType: {},
+            totalInWindow: 0,
+          },
+          page: { limit: 20, offset: 0, returned: 0 },
+        });
+      }
+      if (url.includes("/v1/findings/views")) {
+        return jsonOk({ views: [] });
+      }
       if (url.includes("/v1/findings?")) {
         return jsonOk({
           findings: [

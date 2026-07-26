@@ -1,5 +1,6 @@
 import { type NextFunction, type Request, type Response, Router } from "express";
 
+import { parseAttentionSinceQuery } from "../correlation/attention";
 import {
   parseFindingsQueryV1,
   parsePatchFindingStatusBody,
@@ -9,6 +10,14 @@ import type { CorrelationService } from "../correlation/service";
 import type { FindingSuppressionRow } from "../correlation/suppression-repository";
 import { parseSuppressionWindow } from "../correlation/suppression";
 import type { CorrelationRuleId } from "../correlation/rules";
+import {
+  parseCreateSharedFindingViewBody,
+  SHARED_VIEWS_MAX_PER_TENANT,
+} from "../findings-views/contract";
+import type {
+  FindingSharedViewRow,
+  FindingSharedViewsRepository,
+} from "../findings-views/repository";
 import { AppError } from "../middleware/error-handler";
 import { requirePrincipal } from "../middleware/tenant-context";
 
@@ -18,6 +27,12 @@ export interface FindingsRouterOptions {
    * fail closed rather than returning unscoped data.
    */
   correlationService?: CorrelationService;
+
+  /**
+   * Tenant-scoped shared Findings views (operator-only). Omitted → views
+   * routes fail closed.
+   */
+  sharedViews?: FindingSharedViewsRepository;
 }
 
 const UUID =
@@ -53,6 +68,28 @@ function serializeSuppression(row: FindingSuppressionRow) {
     clearedAt: row.clearedAt ? row.clearedAt.toISOString() : null,
     clearedByUserId: row.clearedByUserId,
   };
+}
+
+function serializeSharedView(row: FindingSharedViewRow) {
+  return {
+    id: row.id,
+    name: row.name,
+    filters: row.filters,
+    createdAt: row.createdAt.toISOString(),
+    createdByUserId: row.createdByUserId,
+  };
+}
+
+function requireOperatorPrincipal(req: Request) {
+  const principal = requirePrincipal(req);
+  if (principal.agentId) {
+    throw new AppError(
+      "FINDINGS_REJECTED",
+      403,
+      "Shared views require an operator principal",
+    );
+  }
+  return principal;
 }
 
 /**
@@ -147,6 +184,63 @@ export function createFindingsRouter(
             recentCreatedCount: dashboard.recentCreatedCount,
             recentChangedCount: dashboard.recentChangedCount,
             activeSuppressionCount: dashboard.activeSuppressionCount,
+          },
+          requestId: req.requestId,
+        });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  /**
+   * GET /v1/findings/attention — operator pull-based attention digest.
+   * Optional `since` (ISO). Max lookback 24h. Agents rejected.
+   * Not a notification inbox or live stream.
+   */
+  router.get(
+    "/attention",
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const principal = requirePrincipal(req);
+        const service = requireCorrelationService(options);
+
+        if (principal.agentId) {
+          throw new AppError(
+            "FINDINGS_REJECTED",
+            403,
+            "Findings attention requires an operator principal",
+          );
+        }
+
+        const parsed = parseAttentionSinceQuery(req.query);
+        if (!parsed.ok) {
+          throw new AppError("FINDINGS_INVALID", 400, parsed.message);
+        }
+
+        const digest = await service.attention(
+          principal.tenantId,
+          parsed.since,
+        );
+
+        res.status(200).json({
+          ok: true,
+          data: {
+            generatedAt: digest.generatedAt.toISOString(),
+            since: digest.since.toISOString(),
+            maxLookbackHours: digest.maxLookbackHours,
+            openCount: digest.openCount,
+            activeSuppressionCount: digest.activeSuppressionCount,
+            truncated: digest.truncated,
+            items: digest.items.map((item) => ({
+              kind: item.kind,
+              findingId: item.findingId,
+              title: item.title,
+              status: item.status,
+              ruleId: item.ruleId,
+              agentId: item.agentId,
+              at: item.at.toISOString(),
+            })),
           },
           requestId: req.requestId,
         });
@@ -331,6 +425,106 @@ export function createFindingsRouter(
   );
 
   /**
+   * GET /v1/findings/views — list tenant shared Findings views (operator).
+   */
+  router.get(
+    "/views",
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const principal = requireOperatorPrincipal(req);
+        const repo = requireSharedViews(options);
+        const views = await repo.list(principal.tenantId);
+        res.status(200).json({
+          ok: true,
+          data: { views: views.map(serializeSharedView) },
+          requestId: req.requestId,
+        });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  /**
+   * POST /v1/findings/views — create a shared Findings view (operator).
+   */
+  router.post(
+    "/views",
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const principal = requireOperatorPrincipal(req);
+        const repo = requireSharedViews(options);
+        const parsed = parseCreateSharedFindingViewBody(req.body);
+        if (!parsed.ok) {
+          throw new AppError("FINDINGS_INVALID", 400, parsed.message);
+        }
+
+        const outcome = await repo.insert(principal.tenantId, {
+          name: parsed.input.name,
+          filters: parsed.input.filters,
+          createdByUserId: principal.userId ?? null,
+        });
+
+        if (!outcome.ok) {
+          if (outcome.reason === "limit") {
+            throw new AppError(
+              "FINDINGS_CONFLICT",
+              409,
+              `At most ${SHARED_VIEWS_MAX_PER_TENANT} shared views are allowed`,
+            );
+          }
+          throw new AppError(
+            "FINDINGS_CONFLICT",
+            409,
+            "A shared view with this name already exists",
+          );
+        }
+
+        res.status(201).json({
+          ok: true,
+          data: { view: serializeSharedView(outcome.view) },
+          requestId: req.requestId,
+        });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  /**
+   * DELETE /v1/findings/views/:id — delete a shared Findings view (operator).
+   */
+  router.delete(
+    "/views/:id",
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const principal = requireOperatorPrincipal(req);
+        const repo = requireSharedViews(options);
+        const id = typeof req.params.id === "string" ? req.params.id : "";
+        if (!UUID.test(id)) {
+          throw new AppError("FINDINGS_NOT_FOUND", 404, "Shared view not found");
+        }
+
+        const deleted = await repo.deleteById(
+          principal.tenantId,
+          id.toLowerCase(),
+        );
+        if (!deleted) {
+          throw new AppError("FINDINGS_NOT_FOUND", 404, "Shared view not found");
+        }
+
+        res.status(200).json({
+          ok: true,
+          data: { view: serializeSharedView(deleted) },
+          requestId: req.requestId,
+        });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  /**
    * PATCH /v1/findings/:id — operator status triage.
    * Agent principals rejected. Case management / notes deferred.
    */
@@ -406,6 +600,19 @@ function requireCorrelationService(
     );
   }
   return options.correlationService;
+}
+
+function requireSharedViews(
+  options: FindingsRouterOptions,
+): FindingSharedViewsRepository {
+  if (!options.sharedViews) {
+    throw new AppError(
+      "FINDINGS_UNAVAILABLE",
+      503,
+      "Shared findings views are not available",
+    );
+  }
+  return options.sharedViews;
 }
 
 type ParseEvaluateSilenceResult =

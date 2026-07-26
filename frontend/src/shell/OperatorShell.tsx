@@ -1,6 +1,8 @@
 import { NavLink, Outlet } from "react-router-dom";
 
 import type { OperatorSession } from "../auth/session";
+import { AttentionPanel } from "./AttentionPanel";
+import { CommandBar } from "./CommandBar";
 import { OPERATOR_NAV } from "./nav";
 
 interface Props {
@@ -55,17 +57,21 @@ export function OperatorShell({ session, onSignOut }: Props) {
 
       <div className="shell-main">
         <header className="shell-header">
-          <div className="shell-session" aria-label="Session context">
-            <span className="muted tiny">Signed in</span>
-            <span className="mono tiny">{formatSession(session)}</span>
+          <CommandBar session={session} />
+          <div className="shell-header-end">
+            <AttentionPanel session={session} />
+            <div className="shell-session" aria-label="Session context">
+              <span className="muted tiny">Signed in</span>
+              <span className="mono tiny">{formatSession(session)}</span>
+            </div>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={onSignOut}
+            >
+              Sign out
+            </button>
           </div>
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={onSignOut}
-          >
-            Sign out
-          </button>
         </header>
 
         <main className="shell-content">

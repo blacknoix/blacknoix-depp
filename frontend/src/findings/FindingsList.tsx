@@ -6,6 +6,7 @@ import {
   type FindingStatus,
   type FindingsFilters,
 } from "./types";
+import { hasActiveFilters } from "../routing/findingsUrlState";
 
 interface Props {
   findings: Finding[];
@@ -24,78 +25,89 @@ export function FindingsList({
   onSelect,
   disabled,
 }: Props) {
+  const active = hasActiveFilters(filters);
+
   return (
     <section className="panel list-panel" aria-label="Findings list">
       <header className="panel-header">
         <h2>Findings</h2>
-        <div className="filters">
-          {filters.agentId ? (
-            <div className="agent-filter-chip">
-              <span className="muted tiny">Agent</span>
-              <span className="mono tiny">{filters.agentId}</span>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                disabled={disabled}
-                onClick={() => {
-                  onFiltersChange({
-                    ...(filters.status ? { status: filters.status } : {}),
-                    ...(filters.ruleId ? { ruleId: filters.ruleId } : {}),
-                  });
-                }}
-              >
-                Clear
-              </button>
-            </div>
-          ) : null}
-          <label>
-            Status
-            <select
-              value={filters.status ?? ""}
-              disabled={disabled}
-              onChange={(e) => {
-                const value = e.target.value;
-                onFiltersChange({
-                  ...filters,
-                  status: value
-                    ? (value as FindingStatus)
-                    : undefined,
-                });
-              }}
-            >
-              <option value="">All</option>
-              {FINDING_STATUSES.map((status) => (
-                <option key={status} value={status}>
-                  {status}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Rule
-            <select
-              value={filters.ruleId ?? ""}
-              disabled={disabled}
-              onChange={(e) => {
-                const value = e.target.value;
-                onFiltersChange({
-                  ...filters,
-                  ruleId: value
-                    ? (value as CorrelationRuleId)
-                    : undefined,
-                });
-              }}
-            >
-              <option value="">All</option>
-              {CORRELATION_RULE_IDS.map((ruleId) => (
-                <option key={ruleId} value={ruleId}>
-                  {ruleId}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
       </header>
+
+      <div className="filter-bar" role="search" aria-label="Findings filters">
+        {filters.agentId ? (
+          <div className="agent-filter-chip">
+            <span className="muted tiny">Agent</span>
+            <span className="mono tiny">{filters.agentId}</span>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={disabled}
+              onClick={() => {
+                onFiltersChange({
+                  ...(filters.status ? { status: filters.status } : {}),
+                  ...(filters.ruleId ? { ruleId: filters.ruleId } : {}),
+                });
+              }}
+            >
+              Clear agent
+            </button>
+          </div>
+        ) : null}
+        <label>
+          Status
+          <select
+            value={filters.status ?? ""}
+            disabled={disabled}
+            aria-label="Status"
+            onChange={(e) => {
+              const value = e.target.value;
+              onFiltersChange({
+                ...filters,
+                status: value ? (value as FindingStatus) : undefined,
+              });
+            }}
+          >
+            <option value="">All</option>
+            {FINDING_STATUSES.map((status) => (
+              <option key={status} value={status}>
+                {status}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Rule
+          <select
+            value={filters.ruleId ?? ""}
+            disabled={disabled}
+            aria-label="Rule"
+            onChange={(e) => {
+              const value = e.target.value;
+              onFiltersChange({
+                ...filters,
+                ruleId: value ? (value as CorrelationRuleId) : undefined,
+              });
+            }}
+          >
+            <option value="">All</option>
+            {CORRELATION_RULE_IDS.map((ruleId) => (
+              <option key={ruleId} value={ruleId}>
+                {ruleId}
+              </option>
+            ))}
+          </select>
+        </label>
+        {active ? (
+          <button
+            type="button"
+            className="btn btn-secondary"
+            disabled={disabled}
+            onClick={() => onFiltersChange({})}
+          >
+            Clear filters
+          </button>
+        ) : null}
+      </div>
 
       {findings.length === 0 ? (
         <p className="empty" role="status">

@@ -97,8 +97,11 @@ export function AgentsConsoleView({ session }: ViewProps) {
         <AgentDetail
           agent={selected}
           relatedFindings={state.relatedFindings}
-          detailPhase={state.detail}
-          detailError={state.detailError}
+          findingsPhase={state.findingsPhase}
+          findingsError={state.findingsError}
+          recentActivity={state.recentActivity}
+          activityPhase={state.activityPhase}
+          activityError={state.activityError}
         />
       </div>
     </div>

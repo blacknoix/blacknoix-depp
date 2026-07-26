@@ -18,6 +18,7 @@ import { createTelemetryService } from "./telemetry/service";
 import { createCorrelationFindingsRepository } from "./correlation/repository";
 import { createFindingSuppressionsRepository } from "./correlation/suppression-repository";
 import { createCorrelationService } from "./correlation/service";
+import { createFindingSharedViewsRepository } from "./findings-views/repository";
 import { createUsersRepository } from "./users/repository";
 
 /**
@@ -47,6 +48,7 @@ const agents = db ? createAgentsRepository(db) : undefined;
 const telemetry = db ? createTelemetryRepository(db) : undefined;
 const findings = db ? createCorrelationFindingsRepository(db) : undefined;
 const suppressions = db ? createFindingSuppressionsRepository(db) : undefined;
+const sharedViews = db ? createFindingSharedViewsRepository(db) : undefined;
 const correlationService =
   telemetry && findings && suppressions
     ? createCorrelationService({ telemetry, findings, suppressions })
@@ -109,6 +111,7 @@ const app = createApp({
   telemetryBatchMaxEvents: env.telemetryBatchMaxEvents,
   agentsService,
   correlationService,
+  sharedViews,
 });
 
 const server = app.listen(env.port, () => {

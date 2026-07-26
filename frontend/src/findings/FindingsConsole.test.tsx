@@ -5,12 +5,13 @@ import { MemoryRouter } from "react-router-dom";
 
 import { SessionGate } from "../auth/SessionGate";
 import { FindingsConsoleView } from "./FindingsConsole";
-import type { Finding, FindingsDashboard, Suppression } from "./types";
+import type { Finding, FindingsDashboard, FindingsFilters, Suppression } from "./types";
 
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   sessionStorage.clear();
+  localStorage.clear();
 });
 
 const TENANT = "11111111-1111-4111-8111-111111111111";
@@ -38,7 +39,12 @@ const finding: Finding = {
   status: "open",
   statusChangedAt: null,
   statusChangedByUserId: null,
-  evidence: {},
+  evidence: {
+    threshold: 6,
+    totalInWindow: 8,
+    countsByEventType: { "agent.started": 4, "agent.stopped": 4 },
+    sampleEventIds: ["ffffffff-ffff-4fff-8fff-ffffffffffff"],
+  },
   windowStart: "2026-03-01T11:50:00.000Z",
   windowEnd: "2026-03-01T12:00:00.000Z",
   createdAt: "2026-03-01T12:00:00.000Z",
@@ -66,6 +72,9 @@ function mockConsoleApis(opts?: {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
 
+      if (url.includes("/v1/findings/views") && method === "GET") {
+        return jsonResponse({ views: [] });
+      }
       if (url.includes("/v1/findings/dashboard")) {
         return jsonResponse(dash);
       }
@@ -116,9 +125,21 @@ function mockConsoleApis(opts?: {
         const body = JSON.parse(String(init?.body ?? "{}")) as {
           status: Finding["status"];
         };
-        const updated = { ...findings[0], status: body.status };
-        findings[0] = updated;
-        return jsonResponse({ finding: updated });
+        const id = url.split("/").pop()!;
+        const idx = findings.findIndex((f) => f.id === id);
+        if (idx < 0) {
+          return {
+            ok: false,
+            status: 404,
+            json: async () => ({
+              ok: false,
+              error: { code: "FINDINGS_NOT_FOUND", message: "missing" },
+              requestId: "req-x",
+            }),
+          } as unknown as Response;
+        }
+        findings[idx] = { ...findings[idx], status: body.status };
+        return jsonResponse({ finding: findings[idx] });
       }
       if (url.includes("/v1/findings?")) {
         const parsed = new URL(url, "http://local.test");
@@ -204,8 +225,28 @@ describe("FindingsConsole", () => {
       screen.getByRole("button", { name: /Agent lifecycle churn/i }),
     );
     expect(
+      screen.getByRole("heading", { name: /What this means/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/10-minute window meet or exceed a count threshold of 6/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/8 \/ 6/i)).toBeInTheDocument();
+    expect(screen.getByText(/None active/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /Open agent/i }),
+    ).toHaveAttribute(
+      "href",
+      "/agents?agentId=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    );
+    expect(
+      screen.queryByText(/ffffffff-ffff-4fff-8fff-ffffffffffff/),
+    ).not.toBeInTheDocument();
+    expect(
       screen.getByRole("button", { name: /Mark acknowledged/i }),
     ).toBeInTheDocument();
+    expect(screen.getByText(/Finding 1 of 1/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Previous$/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Next$/i })).toBeDisabled();
 
     await user.click(screen.getByRole("button", { name: /Mark acknowledged/i }));
     await waitFor(() => {
@@ -213,6 +254,124 @@ describe("FindingsConsole", () => {
         1,
       );
     });
+  });
+
+  it("advances selection when a status change removes the finding from the filter", async () => {
+    const user = userEvent.setup();
+    const first: Finding = {
+      ...finding,
+      id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      title: "First open finding",
+    };
+    const second: Finding = {
+      ...finding,
+      id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      title: "Second open finding",
+      evidence: {},
+    };
+    mockConsoleApis({ findings: [first, second] });
+
+    render(
+      <MemoryRouter initialEntries={["/findings?status=open"]}>
+        <FindingsConsoleView
+          session={{ kind: "tenant", tenantId: TENANT }}
+        />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("First open finding")).toBeInTheDocument();
+    });
+    await user.click(
+      screen.getByRole("button", { name: /First open finding/i }),
+    );
+    expect(screen.getByText(/Finding 1 of 2/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Mark acknowledged/i }));
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Second open finding" }),
+      ).toBeInTheDocument();
+    });
+    expect(
+      screen.getByText(/advanced to the next finding/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Finding 1 of 1/i)).toBeInTheDocument();
+  });
+
+  it("supports previous/next navigation across the filtered list", async () => {
+    const user = userEvent.setup();
+    mockConsoleApis({
+      findings: [
+        { ...finding, id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", title: "Alpha" },
+        {
+          ...finding,
+          id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+          title: "Beta",
+          evidence: {},
+        },
+      ],
+    });
+
+    render(
+      <MemoryRouter>
+        <FindingsConsoleView
+          session={{ kind: "tenant", tenantId: TENANT }}
+        />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Alpha")).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: /Alpha/i }));
+    expect(screen.getByText(/Finding 1 of 2/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^Next$/i }));
+    expect(
+      screen.getByRole("heading", { name: "Beta" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Finding 2 of 2/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^Previous$/i }));
+    expect(
+      screen.getByRole("heading", { name: "Alpha" }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows active rule snooze context on the selected finding", async () => {
+    const user = userEvent.setup();
+    mockConsoleApis({
+      suppressions: [
+        {
+          id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+          ruleId: "agent.lifecycle_churn",
+          startsAt: "2020-01-01T00:00:00.000Z",
+          endsAt: "2099-01-01T00:00:00.000Z",
+          createdAt: "2020-01-01T00:00:00.000Z",
+          createdByUserId: null,
+          clearedAt: null,
+          clearedByUserId: null,
+        },
+      ],
+    });
+
+    render(
+      <MemoryRouter>
+        <FindingsConsoleView
+          session={{ kind: "tenant", tenantId: TENANT }}
+        />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Agent lifecycle churn")).toBeInTheDocument();
+    });
+    await user.click(
+      screen.getByRole("button", { name: /Agent lifecycle churn/i }),
+    );
+    expect(screen.getByText(/Active until/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/skips new findings for this rule/i),
+    ).toBeInTheDocument();
   });
 
   it("filters the list and supports snooze create/clear", async () => {
@@ -232,11 +391,16 @@ describe("FindingsConsole", () => {
       expect(screen.getByText("Agent lifecycle churn")).toBeInTheDocument();
     });
 
+    expect(
+      screen.getByRole("search", { name: /Findings filters/i }),
+    ).toBeInTheDocument();
+
     const statusFilter = screen.getByLabelText("Status");
     await user.selectOptions(statusFilter, "resolved");
     await waitFor(() => {
       expect(screen.getByText(/No findings match/i)).toBeInTheDocument();
     });
+    expect(screen.getByRole("button", { name: /Clear filters/i })).toBeInTheDocument();
 
     await user.selectOptions(statusFilter, "");
     await waitFor(() => {
@@ -254,6 +418,220 @@ describe("FindingsConsole", () => {
     await waitFor(() => {
       expect(screen.getByText(/No uncleared snoozes/i)).toBeInTheDocument();
     });
+  });
+
+  it("applies shareable status/rule URL filters and fails closed on invalid ones", async () => {
+    mockConsoleApis();
+
+    const { unmount } = render(
+      <MemoryRouter
+        initialEntries={[
+          "/findings?status=open&ruleId=agent.lifecycle_churn",
+        ]}
+      >
+        <FindingsConsoleView
+          session={{ kind: "tenant", tenantId: TENANT }}
+        />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Agent lifecycle churn")).toBeInTheDocument();
+    });
+    expect(screen.getByLabelText("Status")).toHaveValue("open");
+    expect(screen.getByLabelText("Rule")).toHaveValue("agent.lifecycle_churn");
+    unmount();
+
+    render(
+      <MemoryRouter initialEntries={["/findings?status=bogus&ruleId=nope"]}>
+        <FindingsConsoleView
+          session={{ kind: "tenant", tenantId: TENANT }}
+        />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Invalid status in the URL/i),
+      ).toBeInTheDocument();
+    });
+    expect(
+      screen.getByText(/Invalid rule id in the URL/i),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Status")).toHaveValue("");
+    expect(screen.getByLabelText("Rule")).toHaveValue("");
+  });
+
+  it("saves and applies a local filter view without persisting findingId", async () => {
+    const user = userEvent.setup();
+    mockConsoleApis();
+
+    render(
+      <MemoryRouter
+        initialEntries={[
+          "/findings?status=open&ruleId=agent.lifecycle_churn&findingId=dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        ]}
+      >
+        <FindingsConsoleView
+          session={{ kind: "tenant", tenantId: TENANT }}
+        />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: /Mark acknowledged/i }),
+      ).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByLabelText(/This browser only/i));
+    await user.type(screen.getByLabelText(/Saved view name/i), "Open churn");
+    await user.click(
+      screen.getByRole("button", { name: /Save current filters/i }),
+    );
+    await waitFor(() => {
+      expect(screen.getByText(/Saved locally “Open churn”/i)).toBeInTheDocument();
+    });
+
+    const stored = localStorage.getItem(
+      `depp.findings.savedViews.v1.tenant.${TENANT}`,
+    );
+    expect(stored).toBeTruthy();
+    expect(stored).not.toMatch(/findingId/);
+
+    await user.click(screen.getByRole("button", { name: /Clear filters/i }));
+    await waitFor(() => {
+      expect(screen.getByLabelText("Status")).toHaveValue("");
+    });
+
+    await user.click(screen.getByRole("button", { name: /^Open churn$/i }));
+    await waitFor(() => {
+      expect(screen.getByLabelText("Status")).toHaveValue("open");
+    });
+    expect(screen.getByLabelText("Rule")).toHaveValue("agent.lifecycle_churn");
+    expect(screen.getByText(/Applied local “Open churn”/i)).toBeInTheDocument();
+  });
+
+  it("creates and applies a shared tenant view through the URL", async () => {
+    const user = userEvent.setup();
+    const shared: Array<{
+      id: string;
+      name: string;
+      filters: FindingsFilters;
+      createdAt: string;
+      createdByUserId: string | null;
+    }> = [];
+
+    const base = mockConsoleApis();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (url.includes("/v1/findings/views") && method === "GET") {
+          return jsonResponse({ views: [...shared] });
+        }
+        if (url.includes("/v1/findings/views") && method === "POST") {
+          const body = JSON.parse(String(init?.body ?? "{}")) as {
+            name: string;
+            filters: FindingsFilters;
+          };
+          const created = {
+            id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            name: body.name,
+            filters: body.filters,
+            createdAt: "2026-03-01T12:00:00.000Z",
+            createdByUserId: null,
+          };
+          shared.push(created);
+          return jsonResponse({ view: created }, 201);
+        }
+        return base(input, init);
+      }),
+    );
+
+    render(
+      <MemoryRouter initialEntries={["/findings?status=open"]}>
+        <FindingsConsoleView
+          session={{ kind: "tenant", tenantId: TENANT }}
+        />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Agent lifecycle churn")).toBeInTheDocument();
+    });
+
+    await user.type(screen.getByLabelText(/Saved view name/i), "Tenant open");
+    await user.click(
+      screen.getByRole("button", { name: /Save current filters/i }),
+    );
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Shared “Tenant open” with this tenant/i),
+      ).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: /Clear filters/i }));
+    await waitFor(() => {
+      expect(screen.getByLabelText("Status")).toHaveValue("");
+    });
+
+    await user.click(screen.getByRole("button", { name: /^Tenant open$/i }));
+    await waitFor(() => {
+      expect(screen.getByLabelText("Status")).toHaveValue("open");
+    });
+    expect(
+      screen.getByText(/Applied shared “Tenant open”/i),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps obsolete shared views visible but refuses unsafe apply", async () => {
+    const user = userEvent.setup();
+    const base = mockConsoleApis();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (url.includes("/v1/findings/views") && method === "GET") {
+          return jsonResponse({
+            views: [
+              {
+                id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+                name: "Legacy rule",
+                filters: { ruleId: "gone.rule" },
+                createdAt: "2026-03-01T12:00:00.000Z",
+                createdByUserId: null,
+              },
+            ],
+          });
+        }
+        return base(input, init);
+      }),
+    );
+
+    render(
+      <MemoryRouter>
+        <FindingsConsoleView
+          session={{ kind: "tenant", tenantId: TENANT }}
+        />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: /^Legacy rule$/i }),
+      ).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: /^Legacy rule$/i }));
+    await waitFor(() => {
+      expect(
+        screen.getByText(/obsolete or invalid filters/i),
+      ).toBeInTheDocument();
+    });
+    expect(screen.getByLabelText("Rule")).toHaveValue("");
   });
 
   it("shows a load error banner when the API fails", async () => {
@@ -279,7 +657,10 @@ describe("FindingsConsole", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByRole("alert")).toHaveTextContent(/FINDINGS_UNAVAILABLE/);
+      const banners = screen.getAllByRole("alert");
+      expect(
+        banners.some((el) => /FINDINGS_UNAVAILABLE/.test(el.textContent ?? "")),
+      ).toBe(true);
     });
   });
 });

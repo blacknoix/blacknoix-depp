@@ -23,6 +23,7 @@ import { createFindingsRouter } from "./routes/findings";
 import type { TenantLookup } from "./tenants/repository";
 import type { TelemetryService } from "./telemetry/service";
 import type { CorrelationService } from "./correlation/service";
+import type { FindingSharedViewsRepository } from "./findings-views/repository";
 
 /**
  * Maximum accepted JSON request body.
@@ -99,6 +100,12 @@ export interface AppOptions {
    * wires it when a database (and correlation) is configured.
    */
   correlationService?: CorrelationService;
+
+  /**
+   * Backs GET/POST/DELETE /v1/findings/views (tenant shared views). Omitted
+   * means those routes fail closed.
+   */
+  sharedViews?: FindingSharedViewsRepository;
 }
 
 export function createApp(options: AppOptions = {}) {
@@ -174,6 +181,7 @@ export function createApp(options: AppOptions = {}) {
     requireTenant,
     createFindingsRouter({
       correlationService: options.correlationService,
+      sharedViews: options.sharedViews,
     }),
   );
 

@@ -1,13 +1,22 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useOutletContext, useSearchParams } from "react-router-dom";
 
 import type { OperatorSession } from "../auth/session";
-import { parseUuidQueryParam } from "../routing/crossLinks";
+import {
+  filtersEqual,
+  parseFindingsSearchParams,
+  serializeFindingsSearchParams,
+} from "../routing/findingsUrlState";
 import { FindingDetail } from "./FindingDetail";
 import { FindingsList } from "./FindingsList";
+import { SavedViewsBar } from "./SavedViewsBar";
 import { SnoozePanel } from "./SnoozePanel";
 import { SummaryStrip } from "./SummaryStrip";
-import type { FindingsFilters } from "./types";
+import {
+  adjacentFindingId,
+  selectionPosition,
+} from "./triage";
+import type { CorrelationRuleId, FindingStatus, FindingsFilters } from "./types";
 import { useFindingsConsole } from "./useFindingsConsole";
 
 export interface FindingsOutletContext {
@@ -20,7 +29,8 @@ interface ViewProps {
 
 /**
  * Findings page body. Product chrome lives in OperatorShell.
- * Cross-link params: ?agentId=&findingId= (URL is source of truth for those).
+ * URL is the source of truth for status/ruleId/agentId filters and findingId
+ * selection.
  */
 export function FindingsConsoleView({ session }: ViewProps) {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -34,95 +44,123 @@ export function FindingsConsoleView({ session }: ViewProps) {
     clearSnooze,
   } = useFindingsConsole(session);
 
-  const agentParam = parseUuidQueryParam(searchParams.get("agentId"));
-  const findingParam = parseUuidQueryParam(searchParams.get("findingId"));
+  const urlState = useMemo(
+    () => parseFindingsSearchParams(searchParams),
+    [searchParams],
+  );
 
   useEffect(() => {
-    const nextAgentId =
-      agentParam.ok && agentParam.present ? agentParam.id : undefined;
-    if (state.filters.agentId === nextAgentId) {
-      return;
+    if (!filtersEqual(state.filters, urlState.filters)) {
+      setFilters(urlState.filters);
     }
-    setFilters({
-      status: state.filters.status,
-      ruleId: state.filters.ruleId,
-      ...(nextAgentId ? { agentId: nextAgentId } : {}),
-    });
-  }, [
-    agentParam.ok,
-    agentParam.present,
-    agentParam.ok && agentParam.present ? agentParam.id : null,
-    setFilters,
-    state.filters.agentId,
-    state.filters.status,
-    state.filters.ruleId,
-  ]);
+  }, [urlState.filters, state.filters, setFilters]);
 
   useEffect(() => {
     if (state.load !== "ready") {
       return;
     }
-    if (!findingParam.ok || !findingParam.present) {
+    if (!urlState.findingId) {
       return;
     }
-    if (state.data.findings.some((f) => f.id === findingParam.id)) {
-      if (state.selectedId !== findingParam.id) {
-        selectFinding(findingParam.id);
+    if (state.data.findings.some((f) => f.id === urlState.findingId)) {
+      if (state.selectedId !== urlState.findingId) {
+        selectFinding(urlState.findingId);
       }
     }
   }, [
     state.load,
     state.data.findings,
     state.selectedId,
-    findingParam,
+    urlState.findingId,
     selectFinding,
   ]);
 
-  function writeCrossLinkParams(next: {
-    agentId?: string;
-    findingId?: string;
+  function writeUrl(next: {
+    filters: FindingsFilters;
+    findingId?: string | null;
   }) {
-    const params = new URLSearchParams();
-    if (next.agentId) {
-      params.set("agentId", next.agentId);
-    }
-    if (next.findingId) {
-      params.set("findingId", next.findingId);
-    }
-    setSearchParams(params, { replace: true });
+    setSearchParams(
+      serializeFindingsSearchParams({
+        filters: next.filters,
+        findingId: next.findingId,
+      }),
+      { replace: true },
+    );
   }
 
   function onFiltersChange(filters: FindingsFilters) {
-    setFilters(filters);
-    writeCrossLinkParams({
-      agentId: filters.agentId,
-      // Clearing filters drops finding focus — intentional.
-    });
+    // Filter changes drop selection — keep URL coherent with the list.
+    writeUrl({ filters, findingId: null });
   }
 
   function onSelect(id: string) {
     selectFinding(id);
-    writeCrossLinkParams({
-      agentId: state.filters.agentId,
-      findingId: id,
-    });
+    writeUrl({ filters: state.filters, findingId: id });
+  }
+
+  function onGoAdjacent(direction: -1 | 1) {
+    const nextId = adjacentFindingId(
+      state.data.findings,
+      state.selectedId,
+      direction,
+    );
+    if (!nextId) {
+      return;
+    }
+    onSelect(nextId);
+  }
+
+  async function onChangeStatus(id: string, status: FindingStatus) {
+    const nextId = await changeStatus(id, status);
+    writeUrl({ filters: state.filters, findingId: nextId });
+  }
+
+  async function onSnooze(ruleId: CorrelationRuleId, untilIso: string) {
+    const nextId = await snoozeRule(ruleId, untilIso);
+    writeUrl({ filters: state.filters, findingId: nextId });
+  }
+
+  async function onClearSnooze(id: string) {
+    const nextId = await clearSnooze(id);
+    writeUrl({ filters: state.filters, findingId: nextId });
   }
 
   const busy = state.load === "loading" || state.mutation === "pending";
+  const position = selectionPosition(state.data.findings, state.selectedId);
+  const canGoPrev = Boolean(
+    adjacentFindingId(state.data.findings, state.selectedId, -1),
+  );
+  const canGoNext = Boolean(
+    adjacentFindingId(state.data.findings, state.selectedId, 1),
+  );
 
-  const agentBanner = !agentParam.ok
-    ? "Invalid agent id in the URL — agent filter ignored."
-    : null;
-
-  const findingBanner =
-    findingParam.ok &&
-    findingParam.present &&
+  const filterBanners: string[] = [];
+  if (urlState.invalid.agentId) {
+    filterBanners.push("Invalid agent id in the URL — agent filter ignored.");
+  }
+  if (urlState.invalid.status) {
+    filterBanners.push("Invalid status in the URL — status filter ignored.");
+  }
+  if (urlState.invalid.ruleId) {
+    filterBanners.push("Invalid rule id in the URL — rule filter ignored.");
+  }
+  if (urlState.invalid.findingId) {
+    filterBanners.push("Invalid finding id in the URL — selection ignored.");
+  } else if (
+    urlState.findingId &&
     state.load === "ready" &&
-    !state.data.findings.some((f) => f.id === findingParam.id)
-      ? "Finding from the URL is not in the current filtered list."
-      : !findingParam.ok
-        ? "Invalid finding id in the URL — selection ignored."
-        : null;
+    state.mutation !== "pending" &&
+    !state.data.findings.some((f) => f.id === urlState.findingId) &&
+    // After triage advances/clears selection, URL is rewritten; only warn when
+    // the URL still points at a missing finding while local selection is empty
+    // or also mismatched (stale share link).
+    state.selectedId !== urlState.findingId &&
+    !state.triageNote
+  ) {
+    filterBanners.push(
+      "Finding from the URL is not in the current filtered list.",
+    );
+  }
 
   return (
     <div className="console">
@@ -130,6 +168,7 @@ export function FindingsConsoleView({ session }: ViewProps) {
         <h1>Findings</h1>
         <p className="muted">
           Triage correlation findings and manage time-bounded rule snoozes.
+          Filters are shareable via the URL.
         </p>
       </header>
 
@@ -145,17 +184,11 @@ export function FindingsConsoleView({ session }: ViewProps) {
         </p>
       ) : null}
 
-      {agentBanner ? (
-        <p className="banner error" role="alert">
-          {agentBanner}
+      {filterBanners.map((message) => (
+        <p key={message} className="banner error" role="alert">
+          {message}
         </p>
-      ) : null}
-
-      {findingBanner ? (
-        <p className="banner error" role="alert">
-          {findingBanner}
-        </p>
-      ) : null}
+      ))}
 
       {state.mutation === "pending" ? (
         <p className="banner" role="status">
@@ -172,6 +205,13 @@ export function FindingsConsoleView({ session }: ViewProps) {
 
       <SummaryStrip dashboard={state.data.dashboard} />
 
+      <SavedViewsBar
+        session={session}
+        filters={state.filters}
+        disabled={busy}
+        onApply={onFiltersChange}
+      />
+
       <div className="workspace">
         <FindingsList
           findings={state.data.findings}
@@ -183,18 +223,25 @@ export function FindingsConsoleView({ session }: ViewProps) {
         />
         <FindingDetail
           finding={selected}
+          suppressions={state.data.suppressions}
           mutationPending={state.mutation === "pending"}
           mutationError={state.mutationError}
-          onChangeStatus={changeStatus}
-          onSnooze={snoozeRule}
+          triageNote={state.triageNote}
+          position={position}
+          canGoPrev={canGoPrev}
+          canGoNext={canGoNext}
+          onChangeStatus={onChangeStatus}
+          onSnooze={onSnooze}
+          onGoPrev={() => onGoAdjacent(-1)}
+          onGoNext={() => onGoAdjacent(1)}
         />
       </div>
 
       <SnoozePanel
         suppressions={state.data.suppressions}
         mutationPending={state.mutation === "pending"}
-        onClear={clearSnooze}
-        onCreate={snoozeRule}
+        onClear={onClearSnooze}
+        onCreate={onSnooze}
       />
     </div>
   );

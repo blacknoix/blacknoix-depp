@@ -159,6 +159,21 @@ export interface FindingSuppressionsTable {
   cleared_by_user_id: string | null;
 }
 
+/**
+ * Tenant-owned shared Findings filter view. Operator product only.
+ * Filter columns are nullable; findingId is never stored.
+ */
+export interface FindingSharedViewsTable {
+  id: Generated<string>;
+  tenant_id: string;
+  name: string;
+  status: string | null;
+  rule_id: string | null;
+  agent_id: string | null;
+  created_at: Generated<Timestamp>;
+  created_by_user_id: string | null;
+}
+
 export interface Database {
   tenants: TenantsTable;
   agents: AgentsTable;
@@ -170,4 +185,5 @@ export interface Database {
   telemetry_events: TelemetryEventsTable;
   correlation_findings: CorrelationFindingsTable;
   finding_suppressions: FindingSuppressionsTable;
+  finding_shared_views: FindingSharedViewsTable;
 }

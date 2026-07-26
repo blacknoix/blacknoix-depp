@@ -152,11 +152,20 @@ function mockConsoleApis(opts?: {
         let list = [...findings];
         const status = parsed.searchParams.get("status");
         const ruleId = parsed.searchParams.get("ruleId");
+        const ownerScope = parsed.searchParams.get("ownerScope");
         if (status) {
           list = list.filter((f) => f.status === status);
         }
         if (ruleId) {
           list = list.filter((f) => f.ruleId === ruleId);
+        }
+        if (ownerScope === "none") {
+          list = list.filter((f) => f.ownerUserId === null);
+        }
+        if (ownerScope === "me") {
+          // Tests that need Mine must pass session.userId and set ownership.
+          const me = "22222222-2222-4222-8222-222222222222";
+          list = list.filter((f) => f.ownerUserId === me);
         }
         return jsonResponse({
           findings: list,
@@ -891,6 +900,117 @@ describe("FindingsConsole", () => {
       expect(screen.getByLabelText(/Current note/i)).toHaveValue(
         "Likely maintenance window",
       );
+    });
+  });
+
+  it("filters Unowned open queue and removes items after claim", async () => {
+    const user = userEvent.setup();
+    const USER = "22222222-2222-4222-8222-222222222222";
+    const other: Finding = {
+      ...finding,
+      id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      title: "Already claimed",
+      ownerUserId: USER,
+      status: "open",
+    };
+    const openUnowned: Finding = { ...finding, title: "Needs owner" };
+    const findings = [openUnowned, other];
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (url.includes("/v1/telemetry/events")) {
+          return jsonResponse({
+            events: [],
+            summary: {
+              agentId: finding.agentId,
+              lastSeenAt: null,
+              lastHeartbeatAt: null,
+              countsByEventType: {},
+              totalInWindow: 0,
+            },
+            page: { limit: 20, offset: 0, returned: 0 },
+          });
+        }
+        if (url.includes("/v1/findings/views") && method === "GET") {
+          return jsonResponse({ views: [] });
+        }
+        if (url.includes("/v1/findings/dashboard")) {
+          return jsonResponse(dashboard);
+        }
+        if (url.includes("/v1/findings/suppressions") && method === "GET") {
+          return jsonResponse({ suppressions: [] });
+        }
+        if (url.includes("/v1/findings/") && method === "PATCH") {
+          const body = JSON.parse(String(init?.body ?? "{}")) as {
+            claimOwner?: boolean;
+          };
+          if (body.claimOwner) {
+            findings[0] = {
+              ...findings[0],
+              ownerUserId: USER,
+              ownerChangedAt: new Date().toISOString(),
+              ownerChangedByUserId: USER,
+            };
+          }
+          return jsonResponse({ finding: findings[0] });
+        }
+        if (url.includes("/v1/findings?")) {
+          const parsed = new URL(url, "http://local.test");
+          let list = [...findings];
+          if (parsed.searchParams.get("ownerScope") === "none") {
+            list = list.filter((f) => f.ownerUserId === null);
+          }
+          if (parsed.searchParams.get("status")) {
+            list = list.filter(
+              (f) => f.status === parsed.searchParams.get("status"),
+            );
+          }
+          return jsonResponse({
+            findings: list,
+            page: { limit: 50, offset: 0, returned: list.length },
+          });
+        }
+        return {
+          ok: false,
+          status: 404,
+          json: async () => ({
+            ok: false,
+            error: { code: "NOT_FOUND", message: url },
+            requestId: "r",
+          }),
+        } as unknown as Response;
+      }),
+    );
+
+    render(
+      <MemoryRouter>
+        <FindingsConsoleView
+          session={{ kind: "tenant", tenantId: TENANT, userId: USER }}
+        />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Needs owner")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Already claimed")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /^Unowned open$/i }));
+    await waitFor(() => {
+      expect(screen.getByText(/Work queue: Unowned open/i)).toBeInTheDocument();
+    });
+    expect(screen.getByText("Needs owner")).toBeInTheDocument();
+    expect(screen.queryByText("Already claimed")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Needs owner/i }));
+    await user.click(screen.getByRole("button", { name: /^Claim$/i }));
+    await waitFor(() => {
+      expect(
+        screen.getByText(/No unowned open findings/i),
+      ).toBeInTheDocument();
     });
   });
 });

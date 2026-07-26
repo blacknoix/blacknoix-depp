@@ -1,7 +1,7 @@
 /**
  * Local saved views for Findings filters.
  *
- * Persists only status / ruleId / agentId — never findingId selection.
+ * Persists status / ruleId / agentId / ownerScope — never findingId selection.
  * Storage is browser-local and tenant-scoped (bearer uses a single bucket).
  * Tenant shared views live on the backend (`/v1/findings/views`) and coexist;
  * this module does not sync or migrate local views.
@@ -93,6 +93,12 @@ export function sanitizeSavedFilters(
       return null;
     }
     filters.agentId = record.agentId.trim().toLowerCase();
+  }
+  if ("ownerScope" in record && record.ownerScope !== undefined) {
+    if (record.ownerScope !== "me" && record.ownerScope !== "none") {
+      return null;
+    }
+    filters.ownerScope = record.ownerScope;
   }
 
   return filters;
@@ -217,6 +223,9 @@ export function createSavedView(input: {
     ...(input.filters.status ? { status: input.filters.status } : {}),
     ...(input.filters.ruleId ? { ruleId: input.filters.ruleId } : {}),
     ...(input.filters.agentId ? { agentId: input.filters.agentId } : {}),
+    ...(input.filters.ownerScope
+      ? { ownerScope: input.filters.ownerScope }
+      : {}),
   });
   if (!filters) {
     return null;
@@ -304,6 +313,11 @@ export function deleteSavedView(opts: {
 
 export function describeFilters(filters: FindingsFilters): string {
   const parts: string[] = [];
+  if (filters.ownerScope === "me") {
+    parts.push("queue=mine");
+  } else if (filters.ownerScope === "none") {
+    parts.push("queue=unowned");
+  }
   if (filters.status) {
     parts.push(`status=${filters.status}`);
   }

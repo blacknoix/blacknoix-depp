@@ -2,9 +2,9 @@
  * URL-carried Findings filter + selection state.
  *
  * Query model:
- *   /findings?status=&ruleId=&agentId=&findingId=
+ *   /findings?status=&ruleId=&agentId=&ownerScope=&findingId=
  *
- * - status / ruleId / agentId are list filters (shareable)
+ * - status / ruleId / agentId / ownerScope are list filters (shareable)
  * - findingId is selection within the current filtered list (not a filter)
  * - Invalid values fail closed: ignored for application + caller shows a banner
  * - Changing filters should drop findingId (caller responsibility)
@@ -19,7 +19,9 @@ import {
   type CorrelationRuleId,
   type FindingStatus,
   type FindingsFilters,
+  type FindingsOwnerScope,
 } from "../findings/types";
+import { isFindingsOwnerScope } from "../findings/queues";
 
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -33,6 +35,7 @@ export interface FindingsUrlState {
     findingId: boolean;
     status: boolean;
     ruleId: boolean;
+    ownerScope: boolean;
   };
 }
 
@@ -82,6 +85,19 @@ function parseRuleIdParam(
   return { ok: false };
 }
 
+function parseOwnerScopeParam(
+  raw: string | null,
+): { ok: true; value?: FindingsOwnerScope } | { ok: false } {
+  if (raw === null || raw.trim() === "") {
+    return { ok: true };
+  }
+  const value = raw.trim().toLowerCase();
+  if (isFindingsOwnerScope(value)) {
+    return { ok: true, value };
+  }
+  return { ok: false };
+}
+
 export function parseFindingsSearchParams(
   params: URLSearchParams,
 ): FindingsUrlState {
@@ -89,6 +105,7 @@ export function parseFindingsSearchParams(
   const finding = parseUuid(params.get("findingId"));
   const status = parseStatusParam(params.get("status"));
   const ruleId = parseRuleIdParam(params.get("ruleId"));
+  const ownerScope = parseOwnerScopeParam(params.get("ownerScope"));
 
   const filters: FindingsFilters = {};
   if (agent.ok && agent.present && agent.id) {
@@ -100,6 +117,9 @@ export function parseFindingsSearchParams(
   if (ruleId.ok && ruleId.value) {
     filters.ruleId = ruleId.value;
   }
+  if (ownerScope.ok && ownerScope.value) {
+    filters.ownerScope = ownerScope.value;
+  }
 
   return {
     filters,
@@ -109,6 +129,7 @@ export function parseFindingsSearchParams(
       findingId: !finding.ok,
       status: !status.ok,
       ruleId: !ruleId.ok,
+      ownerScope: !ownerScope.ok,
     },
   };
 }
@@ -126,6 +147,9 @@ export function serializeFindingsSearchParams(
   if (write.filters.agentId) {
     params.set("agentId", write.filters.agentId);
   }
+  if (write.filters.ownerScope) {
+    params.set("ownerScope", write.filters.ownerScope);
+  }
   if (write.findingId) {
     params.set("findingId", write.findingId);
   }
@@ -139,10 +163,13 @@ export function filtersEqual(
   return (
     a.agentId === b.agentId &&
     a.status === b.status &&
-    a.ruleId === b.ruleId
+    a.ruleId === b.ruleId &&
+    a.ownerScope === b.ownerScope
   );
 }
 
 export function hasActiveFilters(filters: FindingsFilters): boolean {
-  return Boolean(filters.agentId || filters.status || filters.ruleId);
+  return Boolean(
+    filters.agentId || filters.status || filters.ruleId || filters.ownerScope,
+  );
 }

@@ -116,17 +116,24 @@ Implemented:
   `findingId` kept coherent), plus minimal investigation intent: self-claim
   ownership (`claimOwner` / clear) and one current plain-text operator note
   (bounded, replace/clear) on `PATCH /v1/findings/:id`. Soft UUID audit fields;
-  operator-only; assign-to-others / threads / case entities deferred. Local
-  saved views persist status/ruleId/agentId
+  operator-only; assign-to-others / threads / case entities deferred. Work
+  queues: URL-backed `ownerScope=me|none` on `GET /v1/findings` (`me` requires
+  operator identity; raw `ownerUserId` query rejected) with Findings chips for
+  **Mine** and **Unowned open**; local saved views may persist `ownerScope`;
+  shared views omit it for now. Jump bar includes the two queue shortcuts.
+  Local
+  saved views persist status/ruleId/agentId/ownerScope
   only (never findingId) in tenant-scoped localStorage; shared tenant views use
-  operator-only `GET/POST/DELETE /v1/findings/views` (RLS). Apply writes the URL.
+  operator-only `GET/POST/DELETE /v1/findings/views` (RLS; status/ruleId/agentId).
+  Apply writes the URL.
   Jump bar lists both. Folders/favorites/rename deferred. Operator Attention
   digest: pull-based `GET /v1/findings/attention` (created + status-changed
   since a browser cursor, max 24h); shell popover deep-links into Findings URL
   context; Mark caught up is localStorage-only. Not live, not email/Slack, not
   an inbox platform. Triage/snooze actions
   unchanged in meaning. Charts, export, scheduled digests, full case management,
-  comments/threads, assignment queues, push notifications, rule DSL, malware, and remediation deferred.
+  comments/threads, assignment queues, queue balancing, SLA/escalations, push
+  notifications, rule DSL, malware, and remediation deferred.
 - Agent identity (ADR-0003 §5 minimal): register agent → hashed credential once;
   exchange for short-lived agent access JWT (`tid`+`aid`); revoke blocks exchange.
   Operator inventory: `GET /v1/agents` returns name/id/createdAt, last heartbeat,

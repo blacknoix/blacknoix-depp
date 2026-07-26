@@ -25,13 +25,14 @@ describe("parseFindingsSearchParams", () => {
       findingId: false,
       status: false,
       ruleId: false,
+      ownerScope: false,
     });
   });
 
   it("fails closed on malformed enums and ids", () => {
     const state = parseFindingsSearchParams(
       new URLSearchParams(
-        "status=nope&ruleId=not.a.rule&agentId=bad&findingId=also-bad",
+        "status=nope&ruleId=not.a.rule&agentId=bad&findingId=also-bad&ownerScope=everyone",
       ),
     );
     expect(state.filters).toEqual({});
@@ -41,6 +42,21 @@ describe("parseFindingsSearchParams", () => {
       findingId: true,
       status: true,
       ruleId: true,
+      ownerScope: true,
+    });
+  });
+
+  it("parses ownerScope work-queue filters", () => {
+    const mine = parseFindingsSearchParams(
+      new URLSearchParams("ownerScope=me"),
+    );
+    expect(mine.filters).toEqual({ ownerScope: "me" });
+    const unowned = parseFindingsSearchParams(
+      new URLSearchParams("ownerScope=none&status=open"),
+    );
+    expect(unowned.filters).toEqual({
+      ownerScope: "none",
+      status: "open",
     });
   });
 });
@@ -52,11 +68,12 @@ describe("serializeFindingsSearchParams", () => {
         status: "acknowledged",
         ruleId: "agent.heartbeat_burst",
         agentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        ownerScope: "me",
       },
       findingId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
     });
     expect(params.toString()).toBe(
-      "status=acknowledged&ruleId=agent.heartbeat_burst&agentId=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa&findingId=dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      "status=acknowledged&ruleId=agent.heartbeat_burst&agentId=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa&ownerScope=me&findingId=dddddddd-dddd-4ddd-8ddd-dddddddddddd",
     );
     expect(
       serializeFindingsSearchParams({ filters: {}, findingId: null }).toString(),
@@ -70,5 +87,9 @@ describe("filtersEqual / hasActiveFilters", () => {
     expect(filtersEqual({ status: "open" }, {})).toBe(false);
     expect(hasActiveFilters({})).toBe(false);
     expect(hasActiveFilters({ ruleId: "agent.lifecycle_churn" })).toBe(true);
+    expect(hasActiveFilters({ ownerScope: "none" })).toBe(true);
+    expect(filtersEqual({ ownerScope: "me" }, { ownerScope: "me" })).toBe(
+      true,
+    );
   });
 });

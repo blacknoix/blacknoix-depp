@@ -46,6 +46,9 @@ export interface ListFindingsQuery {
   agentId?: string;
   ruleId?: CorrelationRuleId;
   status?: FindingStatus;
+  /** When set with ownerUserId, filter to that owner (ownerScope=me). */
+  ownerScope?: "me" | "none";
+  ownerUserId?: string;
   limit: number;
   offset: number;
 }
@@ -259,6 +262,14 @@ export function createCorrelationFindingsRepository(
         }
         if (query.status) {
           listQuery = listQuery.where("status", "=", query.status);
+        }
+        if (query.ownerScope === "none") {
+          listQuery = listQuery.where("owner_user_id", "is", null);
+        } else if (query.ownerScope === "me") {
+          if (!query.ownerUserId) {
+            throw new Error("ownerScope=me requires ownerUserId");
+          }
+          listQuery = listQuery.where("owner_user_id", "=", query.ownerUserId);
         }
 
         const rows = await listQuery.execute();

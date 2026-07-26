@@ -20,6 +20,9 @@ export function buildFindingsListPath(filters: FindingsFilters): string {
   if (filters.ruleId) {
     params.set("ruleId", filters.ruleId);
   }
+  if (filters.ownerScope) {
+    params.set("ownerScope", filters.ownerScope);
+  }
   params.set("limit", "50");
   params.set("offset", "0");
   const qs = params.toString();

@@ -121,6 +121,7 @@ export function createFindingsRouter(
 
         const parsed = parseFindingsQueryV1(req.query, {
           principalAgentId: principal.agentId,
+          principalUserId: principal.userId,
         });
 
         if (!parsed.ok) {

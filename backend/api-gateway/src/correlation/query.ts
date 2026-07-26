@@ -21,6 +21,15 @@ export interface FindingsQueryV1 {
   agentId?: string;
   ruleId?: CorrelationRuleId;
   status?: FindingStatus;
+  /**
+   * Owner-aware list scope for operator work queues.
+   * - me: owner_user_id = principal.userId (requires identity)
+   * - none: owner_user_id IS NULL
+   * Arbitrary owner UUIDs are intentionally not accepted (assign-to-others deferred).
+   */
+  ownerScope?: "me" | "none";
+  /** Resolved owner UUID when ownerScope=me (set by parser from principal). */
+  ownerUserId?: string;
   limit: number;
   offset: number;
 }
@@ -35,6 +44,10 @@ export interface ParseFindingsQueryOptions {
    * Humans may omit agentId to list tenant-wide.
    */
   principalAgentId?: string;
+  /**
+   * Required when ownerScope=me. Soft operator identity from JWT / x-user-id.
+   */
+  principalUserId?: string;
 }
 
 function readSingle(value: unknown): string | undefined {
@@ -65,6 +78,12 @@ export function parseFindingsQueryV1(
       return {
         ok: false,
         message: "tenant identity must not be supplied in the query",
+      };
+    }
+    if (key === "ownerUserId" || key === "owner_user_id") {
+      return {
+        ok: false,
+        message: "ownerUserId must not be supplied; use ownerScope=me|none",
       };
     }
   }
@@ -101,6 +120,32 @@ export function parseFindingsQueryV1(
       return { ok: false, message: "status is not a valid finding status" };
     }
     status = statusRaw;
+  }
+
+  let ownerScope: "me" | "none" | undefined;
+  let ownerUserId: string | undefined;
+  const ownerScopeRaw = readSingle(params.ownerScope)?.trim().toLowerCase();
+  if (ownerScopeRaw !== undefined) {
+    if (options.principalAgentId) {
+      return {
+        ok: false,
+        message: "ownerScope requires an operator principal",
+      };
+    }
+    if (ownerScopeRaw !== "me" && ownerScopeRaw !== "none") {
+      return { ok: false, message: "ownerScope must be me or none" };
+    }
+    ownerScope = ownerScopeRaw;
+    if (ownerScope === "me") {
+      const principalUserId = options.principalUserId?.trim().toLowerCase();
+      if (!principalUserId || !UUID.test(principalUserId)) {
+        return {
+          ok: false,
+          message: "operator identity is required for ownerScope=me",
+        };
+      }
+      ownerUserId = principalUserId;
+    }
   }
 
   let limit = FINDINGS_QUERY_DEFAULT_LIMIT;
@@ -143,6 +188,8 @@ export function parseFindingsQueryV1(
       ...(agentId ? { agentId } : {}),
       ...(ruleId ? { ruleId } : {}),
       ...(status ? { status } : {}),
+      ...(ownerScope ? { ownerScope } : {}),
+      ...(ownerUserId ? { ownerUserId } : {}),
       limit,
       offset,
     },

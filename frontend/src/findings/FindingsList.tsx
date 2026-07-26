@@ -7,6 +7,13 @@ import {
   type FindingsFilters,
 } from "./types";
 import { hasActiveFilters } from "../routing/findingsUrlState";
+import {
+  activeFindingsQueue,
+  applyFindingsQueue,
+  clearFindingsQueue,
+  FINDINGS_QUEUES,
+  type FindingsQueueId,
+} from "./queues";
 
 interface Props {
   findings: Finding[];
@@ -15,6 +22,8 @@ interface Props {
   onFiltersChange: (filters: FindingsFilters) => void;
   onSelect: (id: string) => void;
   disabled?: boolean;
+  /** When false, Mine queue is disabled (no operator identity). */
+  canUseMineQueue?: boolean;
 }
 
 export function FindingsList({
@@ -24,14 +33,60 @@ export function FindingsList({
   onFiltersChange,
   onSelect,
   disabled,
+  canUseMineQueue = true,
 }: Props) {
   const active = hasActiveFilters(filters);
+  const activeQueue = activeFindingsQueue(filters);
+
+  function selectQueue(queueId: FindingsQueueId) {
+    if (activeQueue === queueId) {
+      onFiltersChange(clearFindingsQueue(filters));
+      return;
+    }
+    onFiltersChange(applyFindingsQueue(filters, queueId));
+  }
 
   return (
     <section className="panel list-panel" aria-label="Findings list">
       <header className="panel-header">
         <h2>Findings</h2>
       </header>
+
+      <div
+        className="queue-bar"
+        role="toolbar"
+        aria-label="Findings work queues"
+      >
+        {FINDINGS_QUEUES.map((queue) => {
+          const selected = activeQueue === queue.id;
+          const blocked =
+            queue.requiresOperatorIdentity && !canUseMineQueue;
+          return (
+            <button
+              key={queue.id}
+              type="button"
+              className={
+                selected ? "btn queue-chip selected" : "btn btn-secondary queue-chip"
+              }
+              disabled={disabled || blocked}
+              aria-pressed={selected}
+              title={
+                blocked
+                  ? "Operator user id required for Mine (set at session gate or use JWT)"
+                  : undefined
+              }
+              onClick={() => selectQueue(queue.id)}
+            >
+              {queue.label}
+            </button>
+          );
+        })}
+        {!canUseMineQueue ? (
+          <span className="muted tiny queue-hint">
+            Mine needs an operator user id
+          </span>
+        ) : null}
+      </div>
 
       <div className="filter-bar" role="search" aria-label="Findings filters">
         {filters.agentId ? (
@@ -46,6 +101,9 @@ export function FindingsList({
                 onFiltersChange({
                   ...(filters.status ? { status: filters.status } : {}),
                   ...(filters.ruleId ? { ruleId: filters.ruleId } : {}),
+                  ...(filters.ownerScope
+                    ? { ownerScope: filters.ownerScope }
+                    : {}),
                 });
               }}
             >
@@ -111,7 +169,11 @@ export function FindingsList({
 
       {findings.length === 0 ? (
         <p className="empty" role="status">
-          No findings match the current filters.
+          {activeQueue === "mine"
+            ? "Nothing assigned to you in this queue."
+            : activeQueue === "unowned_open"
+              ? "No unowned open findings."
+              : "No findings match the current filters."}
         </p>
       ) : (
         <ul className="finding-rows">
@@ -133,6 +195,11 @@ export function FindingsList({
                   </span>
                   <span className="finding-title">{finding.title}</span>
                   <span className="mono muted">{finding.ruleId}</span>
+                  {finding.ownerUserId ? (
+                    <span className="muted tiny">Owned</span>
+                  ) : (
+                    <span className="muted tiny">Unowned</span>
+                  )}
                   <span className="mono muted tiny">
                     {new Date(finding.createdAt).toLocaleString()}
                   </span>

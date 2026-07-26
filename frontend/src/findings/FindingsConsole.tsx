@@ -30,8 +30,8 @@ interface ViewProps {
 
 /**
  * Findings page body. Product chrome lives in OperatorShell.
- * URL is the source of truth for status/ruleId/agentId filters and findingId
- * selection.
+ * URL is the source of truth for status/ruleId/agentId/ownerScope filters and
+ * findingId selection.
  */
 export function FindingsConsoleView({ session }: ViewProps) {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -164,6 +164,11 @@ export function FindingsConsoleView({ session }: ViewProps) {
   if (urlState.invalid.ruleId) {
     filterBanners.push("Invalid rule id in the URL — rule filter ignored.");
   }
+  if (urlState.invalid.ownerScope) {
+    filterBanners.push(
+      "Invalid ownerScope in the URL — owner queue filter ignored.",
+    );
+  }
   if (urlState.invalid.findingId) {
     filterBanners.push("Invalid finding id in the URL — selection ignored.");
   } else if (
@@ -223,6 +228,21 @@ export function FindingsConsoleView({ session }: ViewProps) {
         </p>
       ) : null}
 
+      {state.filters.ownerScope === "me" ? (
+        <p className="banner" role="status">
+          Work queue: Mine
+          {session.kind === "tenant" && !sessionUserId
+            ? " — operator identity required; reconnect with a user UUID or JWT."
+            : ""}
+        </p>
+      ) : null}
+      {state.filters.ownerScope === "none" &&
+      state.filters.status === "open" ? (
+        <p className="banner" role="status">
+          Work queue: Unowned open
+        </p>
+      ) : null}
+
       <SummaryStrip dashboard={state.data.dashboard} />
 
       <SavedViewsBar
@@ -240,6 +260,9 @@ export function FindingsConsoleView({ session }: ViewProps) {
           onFiltersChange={onFiltersChange}
           onSelect={onSelect}
           disabled={busy}
+          canUseMineQueue={
+            session.kind === "bearer" || Boolean(sessionUserId)
+          }
         />
         <FindingDetail
           finding={selected}

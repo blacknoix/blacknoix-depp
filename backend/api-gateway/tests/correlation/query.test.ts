@@ -86,6 +86,41 @@ describe("parseFindingsQueryV1", () => {
 
     assert.equal(parseFindingsQueryV1({ status: "snoozed" }).ok, false);
   });
+
+  it("parses ownerScope work queues and rejects raw ownerUserId", () => {
+    const USER = "22222222-2222-4222-8222-222222222222";
+    const mine = parseFindingsQueryV1(
+      { ownerScope: "me" },
+      { principalUserId: USER },
+    );
+    assert.equal(mine.ok, true);
+    if (!mine.ok) return;
+    assert.equal(mine.query.ownerScope, "me");
+    assert.equal(mine.query.ownerUserId, USER);
+
+    assert.equal(
+      parseFindingsQueryV1({ ownerScope: "me" }).ok,
+      false,
+    );
+    assert.equal(
+      parseFindingsQueryV1(
+        { ownerScope: "me" },
+        { principalAgentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" },
+      ).ok,
+      false,
+    );
+
+    const none = parseFindingsQueryV1({ ownerScope: "none", status: "open" });
+    assert.equal(none.ok, true);
+    if (!none.ok) return;
+    assert.equal(none.query.ownerScope, "none");
+    assert.equal(none.query.status, "open");
+
+    assert.equal(
+      parseFindingsQueryV1({ ownerUserId: USER }).ok,
+      false,
+    );
+  });
 });
 
 describe("parsePatchFindingBody", () => {

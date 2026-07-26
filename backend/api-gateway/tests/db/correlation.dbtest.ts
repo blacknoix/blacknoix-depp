@@ -412,17 +412,18 @@ describe("heartbeat silence evaluation", () => {
 });
 
 describe("findings lifecycle triage", () => {
-  async function seedOpenFinding(): Promise<string> {
+  async function seedOpenFinding(windowBucket?: Date): Promise<string> {
     const findingsRepo = createCorrelationFindingsRepository(db.app);
+    const bucket = windowBucket ?? new Date("2026-03-01T12:00:00.000Z");
     const id = await findingsRepo.insertFindingIgnoreDup(tenantA, {
       agentId: agentA,
       ruleId: "agent.lifecycle_churn",
       title: "Agent lifecycle churn",
       severity: "medium",
       evidence: { totalInWindow: 6 },
-      windowStart: new Date("2026-03-01T12:00:00.000Z"),
-      windowEnd: new Date("2026-03-01T12:10:00.000Z"),
-      windowBucket: new Date("2026-03-01T12:00:00.000Z"),
+      windowStart: bucket,
+      windowEnd: new Date(bucket.getTime() + 10 * 60 * 1000),
+      windowBucket: bucket,
     });
     assert.ok(id);
     return id!;
@@ -533,6 +534,43 @@ describe("findings lifecycle triage", () => {
     if (!clear.ok) return;
     assert.equal(clear.finding.ownerUserId, null);
     assert.equal(clear.finding.operatorNote, null);
+  });
+
+  it("lists findings by ownerScope me and none", async () => {
+    const userId = "22222222-2222-4222-8222-222222222222";
+    const correlation = correlationFor();
+    const findingsRepo = createCorrelationFindingsRepository(db.app);
+
+    const unownedId = await seedOpenFinding();
+    const ownedId = await seedOpenFinding(new Date("2026-03-01T12:10:00.000Z"));
+    assert.ok(unownedId);
+    assert.ok(ownedId);
+
+    const claimed = await correlation.patchFinding(
+      tenantA,
+      ownedId!,
+      { claimOwner: true },
+      { userId },
+    );
+    assert.equal(claimed.ok, true);
+
+    const mine = await findingsRepo.listFindings(tenantA, {
+      ownerScope: "me",
+      ownerUserId: userId,
+      limit: 50,
+      offset: 0,
+    });
+    assert.equal(mine.length, 1);
+    assert.equal(mine[0].id, ownedId);
+
+    const unowned = await findingsRepo.listFindings(tenantA, {
+      ownerScope: "none",
+      status: "open",
+      limit: 50,
+      offset: 0,
+    });
+    assert.ok(unowned.some((f) => f.id === unownedId));
+    assert.ok(!unowned.some((f) => f.id === ownedId));
   });
 
   it("does not update another tenant's finding", async () => {

@@ -249,6 +249,22 @@ select {
   gap: 0.75rem;
 }
 
+.queue-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0 0 0.75rem;
+}
+
+.queue-chip.selected {
+  font-weight: 600;
+}
+
+.queue-hint {
+  margin-left: 0.25rem;
+}
+
 .filter-bar {
   display: flex;
   flex-wrap: wrap;

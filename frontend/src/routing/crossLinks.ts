@@ -2,7 +2,7 @@
  * Narrow URL-carried cross-link state between Agents and Findings.
  *
  * - /agents?freshness=&hasOpenFindings=&agentId=
- * - /findings?status=&ruleId=&agentId=&findingId=
+ * - /findings?status=&ruleId=&agentId=&ownerScope=&findingId=
  *
  * Invalid UUIDs / enums fail closed (ignored + surfaced). No global search /
  * deep-link framework — only these operator-workflow params.
@@ -64,6 +64,7 @@ export function findingsPath(
       ...(opts?.status ? { status: opts.status } : {}),
       ...(opts?.ruleId ? { ruleId: opts.ruleId } : {}),
       ...(opts?.agentId ? { agentId: opts.agentId } : {}),
+      ...(opts?.ownerScope ? { ownerScope: opts.ownerScope } : {}),
     },
     findingId: opts?.findingId,
   });

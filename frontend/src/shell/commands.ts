@@ -97,6 +97,23 @@ const RULE_COMMANDS: readonly OperatorCommand[] = CORRELATION_RULE_IDS.map(
   }),
 );
 
+const QUEUE_COMMANDS: readonly OperatorCommand[] = [
+  {
+    id: "filter.queue.mine",
+    kind: "findings-filter",
+    label: "Findings · queue Mine",
+    keywords: ["findings", "queue", "mine", "owner", "assigned"],
+    filters: { ownerScope: "me" },
+  },
+  {
+    id: "filter.queue.unowned_open",
+    kind: "findings-filter",
+    label: "Findings · queue Unowned open",
+    keywords: ["findings", "queue", "unowned", "open", "unassigned"],
+    filters: { ownerScope: "none", status: "open" },
+  },
+];
+
 const AGENT_FRESHNESS_COMMANDS: readonly OperatorCommand[] =
   HEARTBEAT_FRESHNESS_VALUES.map((freshness) => ({
     id: `agents.freshness.${freshness}`,
@@ -161,6 +178,7 @@ export function buildOperatorCommands(opts: {
     ...NAV_COMMANDS,
     ...STATUS_COMMANDS,
     ...RULE_COMMANDS,
+    ...QUEUE_COMMANDS,
     ...AGENT_FRESHNESS_COMMANDS,
     AGENT_OPEN_FINDINGS_COMMAND,
     ...sharedViewCommands(opts.sharedViews ?? []),

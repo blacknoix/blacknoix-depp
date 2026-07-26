@@ -59,10 +59,19 @@ export interface Suppression {
   clearedByUserId: string | null;
 }
 
+export type FindingsOwnerScope = "me" | "none";
+
+export const FINDINGS_OWNER_SCOPES: readonly FindingsOwnerScope[] = [
+  "me",
+  "none",
+] as const;
+
 export interface FindingsFilters {
   agentId?: string;
   status?: FindingStatus;
   ruleId?: CorrelationRuleId;
+  /** Operator work-queue owner scope (URL-backed). */
+  ownerScope?: FindingsOwnerScope;
 }
 
 /** Allowed next statuses from the backend lifecycle (same-status = noop). */

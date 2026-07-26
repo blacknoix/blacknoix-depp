@@ -1,5 +1,13 @@
 import { Link } from "react-router-dom";
+import { useMemo } from "react";
 
+import type { AgentRecentActivity } from "../agents/types";
+import { InvestigationTimeline } from "../investigation/InvestigationTimeline";
+import type { ActivityPhase } from "../investigation/useAgentRecentActivity";
+import {
+  composeInvestigationTimeline,
+  timelineSinceIso,
+} from "../investigation/timeline";
 import { agentsPath } from "../routing/crossLinks";
 import {
   ruleCatalogEntry,
@@ -27,6 +35,10 @@ interface Props {
   onSnooze: (ruleId: CorrelationRuleId, untilIso: string) => void;
   onGoPrev: () => void;
   onGoNext: () => void;
+  /** Sectional agent telemetry for the finding's agent (24h window). */
+  agentActivity: AgentRecentActivity | null;
+  agentActivityPhase: ActivityPhase;
+  agentActivityError: string | null;
 }
 
 const SNOOZE_PRESETS_MS = [
@@ -66,7 +78,25 @@ export function FindingDetail({
   onSnooze,
   onGoPrev,
   onGoNext,
+  agentActivity,
+  agentActivityPhase,
+  agentActivityError,
 }: Props) {
+  const timeline = useMemo(() => {
+    if (!finding) {
+      return null;
+    }
+    const telemetryReady = agentActivityPhase === "ready";
+    const since = agentActivity?.since ?? timelineSinceIso();
+    return composeInvestigationTimeline({
+      since,
+      findings: [finding],
+      findingsAvailable: true,
+      telemetryEvents: telemetryReady ? (agentActivity?.events ?? []) : [],
+      telemetryAvailable: telemetryReady,
+    });
+  }, [finding, agentActivity, agentActivityPhase]);
+
   if (!finding) {
     return (
       <section className="panel detail-panel" aria-label="Finding detail">
@@ -243,6 +273,24 @@ export function FindingDetail({
           </Link>
         </div>
       </div>
+
+      <InvestigationTimeline
+        timeline={timeline}
+        phase={
+          agentActivityPhase === "idle"
+            ? "loading"
+            : agentActivityPhase === "loading"
+              ? "loading"
+              : "ready"
+        }
+        findingsError={null}
+        telemetryError={agentActivityError}
+        telemetrySummary={
+          agentActivityPhase === "ready" && agentActivity
+            ? agentActivity.summary
+            : null
+        }
+      />
 
       <div className="actions">
         <h3>Lifecycle</h3>

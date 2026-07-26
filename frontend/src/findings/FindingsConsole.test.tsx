@@ -157,6 +157,32 @@ function mockConsoleApis(opts?: {
           page: { limit: 50, offset: 0, returned: list.length },
         });
       }
+      if (url.includes("/v1/telemetry/events")) {
+        const agentId =
+          new URL(url, "http://local.test").searchParams.get("agentId") ??
+          "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+        return jsonResponse({
+          events: [
+            {
+              id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+              agentId,
+              schemaVersion: 1,
+              eventType: "heartbeat",
+              occurredAt: new Date().toISOString(),
+              ingestedAt: new Date().toISOString(),
+              payload: { status: "ok" },
+            },
+          ],
+          summary: {
+            agentId,
+            lastSeenAt: new Date().toISOString(),
+            lastHeartbeatAt: new Date().toISOString(),
+            countsByEventType: { heartbeat: 1 },
+            totalInWindow: 1,
+          },
+          page: { limit: 20, offset: 0, returned: 1 },
+        });
+      }
 
       return {
         ok: false,
@@ -238,6 +264,12 @@ describe("FindingsConsole", () => {
       "href",
       "/agents?agentId=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     );
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: /Recent context \(last 24 hours\)/i }),
+      ).toBeInTheDocument();
+    });
+    expect(screen.getByText("heartbeat")).toBeInTheDocument();
     expect(
       screen.queryByText(/ffffffff-ffff-4fff-8fff-ffffffffffff/),
     ).not.toBeInTheDocument();
@@ -662,5 +694,82 @@ describe("FindingsConsole", () => {
         banners.some((el) => /FINDINGS_UNAVAILABLE/.test(el.textContent ?? "")),
       ).toBe(true);
     });
+  });
+
+  it("keeps finding markers when agent telemetry fails sectionally", async () => {
+    const user = userEvent.setup();
+    const createdAt = new Date().toISOString();
+    const recent: Finding = {
+      ...finding,
+      createdAt,
+      windowStart: createdAt,
+      windowEnd: createdAt,
+    };
+    const findings = [recent];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (url.includes("/v1/telemetry/events")) {
+          return {
+            ok: false,
+            status: 503,
+            json: async () => ({
+              ok: false,
+              error: { code: "TELEMETRY_UNAVAILABLE", message: "down" },
+              requestId: "r",
+            }),
+          } as unknown as Response;
+        }
+        if (url.includes("/v1/findings/views") && method === "GET") {
+          return jsonResponse({ views: [] });
+        }
+        if (url.includes("/v1/findings/dashboard")) {
+          return jsonResponse(dashboard);
+        }
+        if (url.includes("/v1/findings/suppressions") && method === "GET") {
+          return jsonResponse({ suppressions: [] });
+        }
+        if (url.includes("/v1/findings?")) {
+          return jsonResponse({
+            findings,
+            page: { limit: 50, offset: 0, returned: findings.length },
+          });
+        }
+        return {
+          ok: false,
+          status: 404,
+          json: async () => ({
+            ok: false,
+            error: { code: "NOT_FOUND", message: url },
+            requestId: "r",
+          }),
+        } as unknown as Response;
+      }),
+    );
+
+    render(
+      <MemoryRouter>
+        <FindingsConsoleView
+          session={{ kind: "tenant", tenantId: TENANT }}
+        />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Agent lifecycle churn")).toBeInTheDocument();
+    });
+    await user.click(
+      screen.getByRole("button", { name: /Agent lifecycle churn/i }),
+    );
+    await waitFor(() => {
+      expect(
+        screen.getByRole("link", {
+          name: /Finding created: Agent lifecycle churn/i,
+        }),
+      ).toBeInTheDocument();
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent(/TELEMETRY_UNAVAILABLE/);
   });
 });

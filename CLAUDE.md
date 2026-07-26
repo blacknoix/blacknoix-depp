@@ -173,16 +173,20 @@ Implemented:
   open findings count, and heartbeat freshness (`recent`/`stale`/`unknown` using
   the silence threshold — not online/offline). Agent principals rejected.
   Frontend Agents page at `/agents` consumes this inventory, related findings,
-  and a compact 24h recent-activity view via existing `GET /v1/telemetry/events`
-  (eventType + occurredAt only; no payload dump; not online/offline).
+  and a shared 24h **recent context** timeline (finding created / latest status
+  change markers + telemetry via existing `GET /v1/telemetry/events`; eventType +
+  occurredAt only; no payload dump; not online/offline; not an event browser).
+  Findings detail uses the same panel for the selected finding + that agent's
+  telemetry. Client-side merge, newest-first, capped; no backend timeline API.
   Agents URL state: shareable `freshness` / `hasOpenFindings` filters plus
   `agentId` selection (client-side on inventory; invalid values fail closed).
   Selected-agent detail prioritizes investigation CTAs into Findings and keeps
   honest freshness language. Jump bar includes narrow Agents filter commands
   plus deterministic entity lookup (agent name/id prefix, finding UUID) via
   inventory already loaded in the shell — not a search index. Full-text/fuzzy
-  search deferred. Remote actions, enrollment UX, bulk/tagging, and device
-  management deferred.
+  search deferred. Global event search, unbounded history, comments, assignment,
+  case management, live updates, remote actions, enrollment UX, bulk/tagging,
+  and device management deferred.
   Cross-links: `/agents?agentId=` focuses an agent (optional `freshness` /
   `hasOpenFindings` list filters); `/findings` carries
   shareable `status` / `ruleId` / `agentId` filters plus optional `findingId`

@@ -2,6 +2,7 @@ import { useEffect, useMemo } from "react";
 import { useOutletContext, useSearchParams } from "react-router-dom";
 
 import type { OperatorSession } from "../auth/session";
+import { useAgentRecentActivity } from "../investigation/useAgentRecentActivity";
 import {
   filtersEqual,
   parseFindingsSearchParams,
@@ -43,6 +44,9 @@ export function FindingsConsoleView({ session }: ViewProps) {
     snoozeRule,
     clearSnooze,
   } = useFindingsConsole(session);
+
+  const contextAgentId = selected?.agentId ?? null;
+  const agentActivityState = useAgentRecentActivity(session, contextAgentId);
 
   const urlState = useMemo(
     () => parseFindingsSearchParams(searchParams),
@@ -234,6 +238,9 @@ export function FindingsConsoleView({ session }: ViewProps) {
           onSnooze={onSnooze}
           onGoPrev={() => onGoAdjacent(-1)}
           onGoNext={() => onGoAdjacent(1)}
+          agentActivity={agentActivityState.activity}
+          agentActivityPhase={agentActivityState.phase}
+          agentActivityError={agentActivityState.error}
         />
       </div>
 

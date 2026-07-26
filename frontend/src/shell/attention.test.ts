@@ -80,4 +80,20 @@ describe("attentionItemPath", () => {
       attentionItemPath({ ...item, ruleId: "gone.rule" }),
     ).toBeNull();
   });
+
+  it("routes ownership reminders into Mine with finding selection", () => {
+    const item: AttentionItem = {
+      kind: "finding.needs_revisit",
+      findingId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      title: "Quiet owned finding",
+      status: "acknowledged",
+      ruleId: "agent.heartbeat_silence",
+      agentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      at: "2026-02-28T12:00:00.000Z",
+    };
+    expect(attentionItemPath(item)).toBe(
+      "/findings?ownerScope=me&findingId=dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    );
+    expect(attentionKindLabel("finding.needs_revisit")).toBe("Needs revisit");
+  });
 });

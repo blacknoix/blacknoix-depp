@@ -65,6 +65,11 @@ function stubCorrelation(
       activeSuppressionCount: 0,
       items: [],
       truncated: false,
+      reminders: {
+        quietHours: 24,
+        items: [],
+        truncated: false,
+      },
     }),
     ...overrides,
   };
@@ -295,15 +300,17 @@ describe("GET /v1/findings/attention", () => {
   it("rejects bad since and returns operator digest items", async () => {
     const generatedAt = new Date("2026-03-01T12:00:00.000Z");
     const since = new Date("2026-03-01T10:00:00.000Z");
+    const operatorUserId = "22222222-2222-4222-8222-222222222222";
     await withServer(
       {
         correlationService: stubCorrelation({
-          attention: async (tenantId, requestedSince) => {
+          attention: async (tenantId, requestedSince, actor) => {
             assert.equal(tenantId, TENANT_ID);
             assert.equal(
               requestedSince?.toISOString(),
               "2026-03-01T10:00:00.000Z",
             );
+            assert.equal(actor?.userId, operatorUserId);
             return {
               generatedAt,
               since,
@@ -322,6 +329,21 @@ describe("GET /v1/findings/attention", () => {
                   at: new Date("2026-03-01T11:00:00.000Z"),
                 },
               ],
+              reminders: {
+                quietHours: 24,
+                truncated: false,
+                items: [
+                  {
+                    kind: "finding.needs_revisit",
+                    findingId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+                    title: "Agent heartbeat silence",
+                    status: "open",
+                    ruleId: "agent.heartbeat_silence",
+                    agentId: AGENT_ID,
+                    at: new Date("2026-02-28T10:00:00.000Z"),
+                  },
+                ],
+              },
             };
           },
         }),
@@ -329,13 +351,13 @@ describe("GET /v1/findings/attention", () => {
       async (server) => {
         const bad = await fetch(
           `${server.url}/v1/findings/attention?since=not-iso`,
-          { headers: tenantHeaders() },
+          { headers: tenantHeaders({ "x-user-id": operatorUserId }) },
         );
         assert.equal(bad.status, 400);
 
         const res = await fetch(
           `${server.url}/v1/findings/attention?since=2026-03-01T10:00:00.000Z`,
-          { headers: tenantHeaders() },
+          { headers: tenantHeaders({ "x-user-id": operatorUserId }) },
         );
         assert.equal(res.status, 200);
         const body = await res.json();
@@ -348,6 +370,12 @@ describe("GET /v1/findings/attention", () => {
         assert.equal(
           body.data.items[0].findingId,
           "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        );
+        assert.equal(body.data.reminders.quietHours, 24);
+        assert.equal(body.data.reminders.items.length, 1);
+        assert.equal(
+          body.data.reminders.items[0].kind,
+          "finding.needs_revisit",
         );
       },
     );

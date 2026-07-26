@@ -905,6 +905,19 @@ select {
   margin: 0;
 }
 
+.attention-section {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.attention-section-title {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--muted, #5a6b7a);
+}
+
 .attention-list {
   list-style: none;
   margin: 0;

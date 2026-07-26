@@ -1,10 +1,12 @@
 /**
- * Operator attention digest — pull-based “what changed since X”.
+ * Operator attention digest — pull-based “what changed since X”, plus
+ * derived ownership reminders for quiet owned findings.
  *
  * Derived from correlation_findings only. Not a notification store, inbox,
- * rules engine, or real-time channel.
+ * rules engine, SLA engine, or real-time channel.
  *
- * Deferred: push/email/Slack, preferences, severity scoring, live updates.
+ * Deferred: push/email/Slack, preferences, severity scoring, scheduled
+ * reminder rules, escalations, live updates.
  */
 
 import type { FindingStatus } from "./lifecycle";
@@ -12,13 +14,25 @@ import type { FindingStatus } from "./lifecycle";
 /** Hard ceiling on lookback even if the client cursor is older. */
 export const ATTENTION_MAX_LOOKBACK_HOURS = 24;
 
-/** Cap on returned items after merge (newest first). */
+/** Cap on returned change-feed items after merge (newest first). */
 export const ATTENTION_ITEMS_MAX = 20;
 
 /** Per-source fetch limit before merge (detects truncation). */
 export const ATTENTION_SOURCE_FETCH_LIMIT = 20;
 
-export type AttentionKind = "finding.created" | "finding.status_changed";
+/**
+ * Owned findings whose last investigation touch is older than this are
+ * surfaced as needs-revisit reminders. Fixed product constant — not an SLA.
+ */
+export const REMINDER_QUIET_HOURS = 24;
+
+/** Cap on derived ownership reminders (oldest quiet first). */
+export const REMINDER_ITEMS_MAX = 20;
+
+export type AttentionKind =
+  | "finding.created"
+  | "finding.status_changed"
+  | "finding.needs_revisit";
 
 export interface AttentionItem {
   kind: AttentionKind;
@@ -27,8 +41,14 @@ export interface AttentionItem {
   status: FindingStatus;
   ruleId: string;
   agentId: string;
-  /** Event time: created_at or status_changed_at. */
+  /** Event time: created_at, status_changed_at, or last touch for reminders. */
   at: Date;
+}
+
+export interface OwnershipReminders {
+  quietHours: number;
+  items: AttentionItem[];
+  truncated: boolean;
 }
 
 export interface FindingsAttentionDigest {
@@ -39,6 +59,8 @@ export interface FindingsAttentionDigest {
   activeSuppressionCount: number;
   items: AttentionItem[];
   truncated: boolean;
+  /** Derived ownership follow-ups; empty when operator identity is absent. */
+  reminders: OwnershipReminders;
 }
 
 export interface AttentionRawSources {
@@ -131,11 +153,13 @@ function readSingle(value: unknown): string | undefined {
 /**
  * Merges created + status-changed streams newest-first, capped.
  * Same finding may appear twice with different kinds (honest dual events).
+ * Ownership reminders are assembled separately — not mixed into this feed.
  */
 export function assembleAttentionDigest(
   generatedAt: Date,
   since: Date,
   raw: AttentionRawSources,
+  reminders: OwnershipReminders = emptyOwnershipReminders(),
 ): FindingsAttentionDigest {
   const merged = [...raw.created, ...raw.statusChanged].sort(
     (a, b) => b.at.getTime() - a.at.getTime(),
@@ -150,5 +174,36 @@ export function assembleAttentionDigest(
     activeSuppressionCount: raw.activeSuppressionCount,
     items: merged.slice(0, ATTENTION_ITEMS_MAX),
     truncated,
+    reminders,
   };
+}
+
+export function emptyOwnershipReminders(): OwnershipReminders {
+  return {
+    quietHours: REMINDER_QUIET_HOURS,
+    items: [],
+    truncated: false,
+  };
+}
+
+/**
+ * Caps derived ownership reminders. Oldest quiet first is the caller’s order.
+ */
+export function assembleOwnershipReminders(
+  items: AttentionItem[],
+  sourceHitLimit: boolean,
+): OwnershipReminders {
+  return {
+    quietHours: REMINDER_QUIET_HOURS,
+    items: items.slice(0, REMINDER_ITEMS_MAX),
+    truncated: sourceHitLimit || items.length > REMINDER_ITEMS_MAX,
+  };
+}
+
+/** Quiet-before cutoff for ownership reminders at `generatedAt`. */
+export function reminderQuietBefore(
+  generatedAt: Date,
+  quietHours: number = REMINDER_QUIET_HOURS,
+): Date {
+  return new Date(generatedAt.getTime() - quietHours * 60 * 60 * 1000);
 }

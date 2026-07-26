@@ -205,9 +205,10 @@ export function createFindingsRouter(
   );
 
   /**
-   * GET /v1/findings/attention — operator pull-based attention digest.
+   * GET /v1/findings/attention — operator pull-based attention digest plus
+   * derived ownership reminders (quiet owned open/acknowledged findings).
    * Optional `since` (ISO). Max lookback 24h. Agents rejected.
-   * Not a notification inbox or live stream.
+   * Not a notification inbox, SLA engine, or live stream.
    */
   router.get(
     "/attention",
@@ -232,6 +233,7 @@ export function createFindingsRouter(
         const digest = await service.attention(
           principal.tenantId,
           parsed.since,
+          { userId: principal.userId },
         );
 
         res.status(200).json({
@@ -252,6 +254,19 @@ export function createFindingsRouter(
               agentId: item.agentId,
               at: item.at.toISOString(),
             })),
+            reminders: {
+              quietHours: digest.reminders.quietHours,
+              truncated: digest.reminders.truncated,
+              items: digest.reminders.items.map((item) => ({
+                kind: item.kind,
+                findingId: item.findingId,
+                title: item.title,
+                status: item.status,
+                ruleId: item.ruleId,
+                agentId: item.agentId,
+                at: item.at.toISOString(),
+              })),
+            },
           },
           requestId: req.requestId,
         });

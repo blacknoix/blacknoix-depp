@@ -26,6 +26,15 @@ export function attentionItemPath(item: AttentionItem): string | null {
   if (!isRuleId(item.ruleId)) {
     return null;
   }
+
+  if (item.kind === "finding.needs_revisit") {
+    // Ownership reminders land in Mine so queue context stays coherent.
+    return findingsPath({
+      ownerScope: "me",
+      findingId: item.findingId,
+    });
+  }
+
   return findingsPath({
     status: item.status,
     ruleId: item.ruleId,
@@ -36,6 +45,9 @@ export function attentionItemPath(item: AttentionItem): string | null {
 export function attentionKindLabel(kind: AttentionItem["kind"]): string {
   if (kind === "finding.created") {
     return "New finding";
+  }
+  if (kind === "finding.needs_revisit") {
+    return "Needs revisit";
   }
   return "Status change";
 }

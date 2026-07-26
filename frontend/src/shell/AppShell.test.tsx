@@ -28,7 +28,16 @@ function jsonOk(data: unknown): Response {
 
 function stubOperatorShellFetch(opts?: {
   attentionItems?: Array<{
-    kind: "finding.created" | "finding.status_changed";
+    kind: "finding.created" | "finding.status_changed" | "finding.needs_revisit";
+    findingId: string;
+    title: string;
+    status: string;
+    ruleId: string;
+    agentId: string;
+    at: string;
+  }>;
+  reminderItems?: Array<{
+    kind: "finding.needs_revisit";
     findingId: string;
     title: string;
     status: string;
@@ -46,6 +55,7 @@ function stubOperatorShellFetch(opts?: {
   }>;
 }) {
   const items = opts?.attentionItems ?? [];
+  const reminders = opts?.reminderItems ?? [];
   const agents = opts?.agents ?? [];
   vi.stubGlobal(
     "fetch",
@@ -60,6 +70,11 @@ function stubOperatorShellFetch(opts?: {
           activeSuppressionCount: 0,
           truncated: false,
           items,
+          reminders: {
+            quietHours: 24,
+            truncated: false,
+            items: reminders,
+          },
         });
       }
       if (url.includes("/v1/findings/views")) {
@@ -400,6 +415,73 @@ describe("OperatorShell", () => {
     });
   });
 
+  it("opens ownership reminders into Mine Findings context", async () => {
+    const user = userEvent.setup();
+    const USER = "22222222-2222-4222-8222-222222222222";
+    stubOperatorShellFetch({
+      reminderItems: [
+        {
+          kind: "finding.needs_revisit",
+          findingId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+          title: "Quiet owned finding",
+          status: "open",
+          ruleId: "agent.heartbeat_silence",
+          agentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          at: "2026-02-28T10:00:00.000Z",
+        },
+      ],
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/agents"]}>
+        <Routes>
+          <Route
+            element={
+              <OperatorShell
+                session={{
+                  kind: "tenant",
+                  tenantId: TENANT,
+                  userId: USER,
+                }}
+                onSignOut={() => undefined}
+              />
+            }
+          >
+            <Route
+              path="findings"
+              element={
+                <>
+                  <div>Findings page</div>
+                  <LocationProbe />
+                </>
+              }
+            />
+            <Route path="agents" element={<div>Agents page</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Attention/i })).toHaveTextContent(
+        "1",
+      );
+    });
+
+    await user.click(screen.getByRole("button", { name: /Attention/i }));
+    expect(
+      screen.getByRole("heading", { name: /Needs revisit/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /Quiet owned finding/i }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("link", { name: /Quiet owned finding/i }));
+    expect(screen.getByTestId("location-probe")).toHaveTextContent(
+      "/findings?ownerScope=me&findingId=dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    );
+  });
+
   it("keeps shell structure present on a narrow viewport", async () => {
     stubOperatorShellFetch();
     Object.defineProperty(window, "innerWidth", {
@@ -521,6 +603,11 @@ describe("App routing + auth gate", () => {
                 activeSuppressionCount: 0,
                 truncated: false,
                 items: [],
+                reminders: {
+                  quietHours: 24,
+                  truncated: false,
+                  items: [],
+                },
               },
               requestId: "r",
             }),

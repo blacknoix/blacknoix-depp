@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 
 import {
   fetchFindingsAttention,
+  type AttentionItem,
   type FindingsAttentionDigest,
 } from "../api/findings";
 import { ApiError } from "../api/client";
@@ -40,8 +41,46 @@ function formatWhen(iso: string): string {
   });
 }
 
+function sessionHasOperatorIdentity(session: OperatorSession): boolean {
+  if (session.kind === "bearer") {
+    return true;
+  }
+  return Boolean(session.userId);
+}
+
+function AttentionItemRow({
+  item,
+  onNavigate,
+}: {
+  item: AttentionItem;
+  onNavigate: () => void;
+}) {
+  const to = attentionItemPath(item);
+  if (to) {
+    return (
+      <Link to={to} className="attention-item" onClick={onNavigate}>
+        <span className="attention-kind">{attentionKindLabel(item.kind)}</span>
+        <span className="attention-title">{item.title}</span>
+        <span className="muted tiny mono">
+          {item.status} · {item.ruleId}
+        </span>
+        <span className="muted tiny">{formatWhen(item.at)}</span>
+      </Link>
+    );
+  }
+  return (
+    <div className="attention-item is-invalid">
+      <span className="attention-kind">{attentionKindLabel(item.kind)}</span>
+      <span className="error tiny">
+        Obsolete filters — open Findings manually.
+      </span>
+    </div>
+  );
+}
+
 /**
  * Compact shell attention digest — pull on open, no live stream.
+ * Includes derived ownership reminders when operator identity is present.
  */
 export function AttentionPanel({ session }: Props) {
   const panelId = useId();
@@ -51,6 +90,8 @@ export function AttentionPanel({ session }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+
+  const hasIdentity = sessionHasOperatorIdentity(session);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -99,9 +140,10 @@ export function AttentionPanel({ session }: Props) {
     };
   }, [open, load]);
 
-  const count = digest?.items.length ?? 0;
-  const badge =
-    count === 0 ? null : count > 9 ? "9+" : String(count);
+  const changeCount = digest?.items.length ?? 0;
+  const reminderCount = digest?.reminders.items.length ?? 0;
+  const count = changeCount + reminderCount;
+  const badge = count === 0 ? null : count > 9 ? "9+" : String(count);
 
   function onMarkCaughtUp() {
     if (!digest) {
@@ -112,8 +154,14 @@ export function AttentionPanel({ session }: Props) {
       setError(result.message);
       return;
     }
-    setMessage("Marked caught up for this browser.");
+    setMessage(
+      "Marked change feed caught up for this browser. Ownership reminders stay until the finding is touched or resolved.",
+    );
     void load();
+  }
+
+  function closePanel() {
+    setOpen(false);
   }
 
   return (
@@ -144,8 +192,9 @@ export function AttentionPanel({ session }: Props) {
             <div>
               <h2>Attention</h2>
               <p className="muted tiny">
-                Findings changes since last caught up (max{" "}
-                {digest?.maxLookbackHours ?? 24}h). Pull-based — not live.
+                Recent findings changes (max {digest?.maxLookbackHours ?? 24}h)
+                and owned findings quiet for{" "}
+                {digest?.reminders.quietHours ?? 24}h. Pull-based — not live.
               </p>
             </div>
             <div className="attention-actions">
@@ -173,7 +222,9 @@ export function AttentionPanel({ session }: Props) {
               Open findings: {digest.openCount}
               {" · "}
               Active snoozes: {digest.activeSuppressionCount}
-              {digest.truncated ? " · Showing latest only" : ""}
+              {digest.truncated || digest.reminders.truncated
+                ? " · Showing latest only"
+                : ""}
             </p>
           ) : null}
 
@@ -194,51 +245,48 @@ export function AttentionPanel({ session }: Props) {
             </p>
           ) : null}
 
-          {!loading && digest && digest.items.length === 0 ? (
-            <p className="muted tiny" role="status">
-              Nothing new since the current cursor.
-            </p>
-          ) : null}
-
-          {digest && digest.items.length > 0 ? (
-            <ul className="attention-list">
-              {digest.items.map((item) => {
-                const to = attentionItemPath(item);
-                const key = `${item.kind}:${item.findingId}:${item.at}`;
-                return (
-                  <li key={key}>
-                    {to ? (
-                      <Link
-                        to={to}
-                        className="attention-item"
-                        onClick={() => setOpen(false)}
-                      >
-                        <span className="attention-kind">
-                          {attentionKindLabel(item.kind)}
-                        </span>
-                        <span className="attention-title">{item.title}</span>
-                        <span className="muted tiny mono">
-                          {item.status} · {item.ruleId}
-                        </span>
-                        <span className="muted tiny">
-                          {formatWhen(item.at)}
-                        </span>
-                      </Link>
-                    ) : (
-                      <div className="attention-item is-invalid">
-                        <span className="attention-kind">
-                          {attentionKindLabel(item.kind)}
-                        </span>
-                        <span className="error tiny">
-                          Obsolete filters — open Findings manually.
-                        </span>
-                      </div>
-                    )}
+          <section className="attention-section" aria-label="Recent changes">
+            <h3 className="attention-section-title">Recent changes</h3>
+            {!loading && digest && digest.items.length === 0 ? (
+              <p className="muted tiny" role="status">
+                Nothing new since the current cursor.
+              </p>
+            ) : null}
+            {digest && digest.items.length > 0 ? (
+              <ul className="attention-list">
+                {digest.items.map((item) => (
+                  <li key={`${item.kind}:${item.findingId}:${item.at}`}>
+                    <AttentionItemRow item={item} onNavigate={closePanel} />
                   </li>
-                );
-              })}
-            </ul>
-          ) : null}
+                ))}
+              </ul>
+            ) : null}
+          </section>
+
+          <section className="attention-section" aria-label="Needs revisit">
+            <h3 className="attention-section-title">Needs revisit</h3>
+            {!hasIdentity ? (
+              <p className="muted tiny" role="status">
+                Operator identity is required for ownership reminders (set a
+                user UUID at the gate or use JWT).
+              </p>
+            ) : null}
+            {hasIdentity && digest && digest.reminders.items.length === 0 ? (
+              <p className="muted tiny" role="status">
+                No owned open or acknowledged findings have been quiet for{" "}
+                {digest.reminders.quietHours}h.
+              </p>
+            ) : null}
+            {digest && digest.reminders.items.length > 0 ? (
+              <ul className="attention-list">
+                {digest.reminders.items.map((item) => (
+                  <li key={`${item.kind}:${item.findingId}:${item.at}`}>
+                    <AttentionItemRow item={item} onNavigate={closePanel} />
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </section>
         </div>
       ) : null}
     </div>

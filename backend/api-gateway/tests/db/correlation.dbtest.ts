@@ -285,6 +285,11 @@ describe("post-ingest correlation evaluation", () => {
           activeSuppressionCount: 0,
           items: [],
           truncated: false,
+          reminders: {
+            quietHours: 24,
+            items: [],
+            truncated: false,
+          },
         }),
       },
     });
@@ -1006,6 +1011,7 @@ describe("findings attention digest (real database)", () => {
     assert.ok(
       digest.items.every((i) => i.findingId === listed[0].id),
     );
+    assert.equal(digest.reminders.items.length, 0);
 
     const other = await correlation.attention(
       tenantB,
@@ -1014,5 +1020,138 @@ describe("findings attention digest (real database)", () => {
     assert.equal(other.openCount, 1);
     assert.ok(other.items.every((i) => i.kind === "finding.created"));
     assert.ok(other.items.every((i) => i.findingId !== listed[0].id));
+  });
+
+  it("derives ownership reminders for quiet owned findings only", async () => {
+    const userId = "22222222-2222-4222-8222-222222222222";
+    const otherUser = "33333333-3333-4333-8333-333333333333";
+    const findings = createCorrelationFindingsRepository(db.app);
+    const nowIso = "2026-03-02T12:00:00.000Z";
+    const correlation = correlationFor(fixedNow(nowIso));
+
+    const quietOwned = await findings.insertFindingIgnoreDup(tenantA, {
+      agentId: agentA,
+      ruleId: "agent.lifecycle_churn",
+      title: "Quiet owned",
+      severity: "medium",
+      evidence: {},
+      windowStart: new Date("2026-02-28T11:50:00.000Z"),
+      windowEnd: new Date("2026-02-28T12:00:00.000Z"),
+      windowBucket: new Date("2026-02-28T11:50:00.000Z"),
+    });
+    assert.ok(quietOwned);
+
+    const freshOwned = await findings.insertFindingIgnoreDup(tenantA, {
+      agentId: agentA,
+      ruleId: "agent.heartbeat_burst",
+      title: "Fresh owned",
+      severity: "medium",
+      evidence: {},
+      windowStart: new Date("2026-03-02T11:50:00.000Z"),
+      windowEnd: new Date("2026-03-02T12:00:00.000Z"),
+      windowBucket: new Date("2026-03-02T11:50:00.000Z"),
+    });
+    assert.ok(freshOwned);
+
+    const otherOwned = await findings.insertFindingIgnoreDup(tenantA, {
+      agentId: agentA,
+      ruleId: "agent.heartbeat_silence",
+      title: "Other owner",
+      severity: "medium",
+      evidence: {},
+      windowStart: new Date("2026-02-28T10:00:00.000Z"),
+      windowEnd: new Date("2026-02-28T10:05:00.000Z"),
+      windowBucket: new Date("2026-02-28T10:00:00.000Z"),
+    });
+    assert.ok(otherOwned);
+
+    // Inserts stamp created_at = wall clock; backdate quiet rows for the test clock.
+    await withTenantTransaction(db.app, tenantA, async (trx) => {
+      await sql`
+        update correlation_findings
+        set created_at = ${new Date("2026-02-28T12:00:00.000Z")}
+        where id = ${quietOwned!}
+      `.execute(trx);
+      await sql`
+        update correlation_findings
+        set created_at = ${new Date("2026-02-28T12:00:00.000Z")}
+        where id = ${otherOwned!}
+      `.execute(trx);
+      await sql`
+        update correlation_findings
+        set created_at = ${new Date("2026-03-02T11:55:00.000Z")}
+        where id = ${freshOwned!}
+      `.execute(trx);
+    });
+
+    const claimClock = correlationFor(fixedNow("2026-02-28T12:30:00.000Z"));
+    assert.equal(
+      (
+        await claimClock.patchFinding(
+          tenantA,
+          quietOwned!,
+          { claimOwner: true },
+          { userId },
+        )
+      ).ok,
+      true,
+    );
+    assert.equal(
+      (
+        await claimClock.patchFinding(
+          tenantA,
+          otherOwned!,
+          { claimOwner: true },
+          { userId: otherUser },
+        )
+      ).ok,
+      true,
+    );
+    assert.equal(
+      (
+        await correlation.patchFinding(
+          tenantA,
+          freshOwned!,
+          { claimOwner: true },
+          { userId },
+        )
+      ).ok,
+      true,
+    );
+
+    const withoutIdentity = await correlation.attention(
+      tenantA,
+      new Date("2026-03-01T00:00:00.000Z"),
+    );
+    assert.equal(withoutIdentity.reminders.items.length, 0);
+
+    const digest = await correlation.attention(
+      tenantA,
+      new Date("2026-03-01T00:00:00.000Z"),
+      { userId },
+    );
+    assert.equal(digest.reminders.quietHours, 24);
+    assert.equal(digest.reminders.items.length, 1);
+    assert.equal(digest.reminders.items[0].kind, "finding.needs_revisit");
+    assert.equal(digest.reminders.items[0].findingId, quietOwned);
+    assert.equal(digest.reminders.items[0].title, "Quiet owned");
+
+    assert.equal(
+      (
+        await correlation.patchFinding(
+          tenantA,
+          quietOwned!,
+          { operatorNote: "Checked again" },
+          { userId },
+        )
+      ).ok,
+      true,
+    );
+    const afterTouch = await correlation.attention(
+      tenantA,
+      new Date("2026-03-01T00:00:00.000Z"),
+      { userId },
+    );
+    assert.equal(afterTouch.reminders.items.length, 0);
   });
 });

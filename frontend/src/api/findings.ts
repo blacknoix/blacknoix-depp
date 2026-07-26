@@ -166,7 +166,10 @@ export async function deleteSharedFindingView(
   return data.view;
 }
 
-export type AttentionKind = "finding.created" | "finding.status_changed";
+export type AttentionKind =
+  | "finding.created"
+  | "finding.status_changed"
+  | "finding.needs_revisit";
 
 export interface AttentionItem {
   kind: AttentionKind;
@@ -178,6 +181,12 @@ export interface AttentionItem {
   at: string;
 }
 
+export interface OwnershipReminders {
+  quietHours: number;
+  truncated: boolean;
+  items: AttentionItem[];
+}
+
 export interface FindingsAttentionDigest {
   generatedAt: string;
   since: string;
@@ -186,6 +195,7 @@ export interface FindingsAttentionDigest {
   activeSuppressionCount: number;
   truncated: boolean;
   items: AttentionItem[];
+  reminders: OwnershipReminders;
 }
 
 export async function fetchFindingsAttention(

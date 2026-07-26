@@ -2,7 +2,11 @@ import { logLifecycle } from "../lib/log";
 import type { TelemetryRepository } from "../telemetry/repository";
 import {
   assembleAttentionDigest,
+  assembleOwnershipReminders,
   ATTENTION_SOURCE_FETCH_LIMIT,
+  emptyOwnershipReminders,
+  REMINDER_ITEMS_MAX,
+  reminderQuietBefore,
   resolveAttentionSince,
   type FindingsAttentionDigest,
 } from "./attention";
@@ -92,12 +96,14 @@ export interface CorrelationService {
   dashboard(tenantId: string): Promise<FindingsDashboard>;
 
   /**
-   * Operator attention digest since an optional cursor.
+   * Operator attention digest since an optional cursor, plus derived
+   * ownership reminders when actor.userId is present.
    * Null/omitted since uses the max lookback window.
    */
   attention(
     tenantId: string,
     requestedSince: Date | null,
+    actor?: { userId?: string },
   ): Promise<FindingsAttentionDigest>;
 
   updateStatus(
@@ -482,7 +488,7 @@ export function createCorrelationService(
       return assembleFindingsDashboard(generatedAt, raw);
     },
 
-    async attention(tenantId, requestedSince) {
+    async attention(tenantId, requestedSince, actor) {
       if (typeof tenantId !== "string" || tenantId.trim() === "") {
         throw new Error("attention requires a non-empty tenantId");
       }
@@ -502,12 +508,34 @@ export function createCorrelationService(
         generatedAt,
         ATTENTION_SOURCE_FETCH_LIMIT,
       );
-      return assembleAttentionDigest(generatedAt, since, {
-        ...raw,
-        sourceTruncated:
-          raw.created.length >= ATTENTION_SOURCE_FETCH_LIMIT ||
-          raw.statusChanged.length >= ATTENTION_SOURCE_FETCH_LIMIT,
-      });
+
+      let reminders = emptyOwnershipReminders();
+      const ownerUserId = actor?.userId?.trim().toLowerCase();
+      if (ownerUserId) {
+        const quietBefore = reminderQuietBefore(generatedAt);
+        const reminderRows = await findings.listOwnershipReminders(
+          tenantId,
+          ownerUserId,
+          quietBefore,
+          REMINDER_ITEMS_MAX,
+        );
+        reminders = assembleOwnershipReminders(
+          reminderRows,
+          reminderRows.length >= REMINDER_ITEMS_MAX,
+        );
+      }
+
+      return assembleAttentionDigest(
+        generatedAt,
+        since,
+        {
+          ...raw,
+          sourceTruncated:
+            raw.created.length >= ATTENTION_SOURCE_FETCH_LIMIT ||
+            raw.statusChanged.length >= ATTENTION_SOURCE_FETCH_LIMIT,
+        },
+        reminders,
+      );
     },
 
     async updateStatus(tenantId, findingId, nextStatus, actor) {

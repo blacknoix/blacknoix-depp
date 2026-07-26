@@ -3,9 +3,13 @@ import { describe, it } from "node:test";
 
 import {
   assembleAttentionDigest,
+  assembleOwnershipReminders,
   ATTENTION_ITEMS_MAX,
   ATTENTION_MAX_LOOKBACK_HOURS,
   parseAttentionSinceQuery,
+  reminderQuietBefore,
+  REMINDER_ITEMS_MAX,
+  REMINDER_QUIET_HOURS,
   resolveAttentionSince,
   type AttentionItem,
 } from "../../src/correlation/attention";
@@ -106,6 +110,8 @@ describe("assembleAttentionDigest", () => {
     assert.equal(digest.activeSuppressionCount, 1);
     assert.equal(digest.truncated, false);
     assert.equal(digest.maxLookbackHours, ATTENTION_MAX_LOOKBACK_HOURS);
+    assert.equal(digest.reminders.items.length, 0);
+    assert.equal(digest.reminders.quietHours, 24);
   });
 
   it("marks truncated when over the item cap", () => {
@@ -131,5 +137,34 @@ describe("assembleAttentionDigest", () => {
     });
     assert.equal(digest.items.length, ATTENTION_ITEMS_MAX);
     assert.equal(digest.truncated, true);
+  });
+});
+
+describe("assembleOwnershipReminders", () => {
+  it("caps reminders and preserves quietHours", () => {
+    const items: AttentionItem[] = [];
+    for (let i = 0; i < REMINDER_ITEMS_MAX + 1; i += 1) {
+      items.push(
+        item({
+          kind: "finding.needs_revisit",
+          findingId: `dddddddd-dddd-4ddd-8ddd-${String(i).padStart(12, "0")}`,
+          at: new Date(`2026-02-28T${String(10 + (i % 10)).padStart(2, "0")}:00:00.000Z`),
+        }),
+      );
+    }
+    const reminders = assembleOwnershipReminders(items, false);
+    assert.equal(reminders.items.length, REMINDER_ITEMS_MAX);
+    assert.equal(reminders.truncated, true);
+    assert.equal(reminders.quietHours, REMINDER_QUIET_HOURS);
+  });
+});
+
+describe("reminderQuietBefore", () => {
+  it("subtracts the fixed quiet window", () => {
+    const generatedAt = new Date("2026-03-01T12:00:00.000Z");
+    assert.equal(
+      reminderQuietBefore(generatedAt).toISOString(),
+      "2026-02-28T12:00:00.000Z",
+    );
   });
 });

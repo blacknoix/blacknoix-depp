@@ -135,6 +135,17 @@ export interface CorrelationFindingsRepository {
     openCount: number;
     activeSuppressionCount: number;
   }>;
+
+  /**
+   * Derived ownership reminders: owned + open/acknowledged + last touch
+   * at or before quietBefore. Oldest quiet first. Soft-capped by limit.
+   */
+  listOwnershipReminders(
+    tenantId: string,
+    ownerUserId: string,
+    quietBefore: Date,
+    limit: number,
+  ): Promise<AttentionItem[]>;
 }
 
 function asDate(value: unknown): Date {
@@ -480,6 +491,55 @@ export function createCorrelationFindingsRepository(
           openCount: Number(openRow.count),
           activeSuppressionCount: Number(activeSuppressions.count),
         };
+      });
+    },
+
+    async listOwnershipReminders(tenantId, ownerUserId, quietBefore, limit) {
+      if (typeof tenantId !== "string" || tenantId.trim() === "") {
+        throw new Error("listOwnershipReminders requires a non-empty tenantId");
+      }
+      if (typeof ownerUserId !== "string" || ownerUserId.trim() === "") {
+        throw new Error(
+          "listOwnershipReminders requires a non-empty ownerUserId",
+        );
+      }
+      const capped = Math.min(Math.max(1, Math.trunc(limit)), 100);
+
+      // Last investigation touch: claim/reassign, note, status, or create.
+      const lastTouched = sql`greatest(
+        created_at,
+        coalesce(status_changed_at, created_at),
+        coalesce(owner_changed_at, created_at),
+        coalesce(operator_note_updated_at, created_at)
+      )`;
+
+      return withTenantTransaction(db, tenantId, async (trx) => {
+        const rows = await trx
+          .selectFrom("correlation_findings")
+          .selectAll()
+          .select(lastTouched.as("last_touched_at"))
+          .where("owner_user_id", "=", ownerUserId.trim().toLowerCase())
+          .where("status", "in", ["open", "acknowledged"])
+          .where(sql<boolean>`${lastTouched} <= ${quietBefore}`)
+          .orderBy(lastTouched, "asc")
+          .limit(capped)
+          .execute();
+
+        return rows.map((row) => {
+          const mapped = mapRow(row);
+          const lastTouchedAt = asDate(
+            (row as { last_touched_at: unknown }).last_touched_at,
+          );
+          return {
+            kind: "finding.needs_revisit" as const,
+            findingId: mapped.id,
+            title: mapped.title,
+            status: mapped.status,
+            ruleId: mapped.ruleId,
+            agentId: mapped.agentId,
+            at: lastTouchedAt,
+          };
+        });
       });
     },
   };

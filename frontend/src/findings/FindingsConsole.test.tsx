@@ -39,6 +39,12 @@ const finding: Finding = {
   status: "open",
   statusChangedAt: null,
   statusChangedByUserId: null,
+  ownerUserId: null,
+  ownerChangedAt: null,
+  ownerChangedByUserId: null,
+  operatorNote: null,
+  operatorNoteUpdatedAt: null,
+  operatorNoteUpdatedByUserId: null,
   evidence: {
     threshold: 6,
     totalInWindow: 8,
@@ -771,5 +777,120 @@ describe("FindingsConsole", () => {
       ).toBeInTheDocument();
     });
     expect(screen.getByRole("alert")).toHaveTextContent(/TELEMETRY_UNAVAILABLE/);
+  });
+
+  it("claims ownership and saves a current operator note", async () => {
+    const user = userEvent.setup();
+    const USER = "22222222-2222-4222-8222-222222222222";
+    let owner: string | null = null;
+    let note: string | null = null;
+    const findings = [{ ...finding }];
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (url.includes("/v1/telemetry/events")) {
+          return jsonResponse({
+            events: [],
+            summary: {
+              agentId: finding.agentId,
+              lastSeenAt: null,
+              lastHeartbeatAt: null,
+              countsByEventType: {},
+              totalInWindow: 0,
+            },
+            page: { limit: 20, offset: 0, returned: 0 },
+          });
+        }
+        if (url.includes("/v1/findings/views") && method === "GET") {
+          return jsonResponse({ views: [] });
+        }
+        if (url.includes("/v1/findings/dashboard")) {
+          return jsonResponse(dashboard);
+        }
+        if (url.includes("/v1/findings/suppressions") && method === "GET") {
+          return jsonResponse({ suppressions: [] });
+        }
+        if (url.includes("/v1/findings/") && method === "PATCH") {
+          const body = JSON.parse(String(init?.body ?? "{}")) as {
+            claimOwner?: boolean;
+            ownerUserId?: string | null;
+            operatorNote?: string | null;
+          };
+          if (body.claimOwner) {
+            owner = USER;
+          }
+          if ("ownerUserId" in body) {
+            owner = body.ownerUserId ?? null;
+          }
+          if ("operatorNote" in body) {
+            note = body.operatorNote ?? null;
+          }
+          findings[0] = {
+            ...findings[0],
+            ownerUserId: owner,
+            ownerChangedAt: owner ? new Date().toISOString() : null,
+            ownerChangedByUserId: owner ? USER : null,
+            operatorNote: note,
+            operatorNoteUpdatedAt: note ? new Date().toISOString() : null,
+            operatorNoteUpdatedByUserId: note ? USER : null,
+          };
+          return jsonResponse({ finding: findings[0] });
+        }
+        if (url.includes("/v1/findings?")) {
+          return jsonResponse({
+            findings,
+            page: { limit: 50, offset: 0, returned: findings.length },
+          });
+        }
+        return {
+          ok: false,
+          status: 404,
+          json: async () => ({
+            ok: false,
+            error: { code: "NOT_FOUND", message: url },
+            requestId: "r",
+          }),
+        } as unknown as Response;
+      }),
+    );
+
+    render(
+      <MemoryRouter>
+        <FindingsConsoleView
+          session={{ kind: "tenant", tenantId: TENANT, userId: USER }}
+        />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Agent lifecycle churn")).toBeInTheDocument();
+    });
+    await user.click(
+      screen.getByRole("button", { name: /Agent lifecycle churn/i }),
+    );
+    expect(
+      screen.getByRole("heading", { name: /Investigation intent/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Unassigned")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /^Claim$/i }));
+    await waitFor(() => {
+      expect(screen.getByText(USER)).toBeInTheDocument();
+    });
+
+    await user.clear(screen.getByLabelText(/Current note/i));
+    await user.type(
+      screen.getByLabelText(/Current note/i),
+      "Likely maintenance window",
+    );
+    await user.click(screen.getByRole("button", { name: /Save note/i }));
+    await waitFor(() => {
+      expect(screen.getByLabelText(/Current note/i)).toHaveValue(
+        "Likely maintenance window",
+      );
+    });
   });
 });

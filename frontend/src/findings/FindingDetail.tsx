@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import type { AgentRecentActivity } from "../agents/types";
 import { InvestigationTimeline } from "../investigation/InvestigationTimeline";
@@ -39,6 +39,11 @@ interface Props {
   agentActivity: AgentRecentActivity | null;
   agentActivityPhase: ActivityPhase;
   agentActivityError: string | null;
+  /** Optional operator user id from the session (enables Claim). */
+  sessionUserId: string | null;
+  onClaimOwner: (id: string) => void;
+  onClearOwner: (id: string) => void;
+  onSaveNote: (id: string, note: string | null) => void;
 }
 
 const SNOOZE_PRESETS_MS = [
@@ -81,7 +86,17 @@ export function FindingDetail({
   agentActivity,
   agentActivityPhase,
   agentActivityError,
+  sessionUserId,
+  onClaimOwner,
+  onClearOwner,
+  onSaveNote,
 }: Props) {
+  const [noteDraft, setNoteDraft] = useState("");
+
+  useEffect(() => {
+    setNoteDraft(finding?.operatorNote ?? "");
+  }, [finding?.id, finding?.operatorNote]);
+
   const timeline = useMemo(() => {
     if (!finding) {
       return null;
@@ -116,6 +131,11 @@ export function FindingDetail({
   }
 
   const nextStatuses = allowedTransitions(finding.status);
+  const noteDirty = noteDraft !== (finding.operatorNote ?? "");
+  const alreadyMine = Boolean(
+    sessionUserId && finding.ownerUserId === sessionUserId,
+  );
+  const canClaim = !alreadyMine;
   const ruleId = CORRELATION_RULE_IDS.includes(
     finding.ruleId as CorrelationRuleId,
   )
@@ -255,6 +275,100 @@ export function FindingDetail({
           </dl>
         </div>
       ) : null}
+
+      <div className="finding-section">
+        <h3>Investigation intent</h3>
+        <p className="muted tiny">
+          Self-claim ownership and one current plain-text note. Not a case
+          system, thread, or assignment queue.
+        </p>
+        <dl className="detail-grid">
+          <div>
+            <dt>Owner</dt>
+            <dd className="mono tiny">
+              {finding.ownerUserId ?? "Unassigned"}
+            </dd>
+          </div>
+          <div>
+            <dt>Owner changed</dt>
+            <dd>
+              {finding.ownerChangedAt
+                ? new Date(finding.ownerChangedAt).toLocaleString()
+                : "—"}
+            </dd>
+          </div>
+        </dl>
+        <div className="action-row wrap">
+          {canClaim ? (
+            <button
+              type="button"
+              className="btn"
+              disabled={mutationPending}
+              onClick={() => onClaimOwner(finding.id)}
+            >
+              Claim
+            </button>
+          ) : null}
+          {finding.ownerUserId ? (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={mutationPending}
+              onClick={() => onClearOwner(finding.id)}
+            >
+              Clear owner
+            </button>
+          ) : null}
+          {!sessionUserId ? (
+            <span className="muted tiny">
+              Dev tenant sessions need an operator user UUID at the gate to
+              claim; JWT sessions claim via token identity.
+            </span>
+          ) : null}
+        </div>
+        <label className="note-field">
+          Current note
+          <textarea
+            rows={3}
+            maxLength={2000}
+            value={noteDraft}
+            disabled={mutationPending}
+            onChange={(e) => setNoteDraft(e.target.value)}
+            placeholder="Latest conclusion for the next operator"
+          />
+        </label>
+        <div className="action-row wrap">
+          <button
+            type="button"
+            className="btn"
+            disabled={mutationPending || !noteDirty}
+            onClick={() =>
+              onSaveNote(finding.id, noteDraft.trim() === "" ? null : noteDraft)
+            }
+          >
+            Save note
+          </button>
+          {finding.operatorNote ? (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={mutationPending}
+              onClick={() => onSaveNote(finding.id, null)}
+            >
+              Clear note
+            </button>
+          ) : null}
+        </div>
+        {finding.operatorNoteUpdatedAt ? (
+          <p className="muted tiny">
+            Note updated{" "}
+            {new Date(finding.operatorNoteUpdatedAt).toLocaleString()}
+            {finding.operatorNoteUpdatedByUserId
+              ? ` · ${finding.operatorNoteUpdatedByUserId}`
+              : ""}
+          </p>
+        ) : null}
+      </div>
 
       <div className="finding-section">
         <h3>Agent context</h3>

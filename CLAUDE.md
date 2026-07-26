@@ -109,11 +109,15 @@ Implemented:
   Operator dashboard: `GET /v1/findings/dashboard` — fixed 24h windows; counts by
   status and ruleId (zero-filled); recentCreated/recentChanged; active
   suppression count; no query params; agents rejected. Frontend console consumes
-  these surfaces (see `frontend/`). Finding detail includes a static rule catalog
+  these surfaces (see `frontend/`).   Finding detail includes a static rule catalog
   explanation, compact evidence summary (no sample ids/payloads), active rule
-  snooze context, agent cross-link, and triage ergonomics (prev/next, post-mutation
+  snooze context, agent cross-link, triage ergonomics (prev/next, post-mutation
   advance when a status change removes the finding from the current filter, URL
-  `findingId` kept coherent). Local saved views persist status/ruleId/agentId
+  `findingId` kept coherent), plus minimal investigation intent: self-claim
+  ownership (`claimOwner` / clear) and one current plain-text operator note
+  (bounded, replace/clear) on `PATCH /v1/findings/:id`. Soft UUID audit fields;
+  operator-only; assign-to-others / threads / case entities deferred. Local
+  saved views persist status/ruleId/agentId
   only (never findingId) in tenant-scoped localStorage; shared tenant views use
   operator-only `GET/POST/DELETE /v1/findings/views` (RLS). Apply writes the URL.
   Jump bar lists both. Folders/favorites/rename deferred. Operator Attention
@@ -121,8 +125,8 @@ Implemented:
   since a browser cursor, max 24h); shell popover deep-links into Findings URL
   context; Mark caught up is localStorage-only. Not live, not email/Slack, not
   an inbox platform. Triage/snooze actions
-  unchanged in meaning. Charts, export, scheduled digests, case management,
-  comments, assignment, push notifications, rule DSL, malware, and remediation deferred.
+  unchanged in meaning. Charts, export, scheduled digests, full case management,
+  comments/threads, assignment queues, push notifications, rule DSL, malware, and remediation deferred.
 - Agent identity (ADR-0003 §5 minimal): register agent → hashed credential once;
   exchange for short-lived agent access JWT (`tid`+`aid`); revoke blocks exchange.
   Operator inventory: `GET /v1/agents` returns name/id/createdAt, last heartbeat,

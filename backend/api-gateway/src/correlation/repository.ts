@@ -34,6 +34,12 @@ export interface CorrelationFindingRow {
   status: FindingStatus;
   statusChangedAt: Date | null;
   statusChangedByUserId: string | null;
+  ownerUserId: string | null;
+  ownerChangedAt: Date | null;
+  ownerChangedByUserId: string | null;
+  operatorNote: string | null;
+  operatorNoteUpdatedAt: Date | null;
+  operatorNoteUpdatedByUserId: string | null;
 }
 
 export interface ListFindingsQuery {
@@ -48,6 +54,18 @@ export interface UpdateFindingStatusInput {
   status: FindingStatus;
   changedAt: Date;
   changedByUserId: string | null;
+}
+
+export interface UpdateFindingIntentInput {
+  status?: FindingStatus;
+  statusChangedAt?: Date;
+  statusChangedByUserId?: string | null;
+  ownerUserId?: string | null;
+  ownerChangedAt?: Date;
+  ownerChangedByUserId?: string | null;
+  operatorNote?: string | null;
+  operatorNoteUpdatedAt?: Date;
+  operatorNoteUpdatedByUserId?: string | null;
 }
 
 export interface CorrelationFindingsRepository {
@@ -75,6 +93,16 @@ export interface CorrelationFindingsRepository {
     tenantId: string,
     findingId: string,
     update: UpdateFindingStatusInput,
+  ): Promise<CorrelationFindingRow | undefined>;
+
+  /**
+   * Partial update for status / ownership / current operator note.
+   * Only provided fields are written.
+   */
+  updateFindingIntent(
+    tenantId: string,
+    findingId: string,
+    update: UpdateFindingIntentInput,
   ): Promise<CorrelationFindingRow | undefined>;
 
   /**
@@ -145,6 +173,12 @@ function mapRow(row: {
   status: string;
   status_changed_at: unknown;
   status_changed_by_user_id: string | null;
+  owner_user_id: string | null;
+  owner_changed_at: unknown;
+  owner_changed_by_user_id: string | null;
+  operator_note: string | null;
+  operator_note_updated_at: unknown;
+  operator_note_updated_by_user_id: string | null;
 }): CorrelationFindingRow {
   return {
     id: row.id,
@@ -163,6 +197,16 @@ function mapRow(row: {
       ? asDate(row.status_changed_at)
       : null,
     statusChangedByUserId: row.status_changed_by_user_id,
+    ownerUserId: row.owner_user_id,
+    ownerChangedAt: row.owner_changed_at
+      ? asDate(row.owner_changed_at)
+      : null,
+    ownerChangedByUserId: row.owner_changed_by_user_id,
+    operatorNote: row.operator_note,
+    operatorNoteUpdatedAt: row.operator_note_updated_at
+      ? asDate(row.operator_note_updated_at)
+      : null,
+    operatorNoteUpdatedByUserId: row.operator_note_updated_by_user_id,
   };
 }
 
@@ -243,6 +287,68 @@ export function createCorrelationFindingsRepository(
             status_changed_at: update.changedAt,
             status_changed_by_user_id: update.changedByUserId,
           })
+          .where("id", "=", findingId)
+          .returningAll()
+          .executeTakeFirst();
+
+        return row ? mapRow(row) : undefined;
+      });
+    },
+
+    async updateFindingIntent(tenantId, findingId, update) {
+      return withTenantTransaction(db, tenantId, async (trx) => {
+        const set: {
+          status?: string;
+          status_changed_at?: Date;
+          status_changed_by_user_id?: string | null;
+          owner_user_id?: string | null;
+          owner_changed_at?: Date | null;
+          owner_changed_by_user_id?: string | null;
+          operator_note?: string | null;
+          operator_note_updated_at?: Date | null;
+          operator_note_updated_by_user_id?: string | null;
+        } = {};
+        if (update.status !== undefined) {
+          set.status = update.status;
+        }
+        if (update.statusChangedAt !== undefined) {
+          set.status_changed_at = update.statusChangedAt;
+        }
+        if (update.statusChangedByUserId !== undefined) {
+          set.status_changed_by_user_id = update.statusChangedByUserId;
+        }
+        if (update.ownerUserId !== undefined) {
+          set.owner_user_id = update.ownerUserId;
+        }
+        if (update.ownerChangedAt !== undefined) {
+          set.owner_changed_at = update.ownerChangedAt;
+        }
+        if (update.ownerChangedByUserId !== undefined) {
+          set.owner_changed_by_user_id = update.ownerChangedByUserId;
+        }
+        if (update.operatorNote !== undefined) {
+          set.operator_note = update.operatorNote;
+        }
+        if (update.operatorNoteUpdatedAt !== undefined) {
+          set.operator_note_updated_at = update.operatorNoteUpdatedAt;
+        }
+        if (update.operatorNoteUpdatedByUserId !== undefined) {
+          set.operator_note_updated_by_user_id =
+            update.operatorNoteUpdatedByUserId;
+        }
+
+        if (Object.keys(set).length === 0) {
+          const existing = await trx
+            .selectFrom("correlation_findings")
+            .selectAll()
+            .where("id", "=", findingId)
+            .executeTakeFirst();
+          return existing ? mapRow(existing) : undefined;
+        }
+
+        const row = await trx
+          .updateTable("correlation_findings")
+          .set(set)
           .where("id", "=", findingId)
           .returningAll()
           .executeTakeFirst();

@@ -149,21 +149,45 @@ export function parseFindingsQueryV1(
   };
 }
 
-export type ParsePatchFindingStatusResult =
-  | { ok: true; status: FindingStatus }
+export const OPERATOR_NOTE_MAX_LENGTH = 2000;
+
+export interface FindingPatchInput {
+  /** When present, apply a status transition (same-status = noop). */
+  status?: FindingStatus;
+  /**
+   * When the key is present: null clears ownership; a UUID claims ownership
+   * (must equal the actor's userId — assign-to-others is deferred).
+   */
+  ownerUserId?: string | null;
+  /** When true, claim ownership as the authenticated operator. */
+  claimOwner?: true;
+  /**
+   * When the key is present: null clears the note; a string replaces the
+   * current operator note (plain text, bounded).
+   */
+  operatorNote?: string | null;
+}
+
+export type ParsePatchFindingResult =
+  | { ok: true; patch: FindingPatchInput }
   | { ok: false; message: string };
 
 /**
- * Parses PATCH /v1/findings/:id body: `{ status }` only.
+ * Parses PATCH /v1/findings/:id body.
+ * Accepts any non-empty subset of: status, ownerUserId, operatorNote.
  */
-export function parsePatchFindingStatusBody(
-  body: unknown,
-): ParsePatchFindingStatusResult {
+export function parsePatchFindingBody(body: unknown): ParsePatchFindingResult {
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
     return { ok: false, message: "body must be a JSON object" };
   }
 
   const record = body as Record<string, unknown>;
+  const allowed = new Set([
+    "status",
+    "ownerUserId",
+    "claimOwner",
+    "operatorNote",
+  ]);
 
   for (const key of Object.keys(record)) {
     if (key === "tenantId" || key === "tenant_id" || key === "tid") {
@@ -172,18 +196,80 @@ export function parsePatchFindingStatusBody(
         message: "tenant identity must not be supplied in the body",
       };
     }
-    if (key !== "status") {
+    if (!allowed.has(key)) {
       return { ok: false, message: `unknown field: ${key}` };
     }
   }
 
-  if (!("status" in record) || typeof record.status !== "string") {
-    return { ok: false, message: "status is required" };
+  const patch: FindingPatchInput = {};
+
+  if ("status" in record) {
+    if (typeof record.status !== "string" || !isFindingStatus(record.status)) {
+      return { ok: false, message: "status is not a valid finding status" };
+    }
+    patch.status = record.status;
   }
 
-  if (!isFindingStatus(record.status)) {
-    return { ok: false, message: "status is not a valid finding status" };
+  if ("claimOwner" in record) {
+    if (record.claimOwner !== true) {
+      return { ok: false, message: "claimOwner must be true when provided" };
+    }
+    patch.claimOwner = true;
   }
 
-  return { ok: true, status: record.status };
+  if ("ownerUserId" in record) {
+    if (record.ownerUserId === null) {
+      patch.ownerUserId = null;
+    } else if (typeof record.ownerUserId === "string") {
+      const trimmed = record.ownerUserId.trim().toLowerCase();
+      if (!UUID.test(trimmed)) {
+        return { ok: false, message: "ownerUserId must be a UUID or null" };
+      }
+      patch.ownerUserId = trimmed;
+    } else {
+      return { ok: false, message: "ownerUserId must be a UUID or null" };
+    }
+  }
+
+  if ("claimOwner" in patch && "ownerUserId" in patch) {
+    return {
+      ok: false,
+      message: "claimOwner and ownerUserId cannot be combined",
+    };
+  }
+
+  if ("operatorNote" in record) {
+    if (record.operatorNote === null) {
+      patch.operatorNote = null;
+    } else if (typeof record.operatorNote === "string") {
+      const trimmed = record.operatorNote.trim();
+      if (trimmed.length === 0) {
+        patch.operatorNote = null;
+      } else if (trimmed.length > OPERATOR_NOTE_MAX_LENGTH) {
+        return {
+          ok: false,
+          message: `operatorNote must be at most ${OPERATOR_NOTE_MAX_LENGTH} characters`,
+        };
+      } else {
+        patch.operatorNote = trimmed;
+      }
+    } else {
+      return { ok: false, message: "operatorNote must be a string or null" };
+    }
+  }
+
+  if (
+    patch.status === undefined &&
+    !("ownerUserId" in patch) &&
+    !("claimOwner" in patch) &&
+    !("operatorNote" in patch)
+  ) {
+    return {
+      ok: false,
+      message:
+        "at least one of status, ownerUserId, claimOwner, operatorNote is required",
+    };
+  }
+
+  return { ok: true, patch };
 }

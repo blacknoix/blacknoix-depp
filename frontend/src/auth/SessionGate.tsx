@@ -12,10 +12,12 @@ interface Props {
 
 /**
  * Fail-closed session gate. Operators only — no agent-id field.
+ * Optional operator user UUID enables local self-claim ownership.
  */
 export function SessionGate({ onConnect }: Props) {
   const [mode, setMode] = useState<"tenant" | "bearer">("tenant");
   const [value, setValue] = useState("");
+  const [userId, setUserId] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   function submit(e: FormEvent) {
@@ -26,6 +28,15 @@ export function SessionGate({ onConnect }: Props) {
       const tenantId = parseTenantId(value);
       if (!tenantId) {
         setError("Tenant id must be a UUID.");
+        return;
+      }
+      if (userId.trim() !== "") {
+        const parsedUser = parseTenantId(userId);
+        if (!parsedUser) {
+          setError("Operator user id must be a UUID when provided.");
+          return;
+        }
+        onConnect({ kind: "tenant", tenantId, userId: parsedUser });
         return;
       }
       onConnect({ kind: "tenant", tenantId });
@@ -87,6 +98,20 @@ export function SessionGate({ onConnect }: Props) {
               }
             />
           </label>
+
+          {mode === "tenant" ? (
+            <label>
+              Operator user UUID (optional)
+              <input
+                type="text"
+                autoComplete="off"
+                spellCheck={false}
+                value={userId}
+                onChange={(e) => setUserId(e.target.value)}
+                placeholder="Required locally to claim ownership"
+              />
+            </label>
+          ) : null}
 
           {error ? (
             <p className="error" role="alert">

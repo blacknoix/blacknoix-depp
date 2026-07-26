@@ -257,6 +257,7 @@ describe("post-ingest correlation evaluation", () => {
           suppressed: 0,
         }),
         updateStatus: async () => ({ ok: false, reason: "not_found" }),
+        patchFinding: async () => ({ ok: false, reason: "not_found" }),
         createSuppression: async () => ({ ok: false, reason: "conflict" }),
         clearSuppression: async () => ({ ok: false, reason: "not_found" }),
         listSuppressions: async () => [],
@@ -467,6 +468,71 @@ describe("findings lifecycle triage", () => {
     assert.equal(forbidden.ok, false);
     if (forbidden.ok) return;
     assert.equal(forbidden.reason, "invalid_transition");
+  });
+
+  it("supports self-claim ownership and current operator note", async () => {
+    const userId = "22222222-2222-4222-8222-222222222222";
+    const otherUser = "33333333-3333-4333-8333-333333333333";
+    const changedAt = new Date("2026-03-01T16:00:00.000Z");
+    const correlation = correlationFor(() => changedAt);
+    const id = await seedOpenFinding();
+
+    const noIdentity = await correlation.patchFinding(
+      tenantA,
+      id,
+      { claimOwner: true },
+      {},
+    );
+    assert.equal(noIdentity.ok, false);
+    if (noIdentity.ok) return;
+    assert.equal(noIdentity.reason, "rejected");
+
+    const assignOther = await correlation.patchFinding(
+      tenantA,
+      id,
+      { ownerUserId: otherUser },
+      { userId },
+    );
+    assert.equal(assignOther.ok, false);
+    if (assignOther.ok) return;
+    assert.equal(assignOther.reason, "rejected");
+
+    const claim = await correlation.patchFinding(
+      tenantA,
+      id,
+      { claimOwner: true },
+      { userId },
+    );
+    assert.equal(claim.ok, true);
+    if (!claim.ok) return;
+    assert.equal(claim.finding.ownerUserId, userId);
+    assert.equal(
+      claim.finding.ownerChangedAt?.toISOString(),
+      changedAt.toISOString(),
+    );
+    assert.equal(claim.finding.ownerChangedByUserId, userId);
+
+    const note = await correlation.patchFinding(
+      tenantA,
+      id,
+      { operatorNote: "  Checking host reboot window  " },
+      { userId },
+    );
+    assert.equal(note.ok, true);
+    if (!note.ok) return;
+    assert.equal(note.finding.operatorNote, "Checking host reboot window");
+    assert.equal(note.finding.operatorNoteUpdatedByUserId, userId);
+
+    const clear = await correlation.patchFinding(
+      tenantA,
+      id,
+      { ownerUserId: null, operatorNote: null },
+      { userId },
+    );
+    assert.equal(clear.ok, true);
+    if (!clear.ok) return;
+    assert.equal(clear.finding.ownerUserId, null);
+    assert.equal(clear.finding.operatorNote, null);
   });
 
   it("does not update another tenant's finding", async () => {

@@ -3,7 +3,9 @@ import { describe, it } from "node:test";
 
 import {
   FINDINGS_QUERY_MAX_LIMIT,
+  OPERATOR_NOTE_MAX_LENGTH,
   parseFindingsQueryV1,
+  parsePatchFindingBody,
 } from "../../src/correlation/query";
 
 const AGENT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -83,5 +85,55 @@ describe("parseFindingsQueryV1", () => {
     assert.equal(byStatus.query.status, "open");
 
     assert.equal(parseFindingsQueryV1({ status: "snoozed" }).ok, false);
+  });
+});
+
+describe("parsePatchFindingBody", () => {
+  const USER = "22222222-2222-4222-8222-222222222222";
+
+  it("accepts status-only patches", () => {
+    const result = parsePatchFindingBody({ status: "acknowledged" });
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(result.patch.status, "acknowledged");
+    assert.equal("ownerUserId" in result.patch, false);
+  });
+
+  it("accepts claim and clear ownership", () => {
+    const claim = parsePatchFindingBody({ claimOwner: true });
+    assert.equal(claim.ok, true);
+    if (!claim.ok) return;
+    assert.equal(claim.patch.claimOwner, true);
+
+    const clear = parsePatchFindingBody({ ownerUserId: null });
+    assert.equal(clear.ok, true);
+    if (!clear.ok) return;
+    assert.equal(clear.patch.ownerUserId, null);
+  });
+
+  it("trims notes, clears empty, and bounds length", () => {
+    const note = parsePatchFindingBody({ operatorNote: "  hello  " });
+    assert.equal(note.ok, true);
+    if (!note.ok) return;
+    assert.equal(note.patch.operatorNote, "hello");
+
+    const empty = parsePatchFindingBody({ operatorNote: "   " });
+    assert.equal(empty.ok, true);
+    if (!empty.ok) return;
+    assert.equal(empty.patch.operatorNote, null);
+
+    const tooLong = parsePatchFindingBody({
+      operatorNote: "x".repeat(OPERATOR_NOTE_MAX_LENGTH + 1),
+    });
+    assert.equal(tooLong.ok, false);
+  });
+
+  it("rejects empty body and unknown fields", () => {
+    assert.equal(parsePatchFindingBody({}).ok, false);
+    assert.equal(parsePatchFindingBody({ assignee: USER }).ok, false);
+    assert.equal(
+      parsePatchFindingBody({ status: "open", tenantId: "x" }).ok,
+      false,
+    );
   });
 });

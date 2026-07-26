@@ -175,10 +175,17 @@ Implemented:
   Frontend Agents page at `/agents` consumes this inventory, related findings,
   and a compact 24h recent-activity view via existing `GET /v1/telemetry/events`
   (eventType + occurredAt only; no payload dump; not online/offline).
-  Cross-links: `/agents?agentId=` focuses an agent; `/findings` carries
+  Agents URL state: shareable `freshness` / `hasOpenFindings` filters plus
+  `agentId` selection (client-side on inventory; invalid values fail closed).
+  Selected-agent detail prioritizes investigation CTAs into Findings and keeps
+  honest freshness language. Jump bar includes narrow Agents filter commands.
+  Remote actions, enrollment UX, bulk/tagging, and device management deferred.
+  Cross-links: `/agents?agentId=` focuses an agent (optional `freshness` /
+  `hasOpenFindings` list filters); `/findings` carries
   shareable `status` / `ruleId` / `agentId` filters plus optional `findingId`
   selection. Invalid UUIDs/enums fail closed. Shell “Jump to…” bar (Ctrl/⌘K)
-  offers nav + built-in findings filters + local/shared views; actions navigate
+  offers nav + built-in findings filters + Agents freshness/open-findings
+  filters + local/shared views; actions navigate
   via URL paths only (no search API). Shell Attention popover surfaces the
   pull-based findings digest.
 

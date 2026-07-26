@@ -43,6 +43,13 @@ describe("buildOperatorCommands / filterOperatorCommands", () => {
     const commands = buildOperatorCommands({ session, storage });
     expect(commands.some((c) => c.id === "nav.findings")).toBe(true);
     expect(commands.some((c) => c.id === "nav.agents")).toBe(true);
+    expect(commands.some((c) => c.id === "agents.freshness.stale")).toBe(true);
+    expect(commands.some((c) => c.id === "agents.openFindings")).toBe(true);
+    expect(
+      commandTargetPath(
+        commands.find((c) => c.id === "agents.freshness.stale")!,
+      ),
+    ).toBe("/agents?freshness=stale");
     expect(commands.some((c) => c.id === "filter.status.open")).toBe(true);
     expect(
       commands.some((c) => c.id === "filter.rule.agent.lifecycle_churn"),

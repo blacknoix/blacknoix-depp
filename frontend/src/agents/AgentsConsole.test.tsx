@@ -209,7 +209,7 @@ describe("AgentsConsoleView", () => {
     await waitFor(() => {
       expect(screen.getByText("edge-1")).toBeInTheDocument();
     });
-    expect(screen.getByText(/Recent heartbeat/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/Recent heartbeat/i).length).toBeGreaterThan(0);
     expect(
       screen.getByText(/Select an agent to inspect/i),
     ).toBeInTheDocument();
@@ -225,11 +225,20 @@ describe("AgentsConsoleView", () => {
     expect(screen.getByText("heartbeat")).toBeInTheDocument();
     expect(screen.queryByText(/"status"/)).not.toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: /Open in Findings/i }),
+      screen.getByRole("link", { name: /Open findings \(1\)/i }),
+    ).toHaveAttribute(
+      "href",
+      "/findings?status=open&agentId=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    );
+    expect(
+      screen.getByRole("link", { name: /All findings for agent/i }),
     ).toHaveAttribute(
       "href",
       "/findings?agentId=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     );
+    expect(
+      screen.getByRole("button", { name: /Clear focus/i }),
+    ).toBeInTheDocument();
   });
 
   it("shows empty activity when the 24h window has no events", async () => {
@@ -375,5 +384,123 @@ describe("AgentsConsoleView", () => {
     await waitFor(() => {
       expect(screen.getByRole("alert")).toHaveTextContent(/AGENTS_UNAVAILABLE/);
     });
+  });
+
+  it("filters inventory via URL and drops focus when selection no longer matches", async () => {
+    const user = userEvent.setup();
+    const staleAgent: AgentInventoryItem = {
+      id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      name: "edge-stale",
+      createdAt: "2026-03-01T12:00:00.000Z",
+      lastHeartbeatAt: "2026-02-28T12:00:00.000Z",
+      openFindingsCount: 0,
+      heartbeatFreshness: "stale",
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/v1/agents")) {
+          return jsonOk({ agents: [agent, staleAgent] });
+        }
+        if (url.includes("/v1/telemetry/events")) {
+          return jsonOk({
+            ...activityPayload,
+            events: [],
+            summary: {
+              ...activityPayload.summary,
+              totalInWindow: 0,
+              countsByEventType: {},
+            },
+            page: { limit: 20, offset: 0, returned: 0 },
+          });
+        }
+        if (url.includes("/v1/findings?")) {
+          return jsonOk({
+            findings: [],
+            page: { limit: 10, offset: 0, returned: 0 },
+          });
+        }
+        return jsonErr(404, "NOT_FOUND", url);
+      }),
+    );
+
+    render(
+      <MemoryRouter initialEntries={[`/agents?agentId=${AGENT_ID}`]}>
+        <AgentsConsoleView
+          session={{ kind: "tenant", tenantId: TENANT }}
+        />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/Focused agent/i)).toBeInTheDocument();
+    });
+
+    await user.selectOptions(screen.getByLabelText("Freshness"), "stale");
+    await waitFor(() => {
+      expect(screen.queryByText(/Focused agent/i)).not.toBeInTheDocument();
+    });
+    expect(
+      screen.queryByRole("button", { name: /edge-1/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /edge-stale/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Select an agent to inspect/i),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps a conflicting deep-link selection visible with a filter warning", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/v1/agents")) {
+          return jsonOk({ agents: [agent] });
+        }
+        if (url.includes("/v1/telemetry/events")) {
+          return jsonOk({
+            ...activityPayload,
+            events: [],
+            summary: {
+              ...activityPayload.summary,
+              totalInWindow: 0,
+              countsByEventType: {},
+            },
+            page: { limit: 20, offset: 0, returned: 0 },
+          });
+        }
+        if (url.includes("/v1/findings?")) {
+          return jsonOk({
+            findings: [],
+            page: { limit: 10, offset: 0, returned: 0 },
+          });
+        }
+        return jsonErr(404, "NOT_FOUND", url);
+      }),
+    );
+
+    render(
+      <MemoryRouter
+        initialEntries={[`/agents?freshness=stale&agentId=${AGENT_ID}`]}
+      >
+        <AgentsConsoleView
+          session={{ kind: "tenant", tenantId: TENANT }}
+        />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/hidden by the current filters/i),
+      ).toBeInTheDocument();
+    });
+    expect(screen.getByRole("heading", { name: "edge-1" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Clear focus/i }),
+    ).toBeInTheDocument();
   });
 });

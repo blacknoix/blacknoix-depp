@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 
 import type { Finding } from "../findings/types";
 import { findingsPath } from "../routing/crossLinks";
+import { sortRelatedFindings } from "./agentWorkflow";
 import type {
   AgentInventoryItem,
   AgentRecentActivity,
@@ -17,6 +18,7 @@ interface Props {
   recentActivity: AgentRecentActivity | null;
   activityPhase: SectionPhase;
   activityError: string | null;
+  onClearFocus?: () => void;
 }
 
 function formatCountStrip(counts: Record<string, number>): string {
@@ -24,6 +26,17 @@ function formatCountStrip(counts: Record<string, number>): string {
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([type, count]) => `${type}: ${count}`);
   return parts.length > 0 ? parts.join(" · ") : "none";
+}
+
+function freshnessHelp(agent: AgentInventoryItem): string {
+  switch (agent.heartbeatFreshness) {
+    case "recent":
+      return "Last heartbeat is inside the silence threshold. This is inventory liveness, not online/offline.";
+    case "stale":
+      return "Last heartbeat is beyond the silence threshold. Investigate activity and open findings — not a remediation console.";
+    case "unknown":
+      return "No heartbeat recorded yet for this agent. Enrollment and install UX are deferred.";
+  }
 }
 
 export function AgentDetail({
@@ -34,6 +47,7 @@ export function AgentDetail({
   recentActivity,
   activityPhase,
   activityError,
+  onClearFocus,
 }: Props) {
   if (!agent) {
     return (
@@ -42,12 +56,15 @@ export function AgentDetail({
           <h2>Detail</h2>
         </header>
         <p className="empty" role="status">
-          Select an agent to inspect heartbeat, recent activity, and related
-          findings.
+          Select an agent to inspect heartbeat freshness, recent activity, and
+          related findings.
         </p>
       </section>
     );
   }
+
+  const sortedFindings = sortRelatedFindings(relatedFindings);
+  const openRelated = sortedFindings.filter((f) => f.status === "open").length;
 
   return (
     <section className="panel detail-panel" aria-label="Agent detail">
@@ -57,6 +74,10 @@ export function AgentDetail({
           {freshnessLabel(agent.heartbeatFreshness)}
         </span>
       </header>
+
+      <p className="muted tiny agent-freshness-help" role="note">
+        {freshnessHelp(agent)}
+      </p>
 
       <dl className="detail-grid">
         <div>
@@ -80,6 +101,44 @@ export function AgentDetail({
           <dd>{agent.openFindingsCount}</dd>
         </div>
       </dl>
+
+      <div className="actions agent-investigate">
+        <h3>Investigate</h3>
+        <div className="action-row wrap">
+          {agent.openFindingsCount > 0 ? (
+            <Link
+              className="btn"
+              to={findingsPath({ agentId: agent.id, status: "open" })}
+            >
+              Open findings ({agent.openFindingsCount})
+            </Link>
+          ) : (
+            <Link
+              className="btn btn-secondary"
+              to={findingsPath({ agentId: agent.id })}
+            >
+              Open in Findings
+            </Link>
+          )}
+          {agent.openFindingsCount > 0 ? (
+            <Link
+              className="btn btn-secondary"
+              to={findingsPath({ agentId: agent.id })}
+            >
+              All findings for agent
+            </Link>
+          ) : null}
+          {onClearFocus ? (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={onClearFocus}
+            >
+              Clear focus
+            </button>
+          ) : null}
+        </div>
+      </div>
 
       <div className="agent-section">
         <h3>Recent activity (last 24 hours)</h3>
@@ -130,14 +189,15 @@ export function AgentDetail({
 
       <div className="actions">
         <h3>Related findings</h3>
-        <div className="action-row" style={{ marginBottom: "0.75rem" }}>
-          <Link
-            className="btn btn-secondary"
-            to={findingsPath({ agentId: agent.id })}
-          >
-            Open in Findings
-          </Link>
-        </div>
+        <p className="muted tiny">
+          {findingsPhase === "ready"
+            ? openRelated > 0
+              ? `${openRelated} open of ${sortedFindings.length} loaded for this agent.`
+              : sortedFindings.length > 0
+                ? `${sortedFindings.length} finding(s) — none currently open.`
+                : null
+            : null}
+        </p>
         {findingsPhase === "loading" ? (
           <p className="muted tiny" role="status">
             Loading findings…
@@ -148,19 +208,20 @@ export function AgentDetail({
             {findingsError}
           </p>
         ) : null}
-        {findingsPhase === "ready" && relatedFindings.length === 0 ? (
+        {findingsPhase === "ready" && sortedFindings.length === 0 ? (
           <p className="empty" role="status">
             No findings for this agent.
           </p>
         ) : null}
-        {relatedFindings.length > 0 ? (
+        {sortedFindings.length > 0 ? (
           <ul className="related-findings">
-            {relatedFindings.map((finding) => (
+            {sortedFindings.map((finding) => (
               <li key={finding.id}>
                 <Link
                   className="related-finding-link"
                   to={findingsPath({
                     agentId: agent.id,
+                    status: finding.status,
                     findingId: finding.id,
                   })}
                 >

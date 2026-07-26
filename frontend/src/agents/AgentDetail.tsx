@@ -1,6 +1,12 @@
 import { Link } from "react-router-dom";
+import { useMemo } from "react";
 
 import type { Finding } from "../findings/types";
+import { InvestigationTimeline } from "../investigation/InvestigationTimeline";
+import {
+  composeInvestigationTimeline,
+  timelineSinceIso,
+} from "../investigation/timeline";
 import { findingsPath } from "../routing/crossLinks";
 import { sortRelatedFindings } from "./agentWorkflow";
 import type {
@@ -21,13 +27,6 @@ interface Props {
   onClearFocus?: () => void;
 }
 
-function formatCountStrip(counts: Record<string, number>): string {
-  const parts = Object.entries(counts)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([type, count]) => `${type}: ${count}`);
-  return parts.length > 0 ? parts.join(" · ") : "none";
-}
-
 function freshnessHelp(agent: AgentInventoryItem): string {
   switch (agent.heartbeatFreshness) {
     case "recent":
@@ -37,6 +36,22 @@ function freshnessHelp(agent: AgentInventoryItem): string {
     case "unknown":
       return "No heartbeat recorded yet for this agent. Enrollment and install UX are deferred.";
   }
+}
+
+function timelinePhase(
+  findingsPhase: SectionPhase,
+  activityPhase: SectionPhase,
+): "idle" | "loading" | "ready" | "error" {
+  if (findingsPhase === "idle" && activityPhase === "idle") {
+    return "idle";
+  }
+  if (findingsPhase === "loading" || activityPhase === "loading") {
+    return "loading";
+  }
+  if (findingsPhase === "ready" || activityPhase === "ready") {
+    return "ready";
+  }
+  return "error";
 }
 
 export function AgentDetail({
@@ -49,6 +64,37 @@ export function AgentDetail({
   activityError,
   onClearFocus,
 }: Props) {
+  const sortedFindings = useMemo(
+    () => sortRelatedFindings(relatedFindings),
+    [relatedFindings],
+  );
+
+  const timeline = useMemo(() => {
+    if (!agent) {
+      return null;
+    }
+    const findingsReady = findingsPhase === "ready";
+    const activityReady = activityPhase === "ready";
+    if (!findingsReady && !activityReady) {
+      return null;
+    }
+    const since =
+      recentActivity?.since ?? timelineSinceIso();
+    return composeInvestigationTimeline({
+      since,
+      findings: findingsReady ? relatedFindings : [],
+      findingsAvailable: findingsReady,
+      telemetryEvents: activityReady ? (recentActivity?.events ?? []) : [],
+      telemetryAvailable: activityReady,
+    });
+  }, [
+    agent,
+    findingsPhase,
+    activityPhase,
+    relatedFindings,
+    recentActivity,
+  ]);
+
   if (!agent) {
     return (
       <section className="panel detail-panel" aria-label="Agent detail">
@@ -56,14 +102,13 @@ export function AgentDetail({
           <h2>Detail</h2>
         </header>
         <p className="empty" role="status">
-          Select an agent to inspect heartbeat freshness, recent activity, and
+          Select an agent to inspect heartbeat freshness, recent context, and
           related findings.
         </p>
       </section>
     );
   }
 
-  const sortedFindings = sortRelatedFindings(relatedFindings);
   const openRelated = sortedFindings.filter((f) => f.status === "open").length;
 
   return (
@@ -140,52 +185,17 @@ export function AgentDetail({
         </div>
       </div>
 
-      <div className="agent-section">
-        <h3>Recent activity (last 24 hours)</h3>
-        <p className="muted tiny">
-          Telemetry events in an explicit 24-hour window. Heartbeat freshness
-          above remains the inventory liveness signal — not online/offline.
-        </p>
-        {activityPhase === "loading" ? (
-          <p className="muted tiny" role="status">
-            Loading recent activity…
-          </p>
-        ) : null}
-        {activityError ? (
-          <p className="error" role="alert">
-            {activityError}
-          </p>
-        ) : null}
-        {activityPhase === "ready" && recentActivity ? (
-          <>
-            <p className="activity-summary" role="status">
-              <span>
-                {recentActivity.summary.totalInWindow} event
-                {recentActivity.summary.totalInWindow === 1 ? "" : "s"} in window
-              </span>
-              <span className="muted">
-                {formatCountStrip(recentActivity.summary.countsByEventType)}
-              </span>
-            </p>
-            {recentActivity.events.length === 0 ? (
-              <p className="empty" role="status">
-                No telemetry in the last 24 hours.
-              </p>
-            ) : (
-              <ul className="activity-list" aria-label="Recent telemetry events">
-                {recentActivity.events.map((event) => (
-                  <li key={event.id}>
-                    <span className="mono">{event.eventType}</span>
-                    <span className="muted tiny">
-                      {new Date(event.occurredAt).toLocaleString()}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </>
-        ) : null}
-      </div>
+      <InvestigationTimeline
+        timeline={timeline}
+        phase={timelinePhase(findingsPhase, activityPhase)}
+        findingsError={findingsError}
+        telemetryError={activityError}
+        telemetrySummary={
+          activityPhase === "ready" && recentActivity
+            ? recentActivity.summary
+            : null
+        }
+      />
 
       <div className="actions">
         <h3>Related findings</h3>
@@ -215,21 +225,21 @@ export function AgentDetail({
         ) : null}
         {sortedFindings.length > 0 ? (
           <ul className="related-findings">
-            {sortedFindings.map((finding) => (
-              <li key={finding.id}>
+            {sortedFindings.map((related) => (
+              <li key={related.id}>
                 <Link
                   className="related-finding-link"
                   to={findingsPath({
                     agentId: agent.id,
-                    status: finding.status,
-                    findingId: finding.id,
+                    status: related.status,
+                    findingId: related.id,
                   })}
                 >
-                  <span className={`status-pill status-${finding.status}`}>
-                    {finding.status}
+                  <span className={`status-pill status-${related.status}`}>
+                    {related.status}
                   </span>{" "}
-                  <span>{finding.title}</span>
-                  <span className="mono muted tiny"> {finding.ruleId}</span>
+                  <span>{related.title}</span>
+                  <span className="mono muted tiny"> {related.ruleId}</span>
                 </Link>
               </li>
             ))}

@@ -515,6 +515,51 @@ select {
   font-size: 0.88rem;
 }
 
+.timeline-list li {
+  display: block;
+  padding: 0;
+  background: transparent;
+}
+
+.timeline-list .timeline-row,
+.timeline-list .timeline-link {
+  display: grid;
+  grid-template-columns: 7.5rem 1fr auto;
+  grid-template-areas:
+    "kind title at"
+    "kind sub at";
+  gap: 0.1rem 0.75rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 8px;
+  background: #f5f8fb;
+  text-decoration: none;
+  color: inherit;
+}
+
+.timeline-list .timeline-link:hover {
+  background: #eaf1f7;
+}
+
+.timeline-kind {
+  grid-area: kind;
+  align-self: center;
+}
+
+.timeline-title {
+  grid-area: title;
+  font-weight: 600;
+}
+
+.timeline-sub {
+  grid-area: sub;
+}
+
+.timeline-at {
+  grid-area: at;
+  align-self: center;
+  text-align: right;
+}
+
 .related-findings {
   list-style: none;
   margin: 0 0 0.75rem;

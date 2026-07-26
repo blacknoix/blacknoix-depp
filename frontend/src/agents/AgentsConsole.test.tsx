@@ -18,12 +18,13 @@ afterEach(() => {
 const TENANT = "11111111-1111-4111-8111-111111111111";
 const AGENT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const EVENT_ID = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+const NOW_ISO = new Date().toISOString();
 
 const agent: AgentInventoryItem = {
   id: AGENT_ID,
   name: "edge-1",
   createdAt: "2026-03-01T12:00:00.000Z",
-  lastHeartbeatAt: "2026-03-01T11:58:00.000Z",
+  lastHeartbeatAt: NOW_ISO,
   openFindingsCount: 1,
   heartbeatFreshness: "recent",
 };
@@ -35,15 +36,15 @@ const activityPayload = {
       agentId: AGENT_ID,
       schemaVersion: 1,
       eventType: "heartbeat",
-      occurredAt: "2026-03-01T11:58:00.000Z",
-      ingestedAt: "2026-03-01T11:58:01.000Z",
+      occurredAt: NOW_ISO,
+      ingestedAt: NOW_ISO,
       payload: { status: "ok" },
     },
   ],
   summary: {
     agentId: AGENT_ID,
-    lastSeenAt: "2026-03-01T11:58:01.000Z",
-    lastHeartbeatAt: "2026-03-01T11:58:00.000Z",
+    lastSeenAt: NOW_ISO,
+    lastHeartbeatAt: NOW_ISO,
     countsByEventType: { heartbeat: 1 },
     totalInWindow: 1,
   },
@@ -219,9 +220,9 @@ describe("AgentsConsoleView", () => {
       expect(screen.getByText("Agent lifecycle churn")).toBeInTheDocument();
     });
     expect(
-      screen.getByRole("heading", { name: /Recent activity \(last 24 hours\)/i }),
+      screen.getByRole("heading", { name: /Recent context \(last 24 hours\)/i }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/1 event in window/i)).toBeInTheDocument();
+    expect(screen.getByText(/1 telemetry event in window/i)).toBeInTheDocument();
     expect(screen.getByText("heartbeat")).toBeInTheDocument();
     expect(screen.queryByText(/"status"/)).not.toBeInTheDocument();
     expect(
@@ -287,7 +288,7 @@ describe("AgentsConsoleView", () => {
     await user.click(screen.getByRole("button", { name: /edge-1/i }));
     await waitFor(() => {
       expect(
-        screen.getByText(/No telemetry in the last 24 hours/i),
+        screen.getByText(/No finding or telemetry activity in the last 24 hours/i),
       ).toBeInTheDocument();
     });
     expect(screen.getByText(/No findings for this agent/i)).toBeInTheDocument();
@@ -346,6 +347,10 @@ describe("AgentsConsoleView", () => {
       expect(screen.getByText("Still visible finding")).toBeInTheDocument();
     });
     expect(screen.getByRole("alert")).toHaveTextContent(/TELEMETRY_UNAVAILABLE/);
+    expect(
+      screen.queryByText(/Findings source unavailable/i),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Still visible finding")).toBeInTheDocument();
   });
 
   it("shows empty and error states for inventory", async () => {
@@ -502,5 +507,90 @@ describe("AgentsConsoleView", () => {
     expect(
       screen.getByRole("button", { name: /Clear focus/i }),
     ).toBeInTheDocument();
+  });
+
+  it("composes finding lifecycle into recent context with Findings navigation", async () => {
+    const user = userEvent.setup();
+    const findingId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    const createdAt = new Date().toISOString();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/v1/agents")) {
+          return jsonOk({ agents: [agent] });
+        }
+        if (url.includes("/v1/telemetry/events")) {
+          return jsonOk({
+            events: [
+              {
+                id: EVENT_ID,
+                agentId: AGENT_ID,
+                schemaVersion: 1,
+                eventType: "heartbeat",
+                occurredAt: createdAt,
+                ingestedAt: createdAt,
+                payload: { status: "ok" },
+              },
+            ],
+            summary: {
+              agentId: AGENT_ID,
+              lastSeenAt: createdAt,
+              lastHeartbeatAt: createdAt,
+              countsByEventType: { heartbeat: 1 },
+              totalInWindow: 1,
+            },
+            page: { limit: 20, offset: 0, returned: 1 },
+          });
+        }
+        if (url.includes("/v1/findings?")) {
+          return jsonOk({
+            findings: [
+              {
+                id: findingId,
+                agentId: AGENT_ID,
+                ruleId: "agent.lifecycle_churn",
+                title: "Agent lifecycle churn",
+                severity: "medium",
+                status: "open",
+                statusChangedAt: null,
+                statusChangedByUserId: null,
+                evidence: {},
+                windowStart: createdAt,
+                windowEnd: createdAt,
+                createdAt,
+              },
+            ],
+            page: { limit: 10, offset: 0, returned: 1 },
+          });
+        }
+        return jsonErr(404, "NOT_FOUND", url);
+      }),
+    );
+
+    render(
+      <MemoryRouter>
+        <AgentsConsoleView
+          session={{ kind: "tenant", tenantId: TENANT }}
+        />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("edge-1")).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: /edge-1/i }));
+    await waitFor(() => {
+      expect(
+        screen.getByRole("link", { name: /Finding created: Agent lifecycle churn/i }),
+      ).toBeInTheDocument();
+    });
+    expect(
+      screen.getByRole("link", { name: /Finding created: Agent lifecycle churn/i }),
+    ).toHaveAttribute(
+      "href",
+      `/findings?status=open&agentId=${AGENT_ID}&findingId=${findingId}`,
+    );
+    expect(screen.getByText("heartbeat")).toBeInTheDocument();
   });
 });

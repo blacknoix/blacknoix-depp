@@ -1,8 +1,17 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useOutletContext, useSearchParams } from "react-router-dom";
 
 import type { OperatorSession } from "../auth/session";
-import { parseUuidQueryParam } from "../routing/crossLinks";
+import {
+  parseAgentsSearchParams,
+  serializeAgentsSearchParams,
+  type AgentsFilters,
+} from "../routing/agentsUrlState";
+import {
+  agentMatchesFilters,
+  filterAgents,
+  sortAgentsForInvestigation,
+} from "./agentWorkflow";
 import { AgentDetail } from "./AgentDetail";
 import { AgentsList } from "./AgentsList";
 import { useAgentsConsole } from "./useAgentsConsole";
@@ -20,45 +29,96 @@ export function AgentsConsoleView({ session }: ViewProps) {
   const { state, selected, selectAgent } = useAgentsConsole(session);
   const busy = state.load === "loading";
 
-  const agentParam = parseUuidQueryParam(searchParams.get("agentId"));
+  const urlState = useMemo(
+    () => parseAgentsSearchParams(searchParams),
+    [searchParams],
+  );
+
+  const visibleAgents = useMemo(
+    () =>
+      sortAgentsForInvestigation(
+        filterAgents(state.agents, urlState.filters),
+      ),
+    [state.agents, urlState.filters],
+  );
 
   useEffect(() => {
-    if (!agentParam.ok) {
+    if (!urlState.agentId) {
       selectAgent(null);
       return;
     }
-    if (!agentParam.present) {
-      selectAgent(null);
-      return;
-    }
-    selectAgent(agentParam.id);
-  }, [
-    agentParam.ok,
-    agentParam.present,
-    agentParam.ok && agentParam.present ? agentParam.id : null,
-    selectAgent,
-  ]);
+    selectAgent(urlState.agentId);
+  }, [urlState.agentId, selectAgent]);
 
-  function onSelect(id: string) {
-    setSearchParams({ agentId: id }, { replace: true });
+  function writeUrl(next: {
+    filters: AgentsFilters;
+    agentId?: string | null;
+  }) {
+    const params = serializeAgentsSearchParams({
+      filters: next.filters,
+      agentId: next.agentId ?? null,
+    });
+    setSearchParams(params, { replace: true });
   }
 
-  const focusBanner = !agentParam.ok
-    ? "Invalid agent id in the URL — selection ignored."
-    : agentParam.ok &&
-        agentParam.present &&
-        state.load === "ready" &&
-        !selected
-      ? "Agent from the URL was not found in this tenant inventory."
-      : null;
+  function onSelect(id: string) {
+    writeUrl({ filters: urlState.filters, agentId: id });
+  }
+
+  function onFiltersChange(filters: AgentsFilters) {
+    const keepSelection =
+      urlState.agentId &&
+      state.agents.some(
+        (agent) =>
+          agent.id === urlState.agentId &&
+          agentMatchesFilters(agent, filters),
+      )
+        ? urlState.agentId
+        : null;
+    writeUrl({ filters, agentId: keepSelection });
+  }
+
+  function onClearFocus() {
+    writeUrl({ filters: urlState.filters, agentId: null });
+  }
+
+  const invalidParts: string[] = [];
+  if (urlState.invalid.agentId) {
+    invalidParts.push("agent id");
+  }
+  if (urlState.invalid.freshness) {
+    invalidParts.push("freshness");
+  }
+  if (urlState.invalid.hasOpenFindings) {
+    invalidParts.push("hasOpenFindings");
+  }
+
+  const focusBanner =
+    invalidParts.length > 0
+      ? `Invalid ${invalidParts.join(", ")} in the URL — ignored.`
+      : urlState.agentId &&
+          state.load === "ready" &&
+          !state.agents.some((a) => a.id === urlState.agentId)
+        ? "Agent from the URL was not found in this tenant inventory."
+        : urlState.agentId &&
+            state.load === "ready" &&
+            selected &&
+            !agentMatchesFilters(selected, urlState.filters)
+          ? "Focused agent is hidden by the current filters — clear filters or clear focus."
+          : null;
+
+  // Keep detail visible even when filters hide the list row, so operators can
+  // clear focus / open Findings without losing context.
+  const showDetail = selected;
 
   return (
     <div className="console">
       <header className="page-header">
         <h1>Agents</h1>
         <p className="muted">
-          Inventory and heartbeat freshness. Not a device-management console —
-          remote actions and enrollment UX are deferred.
+          Inventory, heartbeat freshness, and agent-centric investigation. Not a
+          device-management console — remote actions and enrollment UX are
+          deferred.
         </p>
       </header>
 
@@ -80,28 +140,39 @@ export function AgentsConsoleView({ session }: ViewProps) {
         </p>
       ) : null}
 
-      {selected ? (
+      {showDetail ? (
         <p className="banner" role="status">
           Focused agent{" "}
-          <span className="mono">{selected.name}</span>
+          <span className="mono">{showDetail.name}</span>
+          {showDetail.openFindingsCount > 0
+            ? ` · ${showDetail.openFindingsCount} open finding${showDetail.openFindingsCount === 1 ? "" : "s"}`
+            : ""}
         </p>
       ) : null}
 
       <div className="workspace">
         <AgentsList
-          agents={state.agents}
-          selectedId={selected?.id ?? null}
+          agents={visibleAgents}
+          totalCount={state.agents.length}
+          filters={urlState.filters}
+          selectedId={
+            showDetail && agentMatchesFilters(showDetail, urlState.filters)
+              ? showDetail.id
+              : null
+          }
           onSelect={onSelect}
+          onFiltersChange={onFiltersChange}
           disabled={busy}
         />
         <AgentDetail
-          agent={selected}
+          agent={showDetail}
           relatedFindings={state.relatedFindings}
           findingsPhase={state.findingsPhase}
           findingsError={state.findingsError}
           recentActivity={state.recentActivity}
           activityPhase={state.activityPhase}
           activityError={state.activityError}
+          onClearFocus={showDetail ? onClearFocus : undefined}
         />
       </div>
     </div>

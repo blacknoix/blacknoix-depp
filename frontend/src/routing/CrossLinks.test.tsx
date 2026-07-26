@@ -143,11 +143,12 @@ describe("cross-linking Findings ↔ Agents", () => {
     });
     expect(screen.getByRole("heading", { name: "edge-1" })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("link", { name: /Open in Findings/i }));
+    await user.click(screen.getByRole("link", { name: /Open findings \(1\)/i }));
     await waitFor(() => {
       expect(screen.getByText(/Filtered to agent/i)).toBeInTheDocument();
     });
     expect(screen.getByText("Agent lifecycle churn")).toBeInTheDocument();
+    expect(screen.getByLabelText("Status")).toHaveValue("open");
   });
 
   it("opens agent context from a finding and fails closed on invalid ids", async () => {

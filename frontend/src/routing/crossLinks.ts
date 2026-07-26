@@ -1,13 +1,17 @@
 /**
  * Narrow URL-carried cross-link state between Agents and Findings.
  *
- * - /agents?agentId=<uuid>
+ * - /agents?freshness=&hasOpenFindings=&agentId=
  * - /findings?status=&ruleId=&agentId=&findingId=
  *
  * Invalid UUIDs / enums fail closed (ignored + surfaced). No global search /
  * deep-link framework — only these operator-workflow params.
  */
 
+import {
+  serializeAgentsSearchParams,
+  type AgentsFilters,
+} from "./agentsUrlState";
 import {
   serializeFindingsSearchParams,
   type FindingsUrlWrite,
@@ -32,11 +36,24 @@ export function parseUuidQueryParam(raw: string | null): UuidParamResult {
   return { ok: true, present: true, id: trimmed };
 }
 
-export function agentsPath(agentId?: string): string {
-  if (!agentId) {
+export function agentsPath(
+  opts?: string | (AgentsFilters & { agentId?: string }),
+): string {
+  if (typeof opts === "string") {
+    return agentsPath({ agentId: opts });
+  }
+  if (!opts) {
     return "/agents";
   }
-  return `/agents?agentId=${encodeURIComponent(agentId)}`;
+  const params = serializeAgentsSearchParams({
+    filters: {
+      ...(opts.freshness ? { freshness: opts.freshness } : {}),
+      ...(opts.hasOpenFindings ? { hasOpenFindings: true } : {}),
+    },
+    agentId: opts.agentId ?? null,
+  });
+  const qs = params.toString();
+  return qs ? `/agents?${qs}` : "/agents";
 }
 
 export function findingsPath(

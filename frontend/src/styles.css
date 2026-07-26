@@ -271,6 +271,27 @@ select {
   min-width: 9rem;
 }
 
+.filter-check {
+  display: inline-flex !important;
+  grid-template-columns: none !important;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
+  padding-bottom: 0.35rem;
+}
+
+.agent-freshness-help {
+  margin: 0 0 0.85rem;
+}
+
+.agent-investigate {
+  margin-bottom: 1rem;
+}
+
+.action-row.wrap {
+  flex-wrap: wrap;
+}
+
 .saved-views {
   margin: 0 0 0.85rem;
   padding: 0.55rem 0.65rem;

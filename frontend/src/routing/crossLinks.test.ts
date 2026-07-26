@@ -34,6 +34,15 @@ describe("cross-link path builders", () => {
     expect(agentsPath("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")).toBe(
       "/agents?agentId=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     );
+    expect(
+      agentsPath({
+        freshness: "stale",
+        hasOpenFindings: true,
+        agentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      }),
+    ).toBe(
+      "/agents?freshness=stale&hasOpenFindings=1&agentId=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    );
     expect(findingsPath()).toBe("/findings");
     expect(
       findingsPath({

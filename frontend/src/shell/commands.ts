@@ -18,7 +18,9 @@ import {
   FINDING_STATUSES,
   type FindingsFilters,
 } from "../findings/types";
-import { findingsPath } from "../routing/crossLinks";
+import { HEARTBEAT_FRESHNESS_VALUES } from "../routing/agentsUrlState";
+import { agentsPath, findingsPath } from "../routing/crossLinks";
+import { freshnessLabel } from "../agents/types";
 
 export type OperatorCommand =
   | {
@@ -82,6 +84,23 @@ const RULE_COMMANDS: readonly OperatorCommand[] = CORRELATION_RULE_IDS.map(
   }),
 );
 
+const AGENT_FRESHNESS_COMMANDS: readonly OperatorCommand[] =
+  HEARTBEAT_FRESHNESS_VALUES.map((freshness) => ({
+    id: `agents.freshness.${freshness}`,
+    kind: "nav" as const,
+    label: `Agents · ${freshnessLabel(freshness).toLowerCase()}`,
+    keywords: ["agents", "freshness", "heartbeat", freshness],
+    to: agentsPath({ freshness }),
+  }));
+
+const AGENT_OPEN_FINDINGS_COMMAND: OperatorCommand = {
+  id: "agents.openFindings",
+  kind: "nav",
+  label: "Agents · with open findings",
+  keywords: ["agents", "open", "findings", "inventory"],
+  to: agentsPath({ hasOpenFindings: true }),
+};
+
 function localViewCommands(
   views: readonly SavedFindingView[],
 ): OperatorCommand[] {
@@ -128,6 +147,8 @@ export function buildOperatorCommands(opts: {
     ...NAV_COMMANDS,
     ...STATUS_COMMANDS,
     ...RULE_COMMANDS,
+    ...AGENT_FRESHNESS_COMMANDS,
+    AGENT_OPEN_FINDINGS_COMMAND,
     ...sharedViewCommands(opts.sharedViews ?? []),
     ...localViewCommands(local),
   ];

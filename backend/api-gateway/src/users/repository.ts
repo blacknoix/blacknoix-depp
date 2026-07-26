@@ -22,6 +22,21 @@ export interface LinkedUser {
   id: string;
 }
 
+/**
+ * Minimal operator presentation for assignment pickers.
+ * Not a people-directory or profile product.
+ */
+export interface OperatorSummary {
+  id: string;
+  email: string | null;
+  displayName: string | null;
+}
+
+export interface ListOperatorsOptions {
+  /** Cap on returned rows. Clamped 1..100; default 100. */
+  limit?: number;
+}
+
 export interface UsersRepository {
   /**
    * Creates the user on first login, or returns the existing one, refreshing
@@ -32,7 +47,27 @@ export interface UsersRepository {
     tenantId: string,
     identity: FederatedIdentity,
   ): Promise<LinkedUser>;
+
+  /**
+   * True when a user row exists in the tenant. Used to fail closed on
+   * reassignment targets that are not known operators for this tenant.
+   */
+  existsInTenant(tenantId: string, userId: string): Promise<boolean>;
+
+  /**
+   * Bounded tenant operator list for assignment pickers (presentation only).
+   */
+  listOperators(
+    tenantId: string,
+    options?: ListOperatorsOptions,
+  ): Promise<OperatorSummary[]>;
 }
+
+const DEFAULT_OPERATORS_LIMIT = 100;
+const MAX_OPERATORS_LIMIT = 100;
+
+const UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * All access runs through withTenantTransaction, so RLS on users constrains
@@ -74,6 +109,47 @@ export function createUsersRepository(db: Kysely<Database>): UsersRepository {
           .executeTakeFirstOrThrow();
 
         return { id: row.id };
+      });
+    },
+
+    async existsInTenant(tenantId, userId) {
+      const id = userId.trim().toLowerCase();
+      if (!UUID.test(id)) {
+        return false;
+      }
+
+      return withTenantTransaction(db, tenantId, async (trx) => {
+        const row = await trx
+          .selectFrom("users")
+          .select("id")
+          .where("id", "=", id)
+          .executeTakeFirst();
+        return Boolean(row);
+      });
+    },
+
+    async listOperators(tenantId, options = {}) {
+      const raw = options.limit ?? DEFAULT_OPERATORS_LIMIT;
+      const limit = Math.min(
+        MAX_OPERATORS_LIMIT,
+        Math.max(1, Number.isFinite(raw) ? Math.trunc(raw) : DEFAULT_OPERATORS_LIMIT),
+      );
+
+      return withTenantTransaction(db, tenantId, async (trx) => {
+        const rows = await trx
+          .selectFrom("users")
+          .select(["id", "email", "display_name"])
+          .orderBy("display_name", "asc")
+          .orderBy("email", "asc")
+          .orderBy("id", "asc")
+          .limit(limit)
+          .execute();
+
+        return rows.map((row) => ({
+          id: row.id,
+          email: row.email,
+          displayName: row.display_name,
+        }));
       });
     },
   };

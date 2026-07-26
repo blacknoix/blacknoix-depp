@@ -35,6 +35,14 @@ import type {
   FindingSuppressionsRepository,
 } from "./suppression-repository";
 
+/**
+ * Narrow seam for validating reassignment targets. Implemented by the users
+ * repository; omitted → reassignment to others fails closed.
+ */
+export interface OperatorLookup {
+  existsInTenant(tenantId: string, userId: string): Promise<boolean>;
+}
+
 export interface SilenceEvaluateOptions {
   /** When set, evaluate only this agent. */
   agentId?: string;
@@ -100,7 +108,8 @@ export interface CorrelationService {
   ): Promise<UpdateStatusOutcome>;
 
   /**
-   * Partial operator patch: status and/or self-claim ownership and/or current note.
+   * Partial operator patch: status and/or ownership (claim / clear / reassign)
+   * and/or current note.
    */
   patchFinding(
     tenantId: string,
@@ -129,6 +138,11 @@ export interface CorrelationServiceDeps {
   telemetry: TelemetryRepository;
   findings: CorrelationFindingsRepository;
   suppressions: FindingSuppressionsRepository;
+  /**
+   * Validates reassignment targets against tenant users. Without this,
+   * self-claim and clear still work; assign-to-other fails closed.
+   */
+  operators?: OperatorLookup;
   /** Injectable clock for deterministic tests. Defaults to Date.now. */
   now?: () => Date;
 }
@@ -147,7 +161,7 @@ function isUniqueViolation(err: unknown): boolean {
 export function createCorrelationService(
   deps: CorrelationServiceDeps,
 ): CorrelationService {
-  const { telemetry, findings, suppressions } = deps;
+  const { telemetry, findings, suppressions, operators } = deps;
   const now = deps.now ?? (() => new Date());
 
   async function persistCandidate(
@@ -276,23 +290,40 @@ export function createCorrelationService(
         }
         nextOwner = actor.userId;
       } else if (patch.ownerUserId === null) {
+        // Clear remains separate from reassignment; actor identity optional.
         nextOwner = null;
       } else if (typeof patch.ownerUserId === "string") {
         if (!actor.userId) {
           return {
             ok: false,
             reason: "rejected",
-            message: "Operator identity is required to claim ownership",
+            message: "Operator identity is required to assign ownership",
           };
         }
-        if (patch.ownerUserId !== actor.userId) {
-          return {
-            ok: false,
-            reason: "rejected",
-            message: "Ownership is self-claim only",
-          };
+        if (patch.ownerUserId === actor.userId) {
+          // Self-assign via ownerUserId remains supported (alongside claimOwner).
+          nextOwner = actor.userId;
+        } else {
+          if (!operators) {
+            return {
+              ok: false,
+              reason: "rejected",
+              message: "Ownership reassignment is not available",
+            };
+          }
+          const targetExists = await operators.existsInTenant(
+            tenantId,
+            patch.ownerUserId,
+          );
+          if (!targetExists) {
+            return {
+              ok: false,
+              reason: "rejected",
+              message: "Target operator not found in this tenant",
+            };
+          }
+          nextOwner = patch.ownerUserId;
         }
-        nextOwner = patch.ownerUserId;
       }
 
       if (nextOwner !== undefined && current.ownerUserId !== nextOwner) {

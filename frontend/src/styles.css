@@ -583,15 +583,32 @@ select {
   font-size: 0.88rem;
 }
 
-.note-field textarea {
+.note-field textarea,
+.note-field select {
   width: 100%;
-  resize: vertical;
-  min-height: 4.5rem;
   padding: 0.55rem 0.65rem;
   border: 1px solid #c5d0da;
   border-radius: 8px;
   font: inherit;
   background: #fff;
+}
+
+.note-field textarea {
+  resize: vertical;
+  min-height: 4.5rem;
+}
+
+.assign-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.65rem;
+  margin: 0.5rem 0 0.25rem;
+}
+
+.assign-row .assign-field {
+  flex: 1 1 14rem;
+  margin: 0;
 }
 
 .related-findings {

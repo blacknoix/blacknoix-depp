@@ -3,13 +3,14 @@ import { type Kysely, sql } from "kysely";
 /**
  * Findings investigation intent v1 — minimal ownership + current operator note.
  *
- * Ownership is self-claim only (owner_user_id). Soft UUID refs (no FK to users)
- * match status_changed_by_user_id — FORCE RLS blocks migrate-time FK checks.
+ * Ownership is a soft UUID (owner_user_id). Soft refs (no FK to users) match
+ * status_changed_by_user_id — FORCE RLS blocks migrate-time FK checks.
+ * Application layer validates reassignment targets against tenant users.
  *
  * operator_note is a single current plain-text conclusion (not a thread).
  *
- * Deferred: threaded comments, assign-to-others / queues, notifications,
- * separate case entities, attachments, rich text, live updates.
+ * Deferred: threaded comments, bulk assign, notifications, separate case
+ * entities, attachments, rich text, live updates.
  */
 export async function up(db: Kysely<unknown>): Promise<void> {
   await sql`

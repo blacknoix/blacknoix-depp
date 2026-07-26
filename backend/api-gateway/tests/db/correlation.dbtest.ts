@@ -8,6 +8,7 @@ import { createFindingSuppressionsRepository } from "../../src/correlation/suppr
 import { withTenantTransaction } from "../../src/db/tenant-context";
 import { createTelemetryRepository } from "../../src/telemetry/repository";
 import { createTelemetryService } from "../../src/telemetry/service";
+import { createUsersRepository } from "../../src/users/repository";
 import { connectDb, resetSchema, seedTenant, type DbHandles } from "../db/helpers";
 
 let db: DbHandles;
@@ -23,6 +24,7 @@ function correlationFor(
     telemetry: createTelemetryRepository(db.app),
     findings: createCorrelationFindingsRepository(db.app),
     suppressions: createFindingSuppressionsRepository(db.app),
+    operators: createUsersRepository(db.app),
     ...(now ? { now } : {}),
   });
 }
@@ -473,7 +475,7 @@ describe("findings lifecycle triage", () => {
 
   it("supports self-claim ownership and current operator note", async () => {
     const userId = "22222222-2222-4222-8222-222222222222";
-    const otherUser = "33333333-3333-4333-8333-333333333333";
+    const unknownUser = "33333333-3333-4333-8333-333333333333";
     const changedAt = new Date("2026-03-01T16:00:00.000Z");
     const correlation = correlationFor(() => changedAt);
     const id = await seedOpenFinding();
@@ -488,15 +490,16 @@ describe("findings lifecycle triage", () => {
     if (noIdentity.ok) return;
     assert.equal(noIdentity.reason, "rejected");
 
-    const assignOther = await correlation.patchFinding(
+    const assignUnknown = await correlation.patchFinding(
       tenantA,
       id,
-      { ownerUserId: otherUser },
+      { ownerUserId: unknownUser },
       { userId },
     );
-    assert.equal(assignOther.ok, false);
-    if (assignOther.ok) return;
-    assert.equal(assignOther.reason, "rejected");
+    assert.equal(assignUnknown.ok, false);
+    if (assignUnknown.ok) return;
+    assert.equal(assignUnknown.reason, "rejected");
+    assert.match(assignUnknown.message, /not found in this tenant/i);
 
     const claim = await correlation.patchFinding(
       tenantA,
@@ -534,6 +537,121 @@ describe("findings lifecycle triage", () => {
     if (!clear.ok) return;
     assert.equal(clear.finding.ownerUserId, null);
     assert.equal(clear.finding.operatorNote, null);
+  });
+
+  it("reassigns ownership to a tenant operator and updates queues", async () => {
+    const users = createUsersRepository(db.app);
+    const alice = await users.findOrLinkByIdentity(tenantA, {
+      issuer: "https://idp.example.com",
+      subject: "alice",
+      email: "alice@example.com",
+      displayName: "Alice",
+    });
+    const bob = await users.findOrLinkByIdentity(tenantA, {
+      issuer: "https://idp.example.com",
+      subject: "bob",
+      email: "bob@example.com",
+      displayName: "Bob",
+    });
+    const otherTenantUser = await users.findOrLinkByIdentity(tenantB, {
+      issuer: "https://idp.example.com",
+      subject: "carol",
+      email: "carol@example.com",
+      displayName: "Carol",
+    });
+
+    const changedAt = new Date("2026-03-01T17:00:00.000Z");
+    const correlation = correlationFor(() => changedAt);
+    const findingsRepo = createCorrelationFindingsRepository(db.app);
+    const id = await seedOpenFinding();
+
+    const noIdentity = await correlation.patchFinding(
+      tenantA,
+      id,
+      { ownerUserId: bob.id },
+      {},
+    );
+    assert.equal(noIdentity.ok, false);
+    if (noIdentity.ok) return;
+    assert.equal(noIdentity.reason, "rejected");
+
+    const crossTenant = await correlation.patchFinding(
+      tenantA,
+      id,
+      { ownerUserId: otherTenantUser.id },
+      { userId: alice.id },
+    );
+    assert.equal(crossTenant.ok, false);
+    if (crossTenant.ok) return;
+    assert.equal(crossTenant.reason, "rejected");
+
+    const assigned = await correlation.patchFinding(
+      tenantA,
+      id,
+      { ownerUserId: bob.id },
+      { userId: alice.id },
+    );
+    assert.equal(assigned.ok, true);
+    if (!assigned.ok) return;
+    assert.equal(assigned.finding.ownerUserId, bob.id);
+    assert.equal(assigned.finding.ownerChangedByUserId, alice.id);
+    assert.equal(
+      assigned.finding.ownerChangedAt?.toISOString(),
+      changedAt.toISOString(),
+    );
+
+    const bobMine = await findingsRepo.listFindings(tenantA, {
+      ownerScope: "me",
+      ownerUserId: bob.id,
+      limit: 50,
+      offset: 0,
+    });
+    assert.equal(bobMine.length, 1);
+    assert.equal(bobMine[0].id, id);
+
+    const aliceMine = await findingsRepo.listFindings(tenantA, {
+      ownerScope: "me",
+      ownerUserId: alice.id,
+      limit: 50,
+      offset: 0,
+    });
+    assert.equal(aliceMine.length, 0);
+
+    const unowned = await findingsRepo.listFindings(tenantA, {
+      ownerScope: "none",
+      status: "open",
+      limit: 50,
+      offset: 0,
+    });
+    assert.ok(!unowned.some((f) => f.id === id));
+
+    const selfAssign = await correlation.patchFinding(
+      tenantA,
+      id,
+      { ownerUserId: alice.id },
+      { userId: alice.id },
+    );
+    assert.equal(selfAssign.ok, true);
+    if (!selfAssign.ok) return;
+    assert.equal(selfAssign.finding.ownerUserId, alice.id);
+
+    const cleared = await correlation.patchFinding(
+      tenantA,
+      id,
+      { ownerUserId: null },
+      { userId: alice.id },
+    );
+    assert.equal(cleared.ok, true);
+    if (!cleared.ok) return;
+    assert.equal(cleared.finding.ownerUserId, null);
+
+    const unownedAgain = await findingsRepo.listFindings(tenantA, {
+      ownerScope: "none",
+      status: "open",
+      limit: 50,
+      offset: 0,
+    });
+    assert.ok(unownedAgain.some((f) => f.id === id));
   });
 
   it("lists findings by ownerScope me and none", async () => {

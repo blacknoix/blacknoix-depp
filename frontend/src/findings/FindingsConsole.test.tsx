@@ -1013,4 +1013,128 @@ describe("FindingsConsole", () => {
       ).toBeInTheDocument();
     });
   });
+
+  it("reassigns ownership from finding detail and leaves Mine queue", async () => {
+    const user = userEvent.setup();
+    const USER = "22222222-2222-4222-8222-222222222222";
+    const OTHER = "33333333-3333-4333-8333-333333333333";
+    const findings = [
+      {
+        ...finding,
+        title: "My finding",
+        ownerUserId: USER,
+        ownerChangedAt: "2026-03-01T12:30:00.000Z",
+        ownerChangedByUserId: USER,
+      },
+    ];
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (url.includes("/v1/operators")) {
+          return jsonResponse({
+            operators: [
+              {
+                id: USER,
+                email: "me@example.com",
+                displayName: "Me",
+              },
+              {
+                id: OTHER,
+                email: "bob@example.com",
+                displayName: "Bob",
+              },
+            ],
+          });
+        }
+        if (url.includes("/v1/telemetry/events")) {
+          return jsonResponse({
+            events: [],
+            summary: {
+              agentId: finding.agentId,
+              lastSeenAt: null,
+              lastHeartbeatAt: null,
+              countsByEventType: {},
+              totalInWindow: 0,
+            },
+            page: { limit: 20, offset: 0, returned: 0 },
+          });
+        }
+        if (url.includes("/v1/findings/views") && method === "GET") {
+          return jsonResponse({ views: [] });
+        }
+        if (url.includes("/v1/findings/dashboard")) {
+          return jsonResponse(dashboard);
+        }
+        if (url.includes("/v1/findings/suppressions") && method === "GET") {
+          return jsonResponse({ suppressions: [] });
+        }
+        if (url.includes("/v1/findings/") && method === "PATCH") {
+          const body = JSON.parse(String(init?.body ?? "{}")) as {
+            ownerUserId?: string | null;
+          };
+          if ("ownerUserId" in body && typeof body.ownerUserId === "string") {
+            findings[0] = {
+              ...findings[0],
+              ownerUserId: body.ownerUserId,
+              ownerChangedAt: new Date().toISOString(),
+              ownerChangedByUserId: USER,
+            };
+          }
+          return jsonResponse({ finding: findings[0] });
+        }
+        if (url.includes("/v1/findings?")) {
+          const parsed = new URL(url, "http://local.test");
+          let list = [...findings];
+          if (parsed.searchParams.get("ownerScope") === "me") {
+            list = list.filter((f) => f.ownerUserId === USER);
+          }
+          return jsonResponse({
+            findings: list,
+            page: { limit: 50, offset: 0, returned: list.length },
+          });
+        }
+        return {
+          ok: false,
+          status: 404,
+          json: async () => ({
+            ok: false,
+            error: { code: "NOT_FOUND", message: url },
+            requestId: "r",
+          }),
+        } as unknown as Response;
+      }),
+    );
+
+    render(
+      <MemoryRouter>
+        <FindingsConsoleView
+          session={{ kind: "tenant", tenantId: TENANT, userId: USER }}
+        />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("My finding")).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: /^Mine$/i }));
+    await waitFor(() => {
+      expect(screen.getByText(/Work queue: Mine/i)).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: /My finding/i }));
+    await waitFor(() => {
+      expect(screen.getByLabelText(/^Assign to$/i)).toBeInTheDocument();
+    });
+
+    await user.selectOptions(screen.getByLabelText(/^Assign to$/i), OTHER);
+    await user.click(screen.getByRole("button", { name: /^Assign$/i }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Nothing assigned to you in this queue/i),
+      ).toBeInTheDocument();
+    });
+  });
 });

@@ -20,10 +20,12 @@ import rootRouter from "./routes/root";
 import { createTenantsRouter } from "./routes/tenants";
 import { createTelemetryRouter } from "./routes/telemetry";
 import { createFindingsRouter } from "./routes/findings";
+import { createOperatorsRouter } from "./routes/operators";
 import type { TenantLookup } from "./tenants/repository";
 import type { TelemetryService } from "./telemetry/service";
 import type { CorrelationService } from "./correlation/service";
 import type { FindingSharedViewsRepository } from "./findings-views/repository";
+import type { UsersRepository } from "./users/repository";
 
 /**
  * Maximum accepted JSON request body.
@@ -106,6 +108,12 @@ export interface AppOptions {
    * means those routes fail closed.
    */
   sharedViews?: FindingSharedViewsRepository;
+
+  /**
+   * Backs GET /v1/operators (assignment picker seam). Omitted means the route
+   * fails closed.
+   */
+  users?: UsersRepository;
 }
 
 export function createApp(options: AppOptions = {}) {
@@ -183,6 +191,13 @@ export function createApp(options: AppOptions = {}) {
       correlationService: options.correlationService,
       sharedViews: options.sharedViews,
     }),
+  );
+
+  // Minimal operator list for Finding reassignment (not a people directory).
+  app.use(
+    "/v1/operators",
+    requireTenant,
+    createOperatorsRouter({ users: options.users }),
   );
 
   // Terminal handlers, in order.

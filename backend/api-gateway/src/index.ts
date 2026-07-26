@@ -51,7 +51,12 @@ const suppressions = db ? createFindingSuppressionsRepository(db) : undefined;
 const sharedViews = db ? createFindingSharedViewsRepository(db) : undefined;
 const correlationService =
   telemetry && findings && suppressions
-    ? createCorrelationService({ telemetry, findings, suppressions })
+    ? createCorrelationService({
+        telemetry,
+        findings,
+        suppressions,
+        ...(users ? { operators: users } : {}),
+      })
     : undefined;
 const telemetryService = telemetry
   ? createTelemetryService({
@@ -112,6 +117,7 @@ const app = createApp({
   agentsService,
   correlationService,
   sharedViews,
+  users,
 });
 
 const server = app.listen(env.port, () => {

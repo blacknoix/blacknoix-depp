@@ -202,8 +202,9 @@ export interface FindingPatchInput {
   /** When present, apply a status transition (same-status = noop). */
   status?: FindingStatus;
   /**
-   * When the key is present: null clears ownership; a UUID claims ownership
-   * (must equal the actor's userId — assign-to-others is deferred).
+   * When the key is present: null clears ownership; a UUID assigns ownership
+   * to that operator (self or another tenant user — existence checked in
+   * the service). Prefer claimOwner for self-claim.
    */
   ownerUserId?: string | null;
   /** When true, claim ownership as the authenticated operator. */

@@ -2,6 +2,10 @@ import { Link } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
 
 import type { AgentRecentActivity } from "../agents/types";
+import {
+  operatorLabel,
+  type OperatorSummary,
+} from "../api/operators";
 import { InvestigationTimeline } from "../investigation/InvestigationTimeline";
 import type { ActivityPhase } from "../investigation/useAgentRecentActivity";
 import {
@@ -39,10 +43,13 @@ interface Props {
   agentActivity: AgentRecentActivity | null;
   agentActivityPhase: ActivityPhase;
   agentActivityError: string | null;
-  /** Optional operator user id from the session (enables Claim). */
+  /** Optional operator user id from the session (enables Claim / Assign). */
   sessionUserId: string | null;
+  /** Tenant operators for reassignment picker (empty = picker unavailable). */
+  operators: OperatorSummary[];
   onClaimOwner: (id: string) => void;
   onClearOwner: (id: string) => void;
+  onAssignOwner: (id: string, ownerUserId: string) => void;
   onSaveNote: (id: string, note: string | null) => void;
 }
 
@@ -70,6 +77,17 @@ function activeRuleSnooze(
   );
 }
 
+function formatOwnerDisplay(
+  ownerUserId: string | null,
+  operators: OperatorSummary[],
+): string {
+  if (!ownerUserId) {
+    return "Unassigned";
+  }
+  const known = operators.find((op) => op.id === ownerUserId);
+  return known ? `${operatorLabel(known)} (${ownerUserId})` : ownerUserId;
+}
+
 export function FindingDetail({
   finding,
   suppressions,
@@ -87,15 +105,22 @@ export function FindingDetail({
   agentActivityPhase,
   agentActivityError,
   sessionUserId,
+  operators,
   onClaimOwner,
   onClearOwner,
+  onAssignOwner,
   onSaveNote,
 }: Props) {
   const [noteDraft, setNoteDraft] = useState("");
+  const [assignTarget, setAssignTarget] = useState("");
 
   useEffect(() => {
     setNoteDraft(finding?.operatorNote ?? "");
   }, [finding?.id, finding?.operatorNote]);
+
+  useEffect(() => {
+    setAssignTarget("");
+  }, [finding?.id, finding?.ownerUserId]);
 
   const timeline = useMemo(() => {
     if (!finding) {
@@ -279,14 +304,14 @@ export function FindingDetail({
       <div className="finding-section">
         <h3>Investigation intent</h3>
         <p className="muted tiny">
-          Self-claim ownership and one current plain-text note. Not a case
-          system, thread, or assignment queue.
+          Claim, clear, or hand off ownership, plus one current plain-text
+          note. Not a case system, thread, or workload balancer.
         </p>
         <dl className="detail-grid">
           <div>
             <dt>Owner</dt>
             <dd className="mono tiny">
-              {finding.ownerUserId ?? "Unassigned"}
+              {formatOwnerDisplay(finding.ownerUserId, operators)}
             </dd>
           </div>
           <div>
@@ -322,10 +347,47 @@ export function FindingDetail({
           {!sessionUserId ? (
             <span className="muted tiny">
               Dev tenant sessions need an operator user UUID at the gate to
-              claim; JWT sessions claim via token identity.
+              claim or assign; JWT sessions use token identity.
             </span>
           ) : null}
         </div>
+        {sessionUserId && operators.length > 0 ? (
+          <div className="assign-row">
+            <label className="note-field assign-field">
+              Assign to
+              <select
+                value={assignTarget}
+                disabled={mutationPending}
+                onChange={(e) => setAssignTarget(e.target.value)}
+              >
+                <option value="">Select operator…</option>
+                {operators.map((op) => (
+                  <option key={op.id} value={op.id}>
+                    {operatorLabel(op)}
+                    {op.id === sessionUserId ? " (you)" : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              className="btn"
+              disabled={
+                mutationPending ||
+                !assignTarget ||
+                assignTarget === finding.ownerUserId
+              }
+              onClick={() => onAssignOwner(finding.id, assignTarget)}
+            >
+              Assign
+            </button>
+          </div>
+        ) : sessionUserId && operators.length === 0 ? (
+          <p className="muted tiny">
+            No tenant operators available for reassignment yet (users appear
+            after federated login).
+          </p>
+        ) : null}
         <label className="note-field">
           Current note
           <textarea

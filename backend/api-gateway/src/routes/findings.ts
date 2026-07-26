@@ -536,9 +536,10 @@ export function createFindingsRouter(
   );
 
   /**
-   * PATCH /v1/findings/:id — operator status triage, self-claim ownership,
-   * and current operator note. Agent principals rejected.
-   * Assign-to-others, threads, and case entities are deferred.
+   * PATCH /v1/findings/:id — operator status triage, ownership
+   * (claim / clear / reassign to a tenant operator), and current note.
+   * Agent principals rejected. Bulk assign, notifications, and case entities
+   * are deferred.
    */
   router.patch(
     "/:id",

@@ -134,7 +134,7 @@ describe("parsePatchFindingBody", () => {
     assert.equal("ownerUserId" in result.patch, false);
   });
 
-  it("accepts claim and clear ownership", () => {
+  it("accepts claim, clear, and reassignment ownerUserId", () => {
     const claim = parsePatchFindingBody({ claimOwner: true });
     assert.equal(claim.ok, true);
     if (!claim.ok) return;
@@ -144,6 +144,11 @@ describe("parsePatchFindingBody", () => {
     assert.equal(clear.ok, true);
     if (!clear.ok) return;
     assert.equal(clear.patch.ownerUserId, null);
+
+    const assign = parsePatchFindingBody({ ownerUserId: USER });
+    assert.equal(assign.ok, true);
+    if (!assign.ok) return;
+    assert.equal(assign.patch.ownerUserId, USER);
   });
 
   it("trims notes, clears empty, and bounds length", () => {

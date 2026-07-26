@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer, useRef } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 
 import {
   clearSuppression,
@@ -10,6 +10,10 @@ import {
   patchFindingStatus,
 } from "../api/findings";
 import { ApiError } from "../api/client";
+import {
+  fetchOperators,
+  type OperatorSummary,
+} from "../api/operators";
 import type { OperatorSession } from "../auth/session";
 import { resolvePostMutationSelection } from "./triage";
 import type {
@@ -191,6 +195,7 @@ async function loadAll(
 
 export function useFindingsConsole(session: OperatorSession | null) {
   const [state, dispatch] = useReducer(consoleReducer, initialConsoleState);
+  const [operators, setOperators] = useState<OperatorSummary[]>([]);
   const filtersRef = useRef(state.filters);
   filtersRef.current = state.filters;
   const findingsRef = useRef(state.data.findings);
@@ -221,6 +226,32 @@ export function useFindingsConsole(session: OperatorSession | null) {
       cancelled = true;
     };
   }, [session, state.filters]);
+
+  useEffect(() => {
+    if (!session) {
+      setOperators([]);
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const list = await fetchOperators(session);
+        if (!cancelled) {
+          setOperators(list);
+        }
+      } catch {
+        // Assignment picker fails closed to empty; claim/clear still work.
+        if (!cancelled) {
+          setOperators([]);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session]);
 
   const setFilters = useCallback((filters: FindingsFilters) => {
     dispatch({ type: "set_filters", filters });
@@ -344,6 +375,21 @@ export function useFindingsConsole(session: OperatorSession | null) {
     }
   }
 
+  async function assignOwner(
+    findingId: string,
+    ownerUserId: string,
+  ): Promise<string | null> {
+    if (!session) return selectedRef.current;
+    dispatch({ type: "mutation_start" });
+    try {
+      await patchFinding(session, findingId, { ownerUserId });
+      return await refreshKeepingSelection(selectedRef.current);
+    } catch (err) {
+      dispatch({ type: "mutation_error", message: errorMessage(err) });
+      return selectedRef.current;
+    }
+  }
+
   async function saveNote(
     findingId: string,
     operatorNote: string | null,
@@ -369,6 +415,7 @@ export function useFindingsConsole(session: OperatorSession | null) {
     state,
     selected,
     sessionUserId,
+    operators,
     setFilters,
     selectFinding,
     changeStatus,
@@ -376,6 +423,7 @@ export function useFindingsConsole(session: OperatorSession | null) {
     clearSnooze,
     claimOwner,
     clearOwner,
+    assignOwner,
     saveNote,
     clearTriageNote,
   };

@@ -44,8 +44,10 @@ export function FindingsConsoleView({ session }: ViewProps) {
     changeStatus,
     snoozeRule,
     clearSnooze,
+    operators,
     claimOwner,
     clearOwner,
+    assignOwner,
     saveNote,
   } = useFindingsConsole(session);
 
@@ -139,6 +141,10 @@ export function FindingsConsoleView({ session }: ViewProps) {
 
   async function onClearOwner(id: string) {
     await clearOwner(id);
+  }
+
+  async function onAssignOwner(id: string, ownerUserId: string) {
+    await assignOwner(id, ownerUserId);
   }
 
   async function onSaveNote(id: string, note: string | null) {
@@ -281,8 +287,10 @@ export function FindingsConsoleView({ session }: ViewProps) {
           agentActivityPhase={agentActivityState.phase}
           agentActivityError={agentActivityState.error}
           sessionUserId={sessionUserId}
+          operators={operators}
           onClaimOwner={onClaimOwner}
           onClearOwner={onClearOwner}
+          onAssignOwner={onAssignOwner}
           onSaveNote={onSaveNote}
         />
       </div>

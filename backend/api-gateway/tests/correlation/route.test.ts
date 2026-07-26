@@ -584,7 +584,8 @@ describe("PATCH /v1/findings/:id", () => {
 
   const USER_ID = "22222222-2222-4222-8222-222222222222";
 
-  it("claims and clears ownership with operator identity", async () => {
+  it("claims, reassigns, and clears ownership with operator identity", async () => {
+    const OTHER = "33333333-3333-4333-8333-333333333333";
     let owner: string | null = null;
     await withServer(
       {
@@ -633,6 +634,17 @@ describe("PATCH /v1/findings/:id", () => {
         });
         assert.equal(claim.status, 200);
         assert.equal((await claim.json()).data.finding.ownerUserId, USER_ID);
+
+        const assign = await fetch(`${server.url}/v1/findings/${FINDING_ID}`, {
+          method: "PATCH",
+          headers: {
+            ...tenantHeaders({ "x-user-id": USER_ID }),
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ ownerUserId: OTHER }),
+        });
+        assert.equal(assign.status, 200);
+        assert.equal((await assign.json()).data.finding.ownerUserId, OTHER);
 
         const clear = await fetch(`${server.url}/v1/findings/${FINDING_ID}`, {
           method: "PATCH",

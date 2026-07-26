@@ -112,4 +112,34 @@ describe("users JIT provisioning + RLS (real database)", () => {
       /non-empty issuer and subject/,
     );
   });
+
+  it("lists operators and checks existence within the tenant only", async () => {
+    const repo = createUsersRepository(db.app);
+    const alice = await repo.findOrLinkByIdentity(tenantA, IDENTITY);
+    const bob = await repo.findOrLinkByIdentity(tenantA, {
+      issuer: "https://idp.example.com",
+      subject: "auth0|user-456",
+      email: "bob@example.com",
+      displayName: "Bob",
+    });
+    const other = await repo.findOrLinkByIdentity(tenantB, {
+      issuer: "https://idp.example.com",
+      subject: "auth0|user-789",
+      email: "carol@example.com",
+      displayName: "Carol",
+    });
+
+    assert.equal(await repo.existsInTenant(tenantA, alice.id), true);
+    assert.equal(await repo.existsInTenant(tenantA, other.id), false);
+    assert.equal(
+      await repo.existsInTenant(tenantA, "00000000-0000-4000-8000-000000000000"),
+      false,
+    );
+
+    const listed = await repo.listOperators(tenantA);
+    assert.equal(listed.length, 2);
+    assert.ok(listed.some((op) => op.id === alice.id && op.displayName === "Alice"));
+    assert.ok(listed.some((op) => op.id === bob.id && op.email === "bob@example.com"));
+    assert.ok(!listed.some((op) => op.id === other.id));
+  });
 });

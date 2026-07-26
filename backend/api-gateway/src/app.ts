@@ -21,6 +21,11 @@ import { createTenantsRouter } from "./routes/tenants";
 import { createTelemetryRouter } from "./routes/telemetry";
 import type { TenantLookup } from "./tenants/repository";
 import type { TelemetryService } from "./telemetry/service";
+<<<<<<< HEAD
+=======
+import type { CorrelationService } from "./correlation/service";
+import type { FindingSharedViewsRepository } from "./findings-views/repository";
+>>>>>>> 12b026d (feat: deepen Findings operator workflow with views, jump bar, and attention)
 
 /**
  * Maximum accepted JSON request body.
@@ -91,6 +96,21 @@ export interface AppOptions {
    * routes fail closed; index.ts wires it when database + JWT config are present.
    */
   agentsService?: AgentsService;
+<<<<<<< HEAD
+=======
+
+  /**
+   * Backs GET /v1/findings. Omitted means the route fails closed; index.ts
+   * wires it when a database (and correlation) is configured.
+   */
+  correlationService?: CorrelationService;
+
+  /**
+   * Backs GET/POST/DELETE /v1/findings/views (tenant shared views). Omitted
+   * means those routes fail closed.
+   */
+  sharedViews?: FindingSharedViewsRepository;
+>>>>>>> 12b026d (feat: deepen Findings operator workflow with views, jump bar, and attention)
 }
 
 export function createApp(options: AppOptions = {}) {
@@ -160,6 +180,19 @@ export function createApp(options: AppOptions = {}) {
     }),
   );
 
+<<<<<<< HEAD
+=======
+  // Correlation findings: narrow operator read surface (not an alert console).
+  app.use(
+    "/v1/findings",
+    requireTenant,
+    createFindingsRouter({
+      correlationService: options.correlationService,
+      sharedViews: options.sharedViews,
+    }),
+  );
+
+>>>>>>> 12b026d (feat: deepen Findings operator workflow with views, jump bar, and attention)
   // Terminal handlers, in order.
   app.use(notFound);
   app.use(errorHandler);

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 
 import { App } from "../App";
 import { ComingSoonPage } from "./ComingSoonPage";
@@ -11,12 +11,65 @@ import { OperatorShell } from "./OperatorShell";
 afterEach(() => {
   cleanup();
   sessionStorage.clear();
+  localStorage.clear();
   vi.unstubAllGlobals();
   window.history.pushState({}, "", "/");
 });
 
 const TENANT = "11111111-1111-4111-8111-111111111111";
 
+function jsonOk(data: unknown): Response {
+  return {
+    ok: true,
+    status: 200,
+    json: async () => ({ ok: true, data, requestId: "r" }),
+  } as Response;
+}
+
+function stubOperatorShellFetch(opts?: {
+  attentionItems?: Array<{
+    kind: "finding.created" | "finding.status_changed";
+    findingId: string;
+    title: string;
+    status: string;
+    ruleId: string;
+    agentId: string;
+    at: string;
+  }>;
+}) {
+  const items = opts?.attentionItems ?? [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/v1/findings/attention")) {
+        return jsonOk({
+          generatedAt: "2026-03-01T12:00:00.000Z",
+          since: "2026-02-28T12:00:00.000Z",
+          maxLookbackHours: 24,
+          openCount: items.length,
+          activeSuppressionCount: 0,
+          truncated: false,
+          items,
+        });
+      }
+      if (url.includes("/v1/findings/views")) {
+        return jsonOk({ views: [] });
+      }
+      return jsonOk({});
+    }),
+  );
+}
+
+function LocationProbe() {
+  const location = useLocation();
+  return (
+    <div data-testid="location-probe">
+      {location.pathname}
+      {location.search}
+    </div>
+  );
+}
 describe("nav helpers", () => {
   it("marks findings and agents as live destinations", () => {
     expect(OPERATOR_NAV.map((n) => n.id)).toEqual(["findings", "agents"]);
@@ -27,7 +80,8 @@ describe("nav helpers", () => {
 });
 
 describe("OperatorShell", () => {
-  it("renders session context, primary nav, and active Findings link", () => {
+  it("renders session context, primary nav, and active Findings link", async () => {
+    stubOperatorShellFetch();
     render(
       <MemoryRouter initialEntries={["/findings"]}>
         <Routes>
@@ -45,6 +99,10 @@ describe("OperatorShell", () => {
       </MemoryRouter>,
     );
 
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Attention/i })).toBeInTheDocument();
+    });
+
     expect(screen.getByLabelText("Session context")).toHaveTextContent(TENANT);
     expect(
       screen.getByRole("navigation", { name: "Primary" }),
@@ -57,9 +115,193 @@ describe("OperatorShell", () => {
     const agents = screen.getByRole("link", { name: /Agents/i });
     expect(agents.className).not.toContain("is-soon");
     expect(screen.getByText("Findings content")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Jump to/i }),
+    ).toBeInTheDocument();
   });
 
-  it("keeps shell structure present on a narrow viewport", () => {
+  it("navigates and applies findings filters through the jump bar URL path", async () => {
+    const user = userEvent.setup();
+    stubOperatorShellFetch();
+    render(
+      <MemoryRouter initialEntries={["/agents"]}>
+        <Routes>
+          <Route
+            element={
+              <OperatorShell
+                session={{ kind: "tenant", tenantId: TENANT }}
+                onSignOut={() => undefined}
+              />
+            }
+          >
+            <Route
+              path="findings"
+              element={
+                <>
+                  <div>Findings page</div>
+                  <LocationProbe />
+                </>
+              }
+            />
+            <Route
+              path="agents"
+              element={
+                <>
+                  <div>Agents page</div>
+                  <LocationProbe />
+                </>
+              }
+            />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText("Agents page")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Jump to/i }));
+    expect(
+      screen.getByRole("dialog", {
+        name: /Jump to destination or findings filter/i,
+      }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("option", { name: /Go to Findings/i }));
+    expect(screen.getByText("Findings page")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Jump to/i }));
+    await user.type(screen.getByLabelText(/Filter actions/i), "status open");
+    await user.click(
+      screen.getByRole("option", { name: /Findings · status open/i }),
+    );
+    expect(screen.getByTestId("location-probe")).toHaveTextContent(
+      "/findings?status=open",
+    );
+  });
+
+  it("shows no-match state and applies a saved view path", async () => {
+    const user = userEvent.setup();
+    stubOperatorShellFetch();
+    const { saveCurrentFilters } = await import("../findings/savedViews");
+    saveCurrentFilters({
+      session: { kind: "tenant", tenantId: TENANT },
+      name: "Open churn",
+      filters: { status: "open", ruleId: "agent.lifecycle_churn" },
+      now: new Date("2026-03-01T12:00:00.000Z"),
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/findings"]}>
+        <Routes>
+          <Route
+            element={
+              <OperatorShell
+                session={{ kind: "tenant", tenantId: TENANT }}
+                onSignOut={() => undefined}
+              />
+            }
+          >
+            <Route
+              path="findings"
+              element={
+                <>
+                  <div>Findings page</div>
+                  <LocationProbe />
+                </>
+              }
+            />
+            <Route path="agents" element={<div>Agents page</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await user.click(screen.getByRole("button", { name: /Jump to/i }));
+    await user.type(screen.getByLabelText(/Filter actions/i), "zzzz-none");
+    expect(screen.getByText(/No matching actions/i)).toBeInTheDocument();
+
+    await user.clear(screen.getByLabelText(/Filter actions/i));
+    await user.type(screen.getByLabelText(/Filter actions/i), "Open churn");
+    await user.click(
+      screen.getByRole("option", { name: /Local view · Open churn/i }),
+    );
+    expect(screen.getByTestId("location-probe")).toHaveTextContent(
+      "/findings?status=open&ruleId=agent.lifecycle_churn",
+    );
+    expect(screen.getByTestId("location-probe").textContent).not.toContain(
+      "findingId",
+    );
+  });
+
+  it("opens attention items into Findings URL context and marks caught up", async () => {
+    const user = userEvent.setup();
+    stubOperatorShellFetch({
+      attentionItems: [
+        {
+          kind: "finding.created",
+          findingId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+          title: "Agent lifecycle churn",
+          status: "open",
+          ruleId: "agent.lifecycle_churn",
+          agentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          at: "2026-03-01T11:30:00.000Z",
+        },
+      ],
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/agents"]}>
+        <Routes>
+          <Route
+            element={
+              <OperatorShell
+                session={{ kind: "tenant", tenantId: TENANT }}
+                onSignOut={() => undefined}
+              />
+            }
+          >
+            <Route
+              path="findings"
+              element={
+                <>
+                  <div>Findings page</div>
+                  <LocationProbe />
+                </>
+              }
+            />
+            <Route path="agents" element={<div>Agents page</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Attention/i })).toHaveTextContent(
+        "1",
+      );
+    });
+
+    await user.click(screen.getByRole("button", { name: /Attention/i }));
+    expect(
+      screen.getByRole("dialog", { name: /Attention digest/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/New finding/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("link", { name: /Agent lifecycle churn/i }));
+    expect(screen.getByTestId("location-probe")).toHaveTextContent(
+      "/findings?status=open&ruleId=agent.lifecycle_churn&findingId=dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    );
+
+    await user.click(screen.getByRole("button", { name: /Attention/i }));
+    await user.click(screen.getByRole("button", { name: /Mark caught up/i }));
+    await waitFor(() => {
+      expect(
+        localStorage.getItem(`depp.attention.seen.v1.tenant.${TENANT}`),
+      ).toContain("2026-03-01T12:00:00.000Z");
+    });
+  });
+
+  it("keeps shell structure present on a narrow viewport", async () => {
+    stubOperatorShellFetch();
     Object.defineProperty(window, "innerWidth", {
       configurable: true,
       value: 480,
@@ -81,6 +323,10 @@ describe("OperatorShell", () => {
         </Routes>
       </MemoryRouter>,
     );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Attention/i })).toBeInTheDocument();
+    });
 
     expect(container.querySelector(".app-shell")).toBeTruthy();
     expect(container.querySelector(".shell-nav")).toBeTruthy();
@@ -150,6 +396,36 @@ describe("App routing + auth gate", () => {
             }),
           } as Response;
         }
+        if (url.includes("/v1/findings/views")) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              ok: true,
+              data: { views: [] },
+              requestId: "r",
+            }),
+          } as Response;
+        }
+        if (url.includes("/v1/findings/attention")) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              ok: true,
+              data: {
+                generatedAt: "2026-03-01T12:00:00.000Z",
+                since: "2026-02-28T12:00:00.000Z",
+                maxLookbackHours: 24,
+                openCount: 0,
+                activeSuppressionCount: 0,
+                truncated: false,
+                items: [],
+              },
+              requestId: "r",
+            }),
+          } as Response;
+        }
         if (url.includes("/v1/agents")) {
           return {
             ok: true,
@@ -157,6 +433,27 @@ describe("App routing + auth gate", () => {
             json: async () => ({
               ok: true,
               data: { agents: [] },
+              requestId: "r",
+            }),
+          } as Response;
+        }
+        if (url.includes("/v1/telemetry/events")) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              ok: true,
+              data: {
+                events: [],
+                summary: {
+                  agentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                  lastSeenAt: null,
+                  lastHeartbeatAt: null,
+                  countsByEventType: {},
+                  totalInWindow: 0,
+                },
+                page: { limit: 20, offset: 0, returned: 0 },
+              },
               requestId: "r",
             }),
           } as Response;

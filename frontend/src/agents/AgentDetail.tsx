@@ -2,21 +2,38 @@ import { Link } from "react-router-dom";
 
 import type { Finding } from "../findings/types";
 import { findingsPath } from "../routing/crossLinks";
-import type { AgentInventoryItem } from "./types";
+import type {
+  AgentInventoryItem,
+  AgentRecentActivity,
+} from "./types";
 import { freshnessLabel } from "./types";
+import type { SectionPhase } from "./useAgentsConsole";
 
 interface Props {
   agent: AgentInventoryItem | null;
   relatedFindings: Finding[];
-  detailPhase: "idle" | "loading" | "ready" | "error";
-  detailError: string | null;
+  findingsPhase: SectionPhase;
+  findingsError: string | null;
+  recentActivity: AgentRecentActivity | null;
+  activityPhase: SectionPhase;
+  activityError: string | null;
+}
+
+function formatCountStrip(counts: Record<string, number>): string {
+  const parts = Object.entries(counts)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([type, count]) => `${type}: ${count}`);
+  return parts.length > 0 ? parts.join(" · ") : "none";
 }
 
 export function AgentDetail({
   agent,
   relatedFindings,
-  detailPhase,
-  detailError,
+  findingsPhase,
+  findingsError,
+  recentActivity,
+  activityPhase,
+  activityError,
 }: Props) {
   if (!agent) {
     return (
@@ -25,7 +42,8 @@ export function AgentDetail({
           <h2>Detail</h2>
         </header>
         <p className="empty" role="status">
-          Select an agent to inspect heartbeat and related findings.
+          Select an agent to inspect heartbeat, recent activity, and related
+          findings.
         </p>
       </section>
     );
@@ -63,6 +81,53 @@ export function AgentDetail({
         </div>
       </dl>
 
+      <div className="agent-section">
+        <h3>Recent activity (last 24 hours)</h3>
+        <p className="muted tiny">
+          Telemetry events in an explicit 24-hour window. Heartbeat freshness
+          above remains the inventory liveness signal — not online/offline.
+        </p>
+        {activityPhase === "loading" ? (
+          <p className="muted tiny" role="status">
+            Loading recent activity…
+          </p>
+        ) : null}
+        {activityError ? (
+          <p className="error" role="alert">
+            {activityError}
+          </p>
+        ) : null}
+        {activityPhase === "ready" && recentActivity ? (
+          <>
+            <p className="activity-summary" role="status">
+              <span>
+                {recentActivity.summary.totalInWindow} event
+                {recentActivity.summary.totalInWindow === 1 ? "" : "s"} in window
+              </span>
+              <span className="muted">
+                {formatCountStrip(recentActivity.summary.countsByEventType)}
+              </span>
+            </p>
+            {recentActivity.events.length === 0 ? (
+              <p className="empty" role="status">
+                No telemetry in the last 24 hours.
+              </p>
+            ) : (
+              <ul className="activity-list" aria-label="Recent telemetry events">
+                {recentActivity.events.map((event) => (
+                  <li key={event.id}>
+                    <span className="mono">{event.eventType}</span>
+                    <span className="muted tiny">
+                      {new Date(event.occurredAt).toLocaleString()}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </>
+        ) : null}
+      </div>
+
       <div className="actions">
         <h3>Related findings</h3>
         <div className="action-row" style={{ marginBottom: "0.75rem" }}>
@@ -73,17 +138,17 @@ export function AgentDetail({
             Open in Findings
           </Link>
         </div>
-        {detailPhase === "loading" ? (
+        {findingsPhase === "loading" ? (
           <p className="muted tiny" role="status">
             Loading findings…
           </p>
         ) : null}
-        {detailError ? (
+        {findingsError ? (
           <p className="error" role="alert">
-            {detailError}
+            {findingsError}
           </p>
         ) : null}
-        {detailPhase === "ready" && relatedFindings.length === 0 ? (
+        {findingsPhase === "ready" && relatedFindings.length === 0 ? (
           <p className="empty" role="status">
             No findings for this agent.
           </p>

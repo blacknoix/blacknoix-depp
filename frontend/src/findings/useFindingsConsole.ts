@@ -10,6 +10,7 @@ import {
 } from "../api/findings";
 import { ApiError } from "../api/client";
 import type { OperatorSession } from "../auth/session";
+import { resolvePostMutationSelection } from "./triage";
 import type {
   CorrelationRuleId,
   Finding,
@@ -36,6 +37,8 @@ export interface ConsoleState {
   selectedId: string | null;
   mutation: MutationPhase;
   mutationError: string | null;
+  /** Quiet operator note after a successful status mutation that advanced selection. */
+  triageNote: string | null;
 }
 
 type Action =
@@ -56,8 +59,10 @@ type Action =
       dashboard: FindingsDashboard;
       suppressions: Suppression[];
       selectedId: string | null;
+      triageNote: string | null;
     }
-  | { type: "mutation_error"; message: string };
+  | { type: "mutation_error"; message: string }
+  | { type: "clear_triage_note" };
 
 export const initialConsoleState: ConsoleState = {
   load: "idle",
@@ -71,6 +76,7 @@ export const initialConsoleState: ConsoleState = {
   selectedId: null,
   mutation: "idle",
   mutationError: null,
+  triageNote: null,
 };
 
 export function consoleReducer(
@@ -111,17 +117,24 @@ export function consoleReducer(
         ...state,
         filters: action.filters,
         selectedId: null,
+        triageNote: null,
       };
     case "select":
       if (state.selectedId === action.id) {
         return state;
       }
-      return { ...state, selectedId: action.id, mutationError: null };
+      return {
+        ...state,
+        selectedId: action.id,
+        mutationError: null,
+        triageNote: null,
+      };
     case "mutation_start":
       return {
         ...state,
         mutation: "pending",
         mutationError: null,
+        triageNote: null,
       };
     case "mutation_success":
       return {
@@ -134,6 +147,7 @@ export function consoleReducer(
           suppressions: action.suppressions,
         },
         selectedId: action.selectedId,
+        triageNote: action.triageNote,
       };
     case "mutation_error":
       return {
@@ -141,6 +155,8 @@ export function consoleReducer(
         mutation: "error",
         mutationError: action.message,
       };
+    case "clear_triage_note":
+      return { ...state, triageNote: null };
     default:
       return state;
   }
@@ -176,6 +192,10 @@ export function useFindingsConsole(session: OperatorSession | null) {
   const [state, dispatch] = useReducer(consoleReducer, initialConsoleState);
   const filtersRef = useRef(state.filters);
   filtersRef.current = state.filters;
+  const findingsRef = useRef(state.data.findings);
+  findingsRef.current = state.data.findings;
+  const selectedRef = useRef(state.selectedId);
+  selectedRef.current = state.selectedId;
 
   useEffect(() => {
     if (!session) {
@@ -209,48 +229,93 @@ export function useFindingsConsole(session: OperatorSession | null) {
     dispatch({ type: "select", id });
   }, []);
 
-  async function refreshAfterMutation(selectedId: string | null) {
-    if (!session) return;
+  const clearTriageNote = useCallback(() => {
+    dispatch({ type: "clear_triage_note" });
+  }, []);
+
+  async function refreshKeepingSelection(
+    preferredSelectedId: string | null,
+    triageNote: string | null = null,
+  ): Promise<string | null> {
+    if (!session) return null;
     const result = await loadAll(session, filtersRef.current);
+    const selectedId = result.findings.some((f) => f.id === preferredSelectedId)
+      ? preferredSelectedId
+      : null;
     dispatch({
       type: "mutation_success",
       ...result,
-      selectedId: result.findings.some((f) => f.id === selectedId)
-        ? selectedId
-        : null,
+      selectedId,
+      triageNote,
     });
+    return selectedId;
   }
 
-  async function changeStatus(findingId: string, status: FindingStatus) {
-    if (!session) return;
+  /**
+   * Status triage. Returns the post-mutation selected finding id (may advance
+   * when the current item leaves the filtered list). Caller should sync URL.
+   */
+  async function changeStatus(
+    findingId: string,
+    status: FindingStatus,
+  ): Promise<string | null> {
+    if (!session) return null;
+    const previousFindings = findingsRef.current;
+    const previousSelectedId = findingId;
     dispatch({ type: "mutation_start" });
     try {
       await patchFindingStatus(session, findingId, status);
-      await refreshAfterMutation(findingId);
+      const result = await loadAll(session, filtersRef.current);
+      const selectedId = resolvePostMutationSelection({
+        previousFindings,
+        previousSelectedId,
+        nextFindings: result.findings,
+      });
+      let triageNote: string | null = null;
+      if (selectedId && selectedId !== previousSelectedId) {
+        triageNote =
+          "Status updated — advanced to the next finding in this filter.";
+      } else if (!selectedId && previousSelectedId) {
+        triageNote =
+          "Status updated — no remaining findings match the current filters.";
+      }
+      dispatch({
+        type: "mutation_success",
+        ...result,
+        selectedId,
+        triageNote,
+      });
+      return selectedId;
     } catch (err) {
       dispatch({ type: "mutation_error", message: errorMessage(err) });
+      return selectedRef.current;
     }
   }
 
-  async function snoozeRule(ruleId: CorrelationRuleId, untilIso: string) {
-    if (!session) return;
+  async function snoozeRule(
+    ruleId: CorrelationRuleId,
+    untilIso: string,
+  ): Promise<string | null> {
+    if (!session) return selectedRef.current;
     dispatch({ type: "mutation_start" });
     try {
       await createSuppression(session, { ruleId, until: untilIso });
-      await refreshAfterMutation(state.selectedId);
+      return await refreshKeepingSelection(selectedRef.current);
     } catch (err) {
       dispatch({ type: "mutation_error", message: errorMessage(err) });
+      return selectedRef.current;
     }
   }
 
-  async function clearSnooze(id: string) {
-    if (!session) return;
+  async function clearSnooze(id: string): Promise<string | null> {
+    if (!session) return selectedRef.current;
     dispatch({ type: "mutation_start" });
     try {
       await clearSuppression(session, id);
-      await refreshAfterMutation(state.selectedId);
+      return await refreshKeepingSelection(selectedRef.current);
     } catch (err) {
       dispatch({ type: "mutation_error", message: errorMessage(err) });
+      return selectedRef.current;
     }
   }
 
@@ -265,5 +330,6 @@ export function useFindingsConsole(session: OperatorSession | null) {
     changeStatus,
     snoozeRule,
     clearSnooze,
+    clearTriageNote,
   };
 }

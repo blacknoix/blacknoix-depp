@@ -161,7 +161,25 @@ export interface FindingSuppressionsTable {
   cleared_by_user_id: string | null;
 }
 
+<<<<<<< HEAD
 >>>>>>> dec9ffc (feat(api-gateway): add findings snooze and operator dashboard summary)
+=======
+/**
+ * Tenant-owned shared Findings filter view. Operator product only.
+ * Filter columns are nullable; findingId is never stored.
+ */
+export interface FindingSharedViewsTable {
+  id: Generated<string>;
+  tenant_id: string;
+  name: string;
+  status: string | null;
+  rule_id: string | null;
+  agent_id: string | null;
+  created_at: Generated<Timestamp>;
+  created_by_user_id: string | null;
+}
+
+>>>>>>> 12b026d (feat: deepen Findings operator workflow with views, jump bar, and attention)
 export interface Database {
   tenants: TenantsTable;
   agents: AgentsTable;
@@ -175,5 +193,9 @@ export interface Database {
 =======
   correlation_findings: CorrelationFindingsTable;
   finding_suppressions: FindingSuppressionsTable;
+<<<<<<< HEAD
 >>>>>>> dec9ffc (feat(api-gateway): add findings snooze and operator dashboard summary)
+=======
+  finding_shared_views: FindingSharedViewsTable;
+>>>>>>> 12b026d (feat: deepen Findings operator workflow with views, jump bar, and attention)
 }

@@ -1,6 +1,12 @@
 import { logLifecycle } from "../lib/log";
 import type { TelemetryRepository } from "../telemetry/repository";
 import {
+  assembleAttentionDigest,
+  ATTENTION_SOURCE_FETCH_LIMIT,
+  resolveAttentionSince,
+  type FindingsAttentionDigest,
+} from "./attention";
+import {
   assembleFindingsDashboard,
   DASHBOARD_RECENT_HOURS,
   type FindingsDashboard,
@@ -68,6 +74,15 @@ export interface CorrelationService {
 
   /** Operator findings dashboard (fixed 24h windows, zero-filled aggregates). */
   dashboard(tenantId: string): Promise<FindingsDashboard>;
+
+  /**
+   * Operator attention digest since an optional cursor.
+   * Null/omitted since uses the max lookback window.
+   */
+  attention(
+    tenantId: string,
+    requestedSince: Date | null,
+  ): Promise<FindingsAttentionDigest>;
 
   updateStatus(
     tenantId: string,
@@ -311,6 +326,34 @@ export function createCorrelationService(
         generatedAt,
       );
       return assembleFindingsDashboard(generatedAt, raw);
+    },
+
+    async attention(tenantId, requestedSince) {
+      if (typeof tenantId !== "string" || tenantId.trim() === "") {
+        throw new Error("attention requires a non-empty tenantId");
+      }
+
+      const generatedAt = now();
+      const since = resolveAttentionSince(
+        requestedSince ??
+          new Date(
+            generatedAt.getTime() -
+              DASHBOARD_RECENT_HOURS * 60 * 60 * 1000,
+          ),
+        generatedAt,
+      );
+      const raw = await findings.getAttentionRawSources(
+        tenantId,
+        since,
+        generatedAt,
+        ATTENTION_SOURCE_FETCH_LIMIT,
+      );
+      return assembleAttentionDigest(generatedAt, since, {
+        ...raw,
+        sourceTruncated:
+          raw.created.length >= ATTENTION_SOURCE_FETCH_LIMIT ||
+          raw.statusChanged.length >= ATTENTION_SOURCE_FETCH_LIMIT,
+      });
     },
 
     async updateStatus(tenantId, findingId, nextStatus, actor) {

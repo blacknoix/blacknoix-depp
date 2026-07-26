@@ -2,11 +2,16 @@
  * Narrow URL-carried cross-link state between Agents and Findings.
  *
  * - /agents?agentId=<uuid>
- * - /findings?agentId=<uuid>&findingId=<uuid>
+ * - /findings?status=&ruleId=&agentId=&findingId=
  *
- * Invalid UUIDs fail closed (ignored + surfaced). No global search / deep-link
- * framework — only these operator-workflow params.
+ * Invalid UUIDs / enums fail closed (ignored + surfaced). No global search /
+ * deep-link framework — only these operator-workflow params.
  */
+
+import {
+  serializeFindingsSearchParams,
+  type FindingsUrlWrite,
+} from "./findingsUrlState";
 
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -34,17 +39,17 @@ export function agentsPath(agentId?: string): string {
   return `/agents?agentId=${encodeURIComponent(agentId)}`;
 }
 
-export function findingsPath(opts?: {
-  agentId?: string;
-  findingId?: string;
-}): string {
-  const params = new URLSearchParams();
-  if (opts?.agentId) {
-    params.set("agentId", opts.agentId);
-  }
-  if (opts?.findingId) {
-    params.set("findingId", opts.findingId);
-  }
+export function findingsPath(
+  opts?: FindingsUrlWrite["filters"] & { findingId?: string },
+): string {
+  const params = serializeFindingsSearchParams({
+    filters: {
+      ...(opts?.status ? { status: opts.status } : {}),
+      ...(opts?.ruleId ? { ruleId: opts.ruleId } : {}),
+      ...(opts?.agentId ? { agentId: opts.agentId } : {}),
+    },
+    findingId: opts?.findingId,
+  });
   const qs = params.toString();
   return qs ? `/findings?${qs}` : "/findings";
 }

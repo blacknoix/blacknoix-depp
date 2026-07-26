@@ -39,9 +39,11 @@ describe("cross-link path builders", () => {
       findingsPath({
         agentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         findingId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        status: "open",
+        ruleId: "agent.lifecycle_churn",
       }),
     ).toBe(
-      "/findings?agentId=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa&findingId=dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      "/findings?status=open&ruleId=agent.lifecycle_churn&agentId=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa&findingId=dddddddd-dddd-4ddd-8ddd-dddddddddddd",
     );
   });
 });

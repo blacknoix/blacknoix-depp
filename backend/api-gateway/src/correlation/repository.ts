@@ -3,6 +3,7 @@ import { sql } from "kysely";
 
 import type { Database } from "../db/schema";
 import { withTenantTransaction } from "../db/tenant-context";
+import type { AttentionItem } from "./attention";
 import type { FindingsDashboardRawCounts } from "./dashboard";
 import type { FindingStatus } from "./lifecycle";
 import type { CorrelationRuleId, FindingSeverity } from "./rules";
@@ -87,6 +88,22 @@ export interface CorrelationFindingsRepository {
     since: Date,
     at: Date,
   ): Promise<FindingsDashboardRawCounts>;
+
+  /**
+   * Pull-based attention sources for the operator digest.
+   * `limit` applies per source (created / status-changed).
+   */
+  getAttentionRawSources(
+    tenantId: string,
+    since: Date,
+    at: Date,
+    limit: number,
+  ): Promise<{
+    created: AttentionItem[];
+    statusChanged: AttentionItem[];
+    openCount: number;
+    activeSuppressionCount: number;
+  }>;
 }
 
 function asDate(value: unknown): Date {
@@ -280,6 +297,70 @@ export function createCorrelationFindingsRepository(
           })),
           recentCreatedCount: Number(recentCreated.count),
           recentChangedCount: Number(recentChanged.count),
+          activeSuppressionCount: Number(activeSuppressions.count),
+        };
+      });
+    },
+
+    async getAttentionRawSources(tenantId, since, at, limit) {
+      return withTenantTransaction(db, tenantId, async (trx) => {
+        const createdRows = await trx
+          .selectFrom("correlation_findings")
+          .selectAll()
+          .where(sql<boolean>`created_at >= ${since}`)
+          .orderBy("created_at", "desc")
+          .limit(limit)
+          .execute();
+
+        const changedRows = await trx
+          .selectFrom("correlation_findings")
+          .selectAll()
+          .where(sql<boolean>`status_changed_at is not null`)
+          .where(sql<boolean>`status_changed_at >= ${since}`)
+          .orderBy("status_changed_at", "desc")
+          .limit(limit)
+          .execute();
+
+        const openRow = await trx
+          .selectFrom("correlation_findings")
+          .select((eb) => eb.fn.countAll<string>().as("count"))
+          .where("status", "=", "open")
+          .executeTakeFirstOrThrow();
+
+        const activeSuppressions = await trx
+          .selectFrom("finding_suppressions")
+          .select((eb) => eb.fn.countAll<string>().as("count"))
+          .where("cleared_at", "is", null)
+          .where(sql<boolean>`starts_at <= ${at}`)
+          .where(sql<boolean>`ends_at > ${at}`)
+          .executeTakeFirstOrThrow();
+
+        return {
+          created: createdRows.map((row) => {
+            const mapped = mapRow(row);
+            return {
+              kind: "finding.created" as const,
+              findingId: mapped.id,
+              title: mapped.title,
+              status: mapped.status,
+              ruleId: mapped.ruleId,
+              agentId: mapped.agentId,
+              at: mapped.createdAt,
+            };
+          }),
+          statusChanged: changedRows.map((row) => {
+            const mapped = mapRow(row);
+            return {
+              kind: "finding.status_changed" as const,
+              findingId: mapped.id,
+              title: mapped.title,
+              status: mapped.status,
+              ruleId: mapped.ruleId,
+              agentId: mapped.agentId,
+              at: mapped.statusChangedAt!,
+            };
+          }),
+          openCount: Number(openRow.count),
           activeSuppressionCount: Number(activeSuppressions.count),
         };
       });

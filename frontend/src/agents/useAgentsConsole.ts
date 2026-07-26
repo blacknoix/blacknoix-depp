@@ -1,22 +1,29 @@
 import { useCallback, useEffect, useReducer } from "react";
 
 import { ApiError } from "../api/client";
-import { fetchAgentFindings, fetchAgentInventory } from "../api/agents";
+import {
+  fetchAgentFindings,
+  fetchAgentInventory,
+  fetchAgentRecentActivity,
+} from "../api/agents";
 import type { OperatorSession } from "../auth/session";
 import type { Finding } from "../findings/types";
-import type { AgentInventoryItem } from "./types";
+import type { AgentInventoryItem, AgentRecentActivity } from "./types";
 
 export type LoadPhase = "idle" | "loading" | "ready" | "error";
-export type DetailPhase = "idle" | "loading" | "ready" | "error";
+export type SectionPhase = "idle" | "loading" | "ready" | "error";
 
 export interface AgentsState {
   load: LoadPhase;
   loadError: string | null;
   agents: AgentInventoryItem[];
   selectedId: string | null;
-  detail: DetailPhase;
-  detailError: string | null;
+  findingsPhase: SectionPhase;
+  findingsError: string | null;
   relatedFindings: Finding[];
+  activityPhase: SectionPhase;
+  activityError: string | null;
+  recentActivity: AgentRecentActivity | null;
 }
 
 type Action =
@@ -25,17 +32,26 @@ type Action =
   | { type: "load_error"; message: string }
   | { type: "select"; id: string | null }
   | { type: "detail_start" }
-  | { type: "detail_success"; findings: Finding[] }
-  | { type: "detail_error"; message: string };
+  | { type: "findings_success"; findings: Finding[] }
+  | { type: "findings_error"; message: string }
+  | { type: "activity_success"; activity: AgentRecentActivity }
+  | { type: "activity_error"; message: string };
+
+const clearedDetail = {
+  findingsPhase: "idle" as const,
+  findingsError: null,
+  relatedFindings: [] as Finding[],
+  activityPhase: "idle" as const,
+  activityError: null,
+  recentActivity: null,
+};
 
 export const initialAgentsState: AgentsState = {
   load: "idle",
   loadError: null,
   agents: [],
   selectedId: null,
-  detail: "idle",
-  detailError: null,
-  relatedFindings: [],
+  ...clearedDetail,
 };
 
 export function agentsReducer(state: AgentsState, action: Action): AgentsState {
@@ -50,13 +66,7 @@ export function agentsReducer(state: AgentsState, action: Action): AgentsState {
         loadError: null,
         agents: action.agents,
         selectedId: stillSelected ? state.selectedId : null,
-        ...(stillSelected
-          ? {}
-          : {
-              detail: "idle" as const,
-              detailError: null,
-              relatedFindings: [],
-            }),
+        ...(stillSelected ? {} : clearedDetail),
       };
     }
     case "load_error":
@@ -68,25 +78,52 @@ export function agentsReducer(state: AgentsState, action: Action): AgentsState {
       return {
         ...state,
         selectedId: action.id,
-        detail: action.id ? "loading" : "idle",
-        detailError: null,
-        relatedFindings: [],
+        ...(action.id
+          ? {
+              findingsPhase: "loading" as const,
+              findingsError: null,
+              relatedFindings: [],
+              activityPhase: "loading" as const,
+              activityError: null,
+              recentActivity: null,
+            }
+          : clearedDetail),
       };
     case "detail_start":
-      return { ...state, detail: "loading", detailError: null };
-    case "detail_success":
       return {
         ...state,
-        detail: "ready",
-        relatedFindings: action.findings,
-        detailError: null,
+        findingsPhase: "loading",
+        findingsError: null,
+        activityPhase: "loading",
+        activityError: null,
       };
-    case "detail_error":
+    case "findings_success":
       return {
         ...state,
-        detail: "error",
-        detailError: action.message,
+        findingsPhase: "ready",
+        relatedFindings: action.findings,
+        findingsError: null,
+      };
+    case "findings_error":
+      return {
+        ...state,
+        findingsPhase: "error",
+        findingsError: action.message,
         relatedFindings: [],
+      };
+    case "activity_success":
+      return {
+        ...state,
+        activityPhase: "ready",
+        recentActivity: action.activity,
+        activityError: null,
+      };
+    case "activity_error":
+      return {
+        ...state,
+        activityPhase: "error",
+        activityError: action.message,
+        recentActivity: null,
       };
     default:
       return state;
@@ -132,13 +169,31 @@ export function useAgentsConsole(session: OperatorSession) {
     let cancelled = false;
     dispatch({ type: "detail_start" });
     void (async () => {
-      try {
-        const findings = await fetchAgentFindings(session, agentId);
-        if (cancelled) return;
-        dispatch({ type: "detail_success", findings });
-      } catch (err) {
-        if (cancelled) return;
-        dispatch({ type: "detail_error", message: errorMessage(err) });
+      const [findingsResult, activityResult] = await Promise.allSettled([
+        fetchAgentFindings(session, agentId),
+        fetchAgentRecentActivity(session, agentId),
+      ]);
+      if (cancelled) return;
+
+      if (findingsResult.status === "fulfilled") {
+        dispatch({ type: "findings_success", findings: findingsResult.value });
+      } else {
+        dispatch({
+          type: "findings_error",
+          message: errorMessage(findingsResult.reason),
+        });
+      }
+
+      if (activityResult.status === "fulfilled") {
+        dispatch({
+          type: "activity_success",
+          activity: activityResult.value,
+        });
+      } else {
+        dispatch({
+          type: "activity_error",
+          message: errorMessage(activityResult.reason),
+        });
       }
     })();
     return () => {

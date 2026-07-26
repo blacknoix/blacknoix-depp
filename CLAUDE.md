@@ -146,18 +146,41 @@ Implemented:
 >>>>>>> dec9ffc (feat(api-gateway): add findings snooze and operator dashboard summary)
 =======
   suppression count; no query params; agents rejected. Frontend console consumes
+<<<<<<< HEAD
   these surfaces (see `frontend/`). Charts, export, scheduled digests, case
   management, comments, assignment, notifications, rule DSL, malware, and
   remediation deferred.
 >>>>>>> 67a715a (feat(frontend): add operator findings console)
+=======
+  these surfaces (see `frontend/`). Finding detail includes a static rule catalog
+  explanation, compact evidence summary (no sample ids/payloads), active rule
+  snooze context, agent cross-link, and triage ergonomics (prev/next, post-mutation
+  advance when a status change removes the finding from the current filter, URL
+  `findingId` kept coherent). Local saved views persist status/ruleId/agentId
+  only (never findingId) in tenant-scoped localStorage; shared tenant views use
+  operator-only `GET/POST/DELETE /v1/findings/views` (RLS). Apply writes the URL.
+  Jump bar lists both. Folders/favorites/rename deferred. Operator Attention
+  digest: pull-based `GET /v1/findings/attention` (created + status-changed
+  since a browser cursor, max 24h); shell popover deep-links into Findings URL
+  context; Mark caught up is localStorage-only. Not live, not email/Slack, not
+  an inbox platform. Triage/snooze actions
+  unchanged in meaning. Charts, export, scheduled digests, case management,
+  comments, assignment, push notifications, rule DSL, malware, and remediation deferred.
+>>>>>>> 12b026d (feat: deepen Findings operator workflow with views, jump bar, and attention)
 - Agent identity (ADR-0003 §5 minimal): register agent → hashed credential once;
   exchange for short-lived agent access JWT (`tid`+`aid`); revoke blocks exchange.
   Operator inventory: `GET /v1/agents` returns name/id/createdAt, last heartbeat,
   open findings count, and heartbeat freshness (`recent`/`stale`/`unknown` using
   the silence threshold — not online/offline). Agent principals rejected.
-  Frontend Agents page at `/agents` consumes this inventory + related findings.
-  Cross-links: `/agents?agentId=` focuses an agent; `/findings?agentId=&findingId=`
-  filters/selects findings. Invalid UUIDs fail closed.
+  Frontend Agents page at `/agents` consumes this inventory, related findings,
+  and a compact 24h recent-activity view via existing `GET /v1/telemetry/events`
+  (eventType + occurredAt only; no payload dump; not online/offline).
+  Cross-links: `/agents?agentId=` focuses an agent; `/findings` carries
+  shareable `status` / `ruleId` / `agentId` filters plus optional `findingId`
+  selection. Invalid UUIDs/enums fail closed. Shell “Jump to…” bar (Ctrl/⌘K)
+  offers nav + built-in findings filters + local/shared views; actions navigate
+  via URL paths only (no search API). Shell Attention popover surfaces the
+  pull-based findings digest.
 
 Not implemented: RBAC, agent runtime, mTLS, enrollment UX, credential rotation UX,
 access-token denylist, policy/remediation, mesh, correlation, agent-side spool.

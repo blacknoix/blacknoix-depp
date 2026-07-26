@@ -20,7 +20,11 @@ import { createTelemetryService } from "./telemetry/service";
 import { createCorrelationFindingsRepository } from "./correlation/repository";
 import { createFindingSuppressionsRepository } from "./correlation/suppression-repository";
 import { createCorrelationService } from "./correlation/service";
+<<<<<<< HEAD
 >>>>>>> dec9ffc (feat(api-gateway): add findings snooze and operator dashboard summary)
+=======
+import { createFindingSharedViewsRepository } from "./findings-views/repository";
+>>>>>>> 12b026d (feat: deepen Findings operator workflow with views, jump bar, and attention)
 import { createUsersRepository } from "./users/repository";
 
 /**
@@ -52,6 +56,7 @@ const telemetry = db ? createTelemetryRepository(db) : undefined;
 =======
 const findings = db ? createCorrelationFindingsRepository(db) : undefined;
 const suppressions = db ? createFindingSuppressionsRepository(db) : undefined;
+const sharedViews = db ? createFindingSharedViewsRepository(db) : undefined;
 const correlationService =
   telemetry && findings && suppressions
     ? createCorrelationService({ telemetry, findings, suppressions })
@@ -111,6 +116,11 @@ const app = createApp({
   telemetryService,
   telemetryBatchMaxEvents: env.telemetryBatchMaxEvents,
   agentsService,
+<<<<<<< HEAD
+=======
+  correlationService,
+  sharedViews,
+>>>>>>> 12b026d (feat: deepen Findings operator workflow with views, jump bar, and attention)
 });
 
 const server = app.listen(env.port, () => {

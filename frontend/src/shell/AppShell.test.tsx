@@ -28,7 +28,11 @@ function jsonOk(data: unknown): Response {
 
 function stubOperatorShellFetch(opts?: {
   attentionItems?: Array<{
-    kind: "finding.created" | "finding.status_changed" | "finding.needs_revisit";
+    kind:
+      | "finding.created"
+      | "finding.status_changed"
+      | "finding.needs_revisit"
+      | "finding.reminder_due";
     findingId: string;
     title: string;
     status: string;
@@ -38,6 +42,15 @@ function stubOperatorShellFetch(opts?: {
   }>;
   reminderItems?: Array<{
     kind: "finding.needs_revisit";
+    findingId: string;
+    title: string;
+    status: string;
+    ruleId: string;
+    agentId: string;
+    at: string;
+  }>;
+  dueItems?: Array<{
+    kind: "finding.reminder_due";
     findingId: string;
     title: string;
     status: string;
@@ -56,6 +69,7 @@ function stubOperatorShellFetch(opts?: {
 }) {
   const items = opts?.attentionItems ?? [];
   const reminders = opts?.reminderItems ?? [];
+  const dueReminders = opts?.dueItems ?? [];
   const agents = opts?.agents ?? [];
   vi.stubGlobal(
     "fetch",
@@ -74,6 +88,10 @@ function stubOperatorShellFetch(opts?: {
             quietHours: 24,
             truncated: false,
             items: reminders,
+          },
+          dueReminders: {
+            truncated: false,
+            items: dueReminders,
           },
         });
       }
@@ -605,6 +623,10 @@ describe("App routing + auth gate", () => {
                 items: [],
                 reminders: {
                   quietHours: 24,
+                  truncated: false,
+                  items: [],
+                },
+                dueReminders: {
                   truncated: false,
                   items: [],
                 },

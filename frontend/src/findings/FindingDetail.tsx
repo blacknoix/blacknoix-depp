@@ -45,12 +45,16 @@ interface Props {
   agentActivityError: string | null;
   /** Optional operator user id from the session (enables Claim / Assign). */
   sessionUserId: string | null;
+  /** True when the operator identity is present for explicit reminder writes. */
+  sessionHasOperatorIdentity: boolean;
   /** Tenant operators for reassignment picker (empty = picker unavailable). */
   operators: OperatorSummary[];
   onClaimOwner: (id: string) => void;
   onClearOwner: (id: string) => void;
   onAssignOwner: (id: string, ownerUserId: string) => void;
   onSaveNote: (id: string, note: string | null) => void;
+  onSetReminder: (id: string, remindAtIso: string) => void;
+  onClearReminder: (id: string) => void;
 }
 
 const SNOOZE_PRESETS_MS = [
@@ -58,6 +62,12 @@ const SNOOZE_PRESETS_MS = [
   { label: "4 hours", ms: 4 * 60 * 60 * 1000 },
   { label: "24 hours", ms: 24 * 60 * 60 * 1000 },
   { label: "7 days", ms: 7 * 24 * 60 * 60 * 1000 },
+] as const;
+
+const REMIND_PRESETS_MS = [
+  { label: "1 hour", ms: 60 * 60 * 1000 },
+  { label: "4 hours", ms: 4 * 60 * 60 * 1000 },
+  { label: "24 hours", ms: 24 * 60 * 60 * 1000 },
 ] as const;
 
 function activeRuleSnooze(
@@ -105,11 +115,14 @@ export function FindingDetail({
   agentActivityPhase,
   agentActivityError,
   sessionUserId,
+  sessionHasOperatorIdentity,
   operators,
   onClaimOwner,
   onClearOwner,
   onAssignOwner,
   onSaveNote,
+  onSetReminder,
+  onClearReminder,
 }: Props) {
   const [noteDraft, setNoteDraft] = useState("");
   const [assignTarget, setAssignTarget] = useState("");
@@ -161,6 +174,12 @@ export function FindingDetail({
     sessionUserId && finding.ownerUserId === sessionUserId,
   );
   const canClaim = !alreadyMine;
+  const ownerAssigned = Boolean(finding.ownerUserId);
+  const operatorIsFindingOwner = sessionUserId
+    ? finding.ownerUserId === sessionUserId
+    : true;
+  const canSetReminder =
+    sessionHasOperatorIdentity && ownerAssigned && operatorIsFindingOwner;
   const ruleId = CORRELATION_RULE_IDS.includes(
     finding.ruleId as CorrelationRuleId,
   )
@@ -351,6 +370,43 @@ export function FindingDetail({
             </span>
           ) : null}
         </div>
+
+        {canSetReminder ? (
+          <div className="action-row wrap revisit-reminder-row">
+            {REMIND_PRESETS_MS.map((preset) => (
+              <button
+                key={preset.label}
+                type="button"
+                className="btn btn-secondary"
+                disabled={mutationPending}
+                onClick={() =>
+                  onSetReminder(
+                    finding.id,
+                    new Date(Date.now() + preset.ms).toISOString(),
+                  )
+                }
+              >
+                Remind {preset.label}
+              </button>
+            ))}
+            <button
+              type="button"
+              className="btn"
+              disabled={mutationPending}
+              onClick={() => onClearReminder(finding.id)}
+            >
+              Clear reminder
+            </button>
+          </div>
+        ) : sessionHasOperatorIdentity && ownerAssigned ? (
+          <p className="muted tiny" role="status">
+            Reminders can only be set or cleared by the current owner.
+          </p>
+        ) : !sessionHasOperatorIdentity ? (
+          <p className="muted tiny" role="status">
+            Operator identity is required to set or clear explicit reminders.
+          </p>
+        ) : null}
         {sessionUserId && operators.length > 0 ? (
           <div className="assign-row">
             <label className="note-field assign-field">

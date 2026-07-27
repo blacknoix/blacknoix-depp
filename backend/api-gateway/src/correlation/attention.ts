@@ -32,7 +32,8 @@ export const REMINDER_ITEMS_MAX = 20;
 export type AttentionKind =
   | "finding.created"
   | "finding.status_changed"
-  | "finding.needs_revisit";
+  | "finding.needs_revisit"
+  | "finding.reminder_due";
 
 export interface AttentionItem {
   kind: AttentionKind;
@@ -51,6 +52,12 @@ export interface OwnershipReminders {
   truncated: boolean;
 }
 
+/** Explicit operator-deferred reminders due “now” or earlier. */
+export interface DueReminders {
+  items: AttentionItem[];
+  truncated: boolean;
+}
+
 export interface FindingsAttentionDigest {
   generatedAt: Date;
   since: Date;
@@ -61,6 +68,8 @@ export interface FindingsAttentionDigest {
   truncated: boolean;
   /** Derived ownership follow-ups; empty when operator identity is absent. */
   reminders: OwnershipReminders;
+  /** Due explicit operator revisit reminders; empty when identity is absent. */
+  dueReminders: DueReminders;
 }
 
 export interface AttentionRawSources {
@@ -160,6 +169,7 @@ export function assembleAttentionDigest(
   since: Date,
   raw: AttentionRawSources,
   reminders: OwnershipReminders = emptyOwnershipReminders(),
+  dueReminders: DueReminders = emptyDueReminders(),
 ): FindingsAttentionDigest {
   const merged = [...raw.created, ...raw.statusChanged].sort(
     (a, b) => b.at.getTime() - a.at.getTime(),
@@ -175,12 +185,20 @@ export function assembleAttentionDigest(
     items: merged.slice(0, ATTENTION_ITEMS_MAX),
     truncated,
     reminders,
+    dueReminders,
   };
 }
 
 export function emptyOwnershipReminders(): OwnershipReminders {
   return {
     quietHours: REMINDER_QUIET_HOURS,
+    items: [],
+    truncated: false,
+  };
+}
+
+export function emptyDueReminders(): DueReminders {
+  return {
     items: [],
     truncated: false,
   };

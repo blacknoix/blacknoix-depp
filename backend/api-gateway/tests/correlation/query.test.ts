@@ -168,6 +168,29 @@ describe("parsePatchFindingBody", () => {
     assert.equal(tooLong.ok, false);
   });
 
+  it("accepts remindAt set and clear", () => {
+    const set = parsePatchFindingBody({
+      remindAt: "2026-03-01T12:00:00.000Z",
+    });
+    assert.equal(set.ok, true);
+    if (!set.ok) return;
+    assert.ok(set.patch.remindAt instanceof Date);
+    assert.equal(set.patch.remindAt!.toISOString(), "2026-03-01T12:00:00.000Z");
+
+    const clear = parsePatchFindingBody({ remindAt: null });
+    assert.equal(clear.ok, true);
+    if (!clear.ok) return;
+    assert.equal(clear.patch.remindAt, null);
+  });
+
+  it("rejects invalid remindAt timestamps", () => {
+    assert.equal(
+      parsePatchFindingBody({ remindAt: "not-a-timestamp" }).ok,
+      false,
+    );
+    assert.equal(parsePatchFindingBody({ remindAt: "" }).ok, false);
+  });
+
   it("rejects empty body and unknown fields", () => {
     assert.equal(parsePatchFindingBody({}).ok, false);
     assert.equal(parsePatchFindingBody({ assignee: USER }).ok, false);

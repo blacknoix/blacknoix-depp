@@ -214,6 +214,16 @@ export interface FindingPatchInput {
    * current operator note (plain text, bounded).
    */
   operatorNote?: string | null;
+
+  /**
+   * When the key is present:
+   * - a valid ISO-8601 timestamp sets an explicit “remind me later” revisit point
+   * - null clears the reminder for this finding
+   *
+   * Reminders are explicit and auditable; they are auto-cleared on
+   * resolution/ownership changes/touch before due.
+   */
+  remindAt?: Date | null;
 }
 
 export type ParsePatchFindingResult =
@@ -235,6 +245,7 @@ export function parsePatchFindingBody(body: unknown): ParsePatchFindingResult {
     "ownerUserId",
     "claimOwner",
     "operatorNote",
+    "remindAt",
   ]);
 
   for (const key of Object.keys(record)) {
@@ -306,16 +317,38 @@ export function parsePatchFindingBody(body: unknown): ParsePatchFindingResult {
     }
   }
 
+  if ("remindAt" in record) {
+    if (record.remindAt === null) {
+      patch.remindAt = null;
+    } else if (typeof record.remindAt === "string") {
+      const trimmed = record.remindAt.trim();
+      if (trimmed.length === 0) {
+        return { ok: false, message: "remindAt must be a timestamp or null" };
+      }
+      const parsed = new Date(trimmed);
+      if (Number.isNaN(parsed.getTime())) {
+        return { ok: false, message: "remindAt must be a valid ISO-8601 timestamp" };
+      }
+      patch.remindAt = parsed;
+    } else {
+      return {
+        ok: false,
+        message: "remindAt must be an ISO-8601 timestamp string or null",
+      };
+    }
+  }
+
   if (
     patch.status === undefined &&
     !("ownerUserId" in patch) &&
     !("claimOwner" in patch) &&
-    !("operatorNote" in patch)
+    !("operatorNote" in patch) &&
+    !("remindAt" in patch)
   ) {
     return {
       ok: false,
       message:
-        "at least one of status, ownerUserId, claimOwner, operatorNote is required",
+        "at least one of status, ownerUserId, claimOwner, operatorNote, remindAt is required",
     };
   }
 

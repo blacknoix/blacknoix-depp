@@ -49,7 +49,12 @@ export function FindingsConsoleView({ session }: ViewProps) {
     clearOwner,
     assignOwner,
     saveNote,
+    setReminder,
+    clearReminder,
   } = useFindingsConsole(session);
+
+  const sessionHasOperatorIdentity =
+    session.kind === "bearer" || Boolean(sessionUserId);
 
   const contextAgentId = selected?.agentId ?? null;
   const agentActivityState = useAgentRecentActivity(session, contextAgentId);
@@ -149,6 +154,16 @@ export function FindingsConsoleView({ session }: ViewProps) {
 
   async function onSaveNote(id: string, note: string | null) {
     await saveNote(id, note);
+  }
+
+  async function onSetReminder(id: string, remindAtIso: string) {
+    const nextId = await setReminder(id, remindAtIso);
+    writeUrl({ filters: state.filters, findingId: nextId });
+  }
+
+  async function onClearReminder(id: string) {
+    const nextId = await clearReminder(id);
+    writeUrl({ filters: state.filters, findingId: nextId });
   }
 
   const busy = state.load === "loading" || state.mutation === "pending";
@@ -287,11 +302,14 @@ export function FindingsConsoleView({ session }: ViewProps) {
           agentActivityPhase={agentActivityState.phase}
           agentActivityError={agentActivityState.error}
           sessionUserId={sessionUserId}
+          sessionHasOperatorIdentity={sessionHasOperatorIdentity}
           operators={operators}
           onClaimOwner={onClaimOwner}
           onClearOwner={onClearOwner}
           onAssignOwner={onAssignOwner}
           onSaveNote={onSaveNote}
+          onSetReminder={onSetReminder}
+          onClearReminder={onClearReminder}
         />
       </div>
 

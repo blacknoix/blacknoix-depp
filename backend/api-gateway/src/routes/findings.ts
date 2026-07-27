@@ -267,6 +267,18 @@ export function createFindingsRouter(
                 at: item.at.toISOString(),
               })),
             },
+            dueReminders: {
+              truncated: digest.dueReminders.truncated,
+              items: digest.dueReminders.items.map((item) => ({
+                kind: item.kind,
+                findingId: item.findingId,
+                title: item.title,
+                status: item.status,
+                ruleId: item.ruleId,
+                agentId: item.agentId,
+                at: item.at.toISOString(),
+              })),
+            },
           },
           requestId: req.requestId,
         });

@@ -405,6 +405,33 @@ export function useFindingsConsole(session: OperatorSession | null) {
     }
   }
 
+  async function setReminder(
+    findingId: string,
+    remindAtIso: string,
+  ): Promise<string | null> {
+    if (!session) return selectedRef.current;
+    dispatch({ type: "mutation_start" });
+    try {
+      await patchFinding(session, findingId, { remindAt: remindAtIso });
+      return await refreshKeepingSelection(selectedRef.current);
+    } catch (err) {
+      dispatch({ type: "mutation_error", message: errorMessage(err) });
+      return selectedRef.current;
+    }
+  }
+
+  async function clearReminder(findingId: string): Promise<string | null> {
+    if (!session) return selectedRef.current;
+    dispatch({ type: "mutation_start" });
+    try {
+      await patchFinding(session, findingId, { remindAt: null });
+      return await refreshKeepingSelection(selectedRef.current);
+    } catch (err) {
+      dispatch({ type: "mutation_error", message: errorMessage(err) });
+      return selectedRef.current;
+    }
+  }
+
   const selected =
     state.data.findings.find((f) => f.id === state.selectedId) ?? null;
 
@@ -425,6 +452,8 @@ export function useFindingsConsole(session: OperatorSession | null) {
     clearOwner,
     assignOwner,
     saveNote,
+    setReminder,
+    clearReminder,
     clearTriageNote,
   };
 }

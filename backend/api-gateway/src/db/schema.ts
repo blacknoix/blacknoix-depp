@@ -166,6 +166,22 @@ export interface FindingSuppressionsTable {
 }
 
 /**
+ * Tenant-owned explicit operator-deferred revisit reminders for Findings.
+ * Soft-cleared via cleared_at; unique per (tenant_id, finding_id).
+ */
+export interface FindingRevisitRemindersTable {
+  id: Generated<string>;
+  tenant_id: string;
+  finding_id: string;
+  owner_user_id: string;
+  remind_at: Timestamp;
+  set_at: Timestamp;
+  set_by_user_id: string;
+  cleared_at: NullableTimestamp;
+  cleared_by_user_id: string | null;
+}
+
+/**
  * Tenant-owned shared Findings filter view. Operator product only.
  * Filter columns are nullable; findingId is never stored.
  */
@@ -193,5 +209,6 @@ export interface Database {
   telemetry_events: TelemetryEventsTable;
   correlation_findings: CorrelationFindingsTable;
   finding_suppressions: FindingSuppressionsTable;
+  finding_revisit_reminders: FindingRevisitRemindersTable;
   finding_shared_views: FindingSharedViewsTable;
 }

@@ -96,4 +96,21 @@ describe("attentionItemPath", () => {
     );
     expect(attentionKindLabel("finding.needs_revisit")).toBe("Needs revisit");
   });
+
+  it("routes explicit due reminders into Mine with finding selection", () => {
+    const item: AttentionItem = {
+      kind: "finding.reminder_due",
+      findingId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      title: "Due revisit reminder",
+      status: "open",
+      ruleId: "agent.lifecycle_churn",
+      agentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      at: "2026-03-01T12:00:00.000Z",
+    };
+
+    expect(attentionItemPath(item)).toBe(
+      "/findings?ownerScope=me&findingId=dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    );
+    expect(attentionKindLabel("finding.reminder_due")).toBe("Reminder due");
+  });
 });

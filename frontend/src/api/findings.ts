@@ -59,6 +59,7 @@ export interface FindingPatch {
   ownerUserId?: string | null;
   claimOwner?: true;
   operatorNote?: string | null;
+  remindAt?: string | null;
 }
 
 export async function patchFinding(
@@ -172,7 +173,8 @@ export async function deleteSharedFindingView(
 export type AttentionKind =
   | "finding.created"
   | "finding.status_changed"
-  | "finding.needs_revisit";
+  | "finding.needs_revisit"
+  | "finding.reminder_due";
 
 export interface AttentionItem {
   kind: AttentionKind;
@@ -190,6 +192,11 @@ export interface OwnershipReminders {
   items: AttentionItem[];
 }
 
+export interface DueReminders {
+  truncated: boolean;
+  items: AttentionItem[];
+}
+
 export interface FindingsAttentionDigest {
   generatedAt: string;
   since: string;
@@ -199,6 +206,7 @@ export interface FindingsAttentionDigest {
   truncated: boolean;
   items: AttentionItem[];
   reminders: OwnershipReminders;
+  dueReminders: DueReminders;
 }
 
 export async function fetchFindingsAttention(

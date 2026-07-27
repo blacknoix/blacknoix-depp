@@ -5,6 +5,7 @@ import {
   assembleOwnershipReminders,
   ATTENTION_SOURCE_FETCH_LIMIT,
   emptyOwnershipReminders,
+  emptyDueReminders,
   REMINDER_ITEMS_MAX,
   reminderQuietBefore,
   resolveAttentionSince,
@@ -267,6 +268,13 @@ export function createCorrelationService(
 
     const intent: UpdateFindingIntentInput = {};
     const at = now();
+    const remindAtProvided = patch.remindAt !== undefined;
+    const requestedRemindAt = patch.remindAt;
+    const actorUserId = actor.userId?.trim().toLowerCase();
+    const activeReminder = await findings.getActiveRevisitReminder(
+      tenantId,
+      findingId,
+    );
 
     if (patch.status !== undefined) {
       const transition = assertFindingTransition(current.status, patch.status);
@@ -354,19 +362,124 @@ export function createCorrelationService(
       }
     }
 
-    if (Object.keys(intent).length === 0) {
+    const didTouch =
+      intent.statusChangedAt !== undefined ||
+      intent.ownerChangedAt !== undefined ||
+      intent.operatorNoteUpdatedAt !== undefined;
+
+    const willResolve = intent.status === "resolved";
+    const willChangeOwnership = intent.ownerChangedAt !== undefined;
+
+    // Apply finding update first (if any), then reminder side-effects.
+    let updatedFinding = current;
+    if (Object.keys(intent).length !== 0) {
+      const updated = await findings.updateFindingIntent(
+        tenantId,
+        findingId,
+        intent,
+      );
+      if (!updated) {
+        return { ok: false, reason: "not_found" };
+      }
+      updatedFinding = updated;
+    }
+
+    if (!remindAtProvided && Object.keys(intent).length === 0) {
       return { ok: true, finding: current };
     }
 
-    const updated = await findings.updateFindingIntent(
-      tenantId,
-      findingId,
-      intent,
-    );
-    if (!updated) {
-      return { ok: false, reason: "not_found" };
+    // Reminder semantics:
+    // - Explicit set/clear is operator-owned; identity required.
+    // - Resolved and ownership-change always clear.
+    // - Touch clears only when the reminder is still in the future.
+    if (remindAtProvided) {
+      if (!actorUserId) {
+        return {
+          ok: false,
+          reason: "rejected",
+          message: "Operator identity is required to set or clear reminders",
+        };
+      }
+
+      if (requestedRemindAt === null) {
+        if (activeReminder && activeReminder.ownerUserId !== actorUserId) {
+          return {
+            ok: false,
+            reason: "rejected",
+            message: "Can only clear reminders you own",
+          };
+        }
+        await findings.clearRevisitReminder(
+          tenantId,
+          findingId,
+          actorUserId,
+        );
+      } else {
+        // Reminder set
+        if (current.status === "resolved" || willResolve) {
+          return {
+            ok: false,
+            reason: "rejected",
+            message: "Cannot set reminder on resolved findings",
+          };
+        }
+        if (!(requestedRemindAt instanceof Date) || Number.isNaN(
+          requestedRemindAt.getTime(),
+        )) {
+          return {
+            ok: false,
+            reason: "rejected",
+            message: "remindAt must be a valid timestamp",
+          };
+        }
+
+        if (requestedRemindAt.getTime() <= at.getTime()) {
+          return {
+            ok: false,
+            reason: "rejected",
+            message: "remindAt must be in the future",
+          };
+        }
+
+        const nextOwner =
+          intent.ownerUserId !== undefined ? intent.ownerUserId : current.ownerUserId;
+        if (!nextOwner || nextOwner !== actorUserId) {
+          return {
+            ok: false,
+            reason: "rejected",
+            message: "Reminder can only be set by the current finding owner",
+          };
+        }
+
+        await findings.upsertRevisitReminder(
+          tenantId,
+          findingId,
+          actorUserId,
+          requestedRemindAt,
+          actorUserId,
+        );
+      }
+    } else if (activeReminder) {
+      // Auto-clear side-effects when no explicit reminder mutation happens.
+      if (willResolve || willChangeOwnership) {
+        await findings.clearRevisitReminder(
+          tenantId,
+          findingId,
+          actorUserId ?? null,
+        );
+      } else if (
+        didTouch &&
+        activeReminder.remindAt.getTime() > at.getTime()
+      ) {
+        await findings.clearRevisitReminder(
+          tenantId,
+          findingId,
+          actorUserId ?? null,
+        );
+      }
     }
-    return { ok: true, finding: updated };
+
+    return { ok: true, finding: updatedFinding };
   }
 
   return {
@@ -510,6 +623,7 @@ export function createCorrelationService(
       );
 
       let reminders = emptyOwnershipReminders();
+      let dueReminders = emptyDueReminders();
       const ownerUserId = actor?.userId?.trim().toLowerCase();
       if (ownerUserId) {
         const quietBefore = reminderQuietBefore(generatedAt);
@@ -523,6 +637,17 @@ export function createCorrelationService(
           reminderRows,
           reminderRows.length >= REMINDER_ITEMS_MAX,
         );
+
+        const dueRows = await findings.listDueExplicitRevisitReminders(
+          tenantId,
+          ownerUserId,
+          generatedAt,
+          REMINDER_ITEMS_MAX,
+        );
+        dueReminders = {
+          items: dueRows,
+          truncated: dueRows.length >= REMINDER_ITEMS_MAX,
+        };
       }
 
       return assembleAttentionDigest(
@@ -535,6 +660,7 @@ export function createCorrelationService(
             raw.statusChanged.length >= ATTENTION_SOURCE_FETCH_LIMIT,
         },
         reminders,
+        dueReminders,
       );
     },
 

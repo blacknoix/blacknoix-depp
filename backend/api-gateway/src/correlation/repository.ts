@@ -146,6 +146,51 @@ export interface CorrelationFindingsRepository {
     quietBefore: Date,
     limit: number,
   ): Promise<AttentionItem[]>;
+
+  /**
+   * Active explicit revisit reminder for one finding (if any).
+   * Reminders are explicit operator-deferred revisit points.
+   */
+  getActiveRevisitReminder(
+    tenantId: string,
+    findingId: string,
+  ): Promise<
+    | { ownerUserId: string; remindAt: Date }
+    | null
+  >;
+
+  /**
+   * Creates or updates an active explicit revisit reminder.
+   * Soft-mutable: this table is the persistence layer.
+   */
+  upsertRevisitReminder(
+    tenantId: string,
+    findingId: string,
+    ownerUserId: string,
+    remindAt: Date,
+    setByUserId: string,
+  ): Promise<void>;
+
+  /**
+   * Clears an active explicit revisit reminder.
+   * Returns true only when an active row existed.
+   */
+  clearRevisitReminder(
+    tenantId: string,
+    findingId: string,
+    clearedByUserId: string | null,
+  ): Promise<boolean>;
+
+  /**
+   * Lists due explicit reminders for one operator.
+   * Returned items are ordered oldest-first.
+   */
+  listDueExplicitRevisitReminders(
+    tenantId: string,
+    ownerUserId: string,
+    now: Date,
+    limit: number,
+  ): Promise<AttentionItem[]>;
 }
 
 function asDate(value: unknown): Date {
@@ -540,6 +585,174 @@ export function createCorrelationFindingsRepository(
             at: lastTouchedAt,
           };
         });
+      });
+    },
+
+    async getActiveRevisitReminder(tenantId, findingId) {
+      if (typeof tenantId !== "string" || tenantId.trim() === "") {
+        throw new Error("getActiveRevisitReminder requires a non-empty tenantId");
+      }
+      if (typeof findingId !== "string" || findingId.trim() === "") {
+        throw new Error(
+          "getActiveRevisitReminder requires a non-empty findingId",
+        );
+      }
+
+      return withTenantTransaction(db, tenantId, async (trx) => {
+        const row = await trx
+          .selectFrom("finding_revisit_reminders")
+          .select(["owner_user_id", "remind_at"])
+          .where("finding_id", "=", findingId)
+          .where("cleared_at", "is", null)
+          .executeTakeFirst();
+
+        if (!row) {
+          return null;
+        }
+
+        return {
+          ownerUserId: String(row.owner_user_id),
+          remindAt: asDate(row.remind_at),
+        };
+      });
+    },
+
+    async upsertRevisitReminder(
+      tenantId,
+      findingId,
+      ownerUserId,
+      remindAt,
+      setByUserId,
+    ) {
+      if (typeof tenantId !== "string" || tenantId.trim() === "") {
+        throw new Error("upsertRevisitReminder requires a non-empty tenantId");
+      }
+      if (typeof findingId !== "string" || findingId.trim() === "") {
+        throw new Error("upsertRevisitReminder requires a non-empty findingId");
+      }
+      if (typeof ownerUserId !== "string" || ownerUserId.trim() === "") {
+        throw new Error(
+          "upsertRevisitReminder requires a non-empty ownerUserId",
+        );
+      }
+      if (!(remindAt instanceof Date) || Number.isNaN(remindAt.getTime())) {
+        throw new Error("upsertRevisitReminder requires a valid remindAt");
+      }
+      if (typeof setByUserId !== "string" || setByUserId.trim() === "") {
+        throw new Error(
+          "upsertRevisitReminder requires a non-empty setByUserId",
+        );
+      }
+
+      return withTenantTransaction(db, tenantId, async (trx) => {
+        await trx
+          .insertInto("finding_revisit_reminders")
+          .values({
+            tenant_id: tenantId,
+            finding_id: findingId,
+            owner_user_id: ownerUserId.trim().toLowerCase(),
+            remind_at: remindAt,
+            set_by_user_id: setByUserId.trim().toLowerCase(),
+            set_at: new Date(),
+            cleared_at: null,
+            cleared_by_user_id: null,
+          })
+          .onConflict((oc) =>
+            oc
+              .columns(["tenant_id", "finding_id"])
+              .doUpdateSet({
+                owner_user_id: ownerUserId.trim().toLowerCase(),
+                remind_at: remindAt,
+                set_by_user_id: setByUserId.trim().toLowerCase(),
+                set_at: new Date(),
+                cleared_at: null,
+                cleared_by_user_id: null,
+              }),
+          )
+          .execute();
+      });
+    },
+
+    async clearRevisitReminder(tenantId, findingId, clearedByUserId) {
+      if (typeof tenantId !== "string" || tenantId.trim() === "") {
+        throw new Error("clearRevisitReminder requires a non-empty tenantId");
+      }
+      if (typeof findingId !== "string" || findingId.trim() === "") {
+        throw new Error("clearRevisitReminder requires a non-empty findingId");
+      }
+
+      return withTenantTransaction(db, tenantId, async (trx) => {
+        const result = await trx
+          .updateTable("finding_revisit_reminders")
+          .set({
+            cleared_at: new Date(),
+            cleared_by_user_id:
+              clearedByUserId ? clearedByUserId.trim().toLowerCase() : null,
+          })
+          .where("finding_id", "=", findingId)
+          .where("cleared_at", "is", null)
+          .executeTakeFirst();
+
+        return (result?.numUpdatedRows ?? 0n) > 0n;
+      });
+    },
+
+    async listDueExplicitRevisitReminders(
+      tenantId,
+      ownerUserId,
+      now,
+      limit,
+    ) {
+      if (typeof tenantId !== "string" || tenantId.trim() === "") {
+        throw new Error(
+          "listDueExplicitRevisitReminders requires a non-empty tenantId",
+        );
+      }
+      if (typeof ownerUserId !== "string" || ownerUserId.trim() === "") {
+        throw new Error(
+          "listDueExplicitRevisitReminders requires a non-empty ownerUserId",
+        );
+      }
+      if (!(now instanceof Date) || Number.isNaN(now.getTime())) {
+        throw new Error("listDueExplicitRevisitReminders requires a valid now");
+      }
+
+      const capped = Math.min(Math.max(1, Math.trunc(limit)), 50);
+      const owner = ownerUserId.trim().toLowerCase();
+
+      return withTenantTransaction(db, tenantId, async (trx) => {
+        const rows = await trx
+          .selectFrom("finding_revisit_reminders as r")
+          .innerJoin(
+            "correlation_findings as f",
+            "f.id",
+            "r.finding_id",
+          )
+          .select([
+            "f.id as finding_id",
+            "f.title as title",
+            "f.status as status",
+            "f.rule_id as rule_id",
+            "f.agent_id as agent_id",
+            "r.remind_at as remind_at",
+          ])
+          .where("r.cleared_at", "is", null)
+          .where("r.owner_user_id", "=", owner)
+          .where("r.remind_at", "<=", now)
+          .where("f.status", "in", ["open", "acknowledged"])
+          .orderBy("r.remind_at", "asc")
+          .limit(capped)
+          .execute();
+
+        return rows.map((row) => ({
+          kind: "finding.reminder_due" as const,
+          findingId: String((row as any).finding_id),
+          title: String((row as any).title),
+          status: (row as any).status,
+          ruleId: String((row as any).rule_id),
+          agentId: String((row as any).agent_id),
+          at: asDate((row as any).remind_at),
+        }));
       });
     },
   };

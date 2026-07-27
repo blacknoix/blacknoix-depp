@@ -70,6 +70,10 @@ function stubCorrelation(
         items: [],
         truncated: false,
       },
+      dueReminders: {
+        items: [],
+        truncated: false,
+      },
     }),
     ...overrides,
   };
@@ -343,6 +347,10 @@ describe("GET /v1/findings/attention", () => {
                     at: new Date("2026-02-28T10:00:00.000Z"),
                   },
                 ],
+              },
+              dueReminders: {
+                truncated: false,
+                items: [],
               },
             };
           },

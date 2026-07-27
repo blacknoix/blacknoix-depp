@@ -142,7 +142,8 @@ export function AttentionPanel({ session }: Props) {
 
   const changeCount = digest?.items.length ?? 0;
   const reminderCount = digest?.reminders.items.length ?? 0;
-  const count = changeCount + reminderCount;
+  const dueReminderCount = digest?.dueReminders.items.length ?? 0;
+  const count = changeCount + reminderCount + dueReminderCount;
   const badge = count === 0 ? null : count > 9 ? "9+" : String(count);
 
   function onMarkCaughtUp() {
@@ -155,7 +156,7 @@ export function AttentionPanel({ session }: Props) {
       return;
     }
     setMessage(
-      "Marked change feed caught up for this browser. Ownership reminders stay until the finding is touched or resolved.",
+      "Marked change feed caught up for this browser. Reminders stay until the finding is touched/resolved or the operator clears them.",
     );
     void load();
   }
@@ -222,7 +223,9 @@ export function AttentionPanel({ session }: Props) {
               Open findings: {digest.openCount}
               {" · "}
               Active snoozes: {digest.activeSuppressionCount}
-              {digest.truncated || digest.reminders.truncated
+              {digest.truncated ||
+              digest.reminders.truncated ||
+              digest.dueReminders.truncated
                 ? " · Showing latest only"
                 : ""}
             </p>
@@ -282,6 +285,32 @@ export function AttentionPanel({ session }: Props) {
                 {digest.reminders.items.map((item) => (
                   <li key={`${item.kind}:${item.findingId}:${item.at}`}>
                     <AttentionItemRow item={item} onNavigate={closePanel} />
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </section>
+
+          <section className="attention-section" aria-label="Reminders due">
+            <h3 className="attention-section-title">Reminders due</h3>
+            {!hasIdentity ? (
+              <p className="muted tiny" role="status">
+                Operator identity is required for explicit reminder due items.
+              </p>
+            ) : null}
+            {hasIdentity && digest && digest.dueReminders.items.length === 0 ? (
+              <p className="muted tiny" role="status">
+                No explicit revisit reminders are due.
+              </p>
+            ) : null}
+            {digest && digest.dueReminders.items.length > 0 ? (
+              <ul className="attention-list">
+                {digest.dueReminders.items.map((item) => (
+                  <li key={`${item.kind}:${item.findingId}:${item.at}`}>
+                    <AttentionItemRow
+                      item={item}
+                      onNavigate={closePanel}
+                    />
                   </li>
                 ))}
               </ul>

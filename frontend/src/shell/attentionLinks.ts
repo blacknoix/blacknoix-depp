@@ -27,7 +27,7 @@ export function attentionItemPath(item: AttentionItem): string | null {
     return null;
   }
 
-  if (item.kind === "finding.needs_revisit") {
+  if (item.kind === "finding.needs_revisit" || item.kind === "finding.reminder_due") {
     // Ownership reminders land in Mine so queue context stays coherent.
     return findingsPath({
       ownerScope: "me",
@@ -48,6 +48,9 @@ export function attentionKindLabel(kind: AttentionItem["kind"]): string {
   }
   if (kind === "finding.needs_revisit") {
     return "Needs revisit";
+  }
+  if (kind === "finding.reminder_due") {
+    return "Reminder due";
   }
   return "Status change";
 }

@@ -290,6 +290,10 @@ describe("post-ingest correlation evaluation", () => {
             items: [],
             truncated: false,
           },
+          dueReminders: {
+            items: [],
+            truncated: false,
+          },
         }),
       },
     });
@@ -657,6 +661,250 @@ describe("findings lifecycle triage", () => {
       offset: 0,
     });
     assert.ok(unownedAgain.some((f) => f.id === id));
+  });
+
+  it("surfaces explicit due reminders in attention and supports set/clear", async () => {
+    const userId = "22222222-2222-4222-8222-222222222222";
+    const id = await seedOpenFinding();
+
+    const setClock = correlationFor(
+      fixedNow("2026-03-01T12:00:00.000Z"),
+    );
+    const claimed = await setClock.patchFinding(
+      tenantA,
+      id,
+      { claimOwner: true },
+      { userId },
+    );
+    assert.equal(claimed.ok, true);
+
+    const remindAt = new Date("2026-03-01T13:00:00.000Z");
+    const setReminder = await setClock.patchFinding(
+      tenantA,
+      id,
+      { remindAt },
+      { userId },
+    );
+    assert.equal(setReminder.ok, true);
+
+    const beforeDueClock = correlationFor(
+      fixedNow("2026-03-01T12:30:00.000Z"),
+    );
+    const beforeDue = await beforeDueClock.attention(
+      tenantA,
+      new Date("2026-03-01T00:00:00.000Z"),
+      { userId },
+    );
+    assert.equal(beforeDue.dueReminders.items.length, 0);
+
+    // Still fail closed when operator identity is absent.
+    const beforeDueNoIdentity = await beforeDueClock.attention(
+      tenantA,
+      new Date("2026-03-01T00:00:00.000Z"),
+    );
+    assert.equal(beforeDueNoIdentity.dueReminders.items.length, 0);
+
+    const dueClock = correlationFor(fixedNow("2026-03-01T13:01:00.000Z"));
+    const due = await dueClock.attention(
+      tenantA,
+      new Date("2026-03-01T00:00:00.000Z"),
+      { userId },
+    );
+    assert.equal(due.dueReminders.items.length, 1);
+    assert.equal(due.dueReminders.items[0].kind, "finding.reminder_due");
+    assert.equal(due.dueReminders.items[0].findingId, id);
+
+    const cleared = await dueClock.patchFinding(
+      tenantA,
+      id,
+      { remindAt: null },
+      { userId },
+    );
+    assert.equal(cleared.ok, true);
+
+    const afterClear = await dueClock.attention(
+      tenantA,
+      new Date("2026-03-01T00:00:00.000Z"),
+      { userId },
+    );
+    assert.equal(afterClear.dueReminders.items.length, 0);
+  });
+
+  it("auto-clears an explicit reminder when the finding is touched before due", async () => {
+    const userId = "22222222-2222-4222-8222-222222222222";
+    const id = await seedOpenFinding();
+
+    const setClock = correlationFor(
+      fixedNow("2026-03-01T12:00:00.000Z"),
+    );
+    await setClock.patchFinding(
+      tenantA,
+      id,
+      { claimOwner: true },
+      { userId },
+    );
+
+    const remindAt = new Date("2026-03-01T13:00:00.000Z");
+    const setReminder = await setClock.patchFinding(
+      tenantA,
+      id,
+      { remindAt },
+      { userId },
+    );
+    assert.equal(setReminder.ok, true);
+
+    const touchClock = correlationFor(
+      fixedNow("2026-03-01T12:30:00.000Z"),
+    );
+    const touched = await touchClock.patchFinding(
+      tenantA,
+      id,
+      { operatorNote: "Checked while scheduled" },
+      { userId },
+    );
+    assert.equal(touched.ok, true);
+
+    const dueClock = correlationFor(fixedNow("2026-03-01T13:01:00.000Z"));
+    const due = await dueClock.attention(
+      tenantA,
+      new Date("2026-03-01T00:00:00.000Z"),
+      { userId },
+    );
+    assert.equal(due.dueReminders.items.length, 0);
+  });
+
+  it("clears an explicit reminder when a finding is resolved", async () => {
+    const userId = "22222222-2222-4222-8222-222222222222";
+    const id = await seedOpenFinding();
+
+    const setClock = correlationFor(
+      fixedNow("2026-03-01T12:00:00.000Z"),
+    );
+    await setClock.patchFinding(
+      tenantA,
+      id,
+      { claimOwner: true },
+      { userId },
+    );
+
+    const remindAt = new Date("2026-03-01T13:00:00.000Z");
+    await setClock.patchFinding(
+      tenantA,
+      id,
+      { remindAt },
+      { userId },
+    );
+
+    const resolveClock = correlationFor(
+      fixedNow("2026-03-01T12:30:00.000Z"),
+    );
+    const resolved = await resolveClock.patchFinding(
+      tenantA,
+      id,
+      { status: "resolved" },
+      { userId },
+    );
+    assert.equal(resolved.ok, true);
+
+    const dueClock = correlationFor(fixedNow("2026-03-01T13:01:00.000Z"));
+    const due = await dueClock.attention(
+      tenantA,
+      new Date("2026-03-01T00:00:00.000Z"),
+      { userId },
+    );
+    assert.equal(due.dueReminders.items.length, 0);
+  });
+
+  it("clears an explicit reminder when ownership is reassigned", async () => {
+    const users = createUsersRepository(db.app);
+    const alice = await users.findOrLinkByIdentity(tenantA, {
+      issuer: "https://idp.example.com",
+      subject: "alice-remind",
+      email: "alice-remind@example.com",
+      displayName: "Alice",
+    });
+    const bob = await users.findOrLinkByIdentity(tenantA, {
+      issuer: "https://idp.example.com",
+      subject: "bob-remind",
+      email: "bob-remind@example.com",
+      displayName: "Bob",
+    });
+
+    const id = await seedOpenFinding();
+
+    const setClock = correlationFor(
+      fixedNow("2026-03-01T12:00:00.000Z"),
+    );
+    const claimed = await setClock.patchFinding(
+      tenantA,
+      id,
+      { claimOwner: true },
+      { userId: alice.id },
+    );
+    assert.equal(claimed.ok, true);
+
+    const remindAt = new Date("2026-03-01T13:00:00.000Z");
+    const setReminder = await setClock.patchFinding(
+      tenantA,
+      id,
+      { remindAt },
+      { userId: alice.id },
+    );
+    assert.equal(setReminder.ok, true);
+
+    const reassignClock = correlationFor(
+      fixedNow("2026-03-01T12:30:00.000Z"),
+    );
+    const reassigned = await reassignClock.patchFinding(
+      tenantA,
+      id,
+      { ownerUserId: bob.id },
+      { userId: alice.id },
+    );
+    assert.equal(reassigned.ok, true);
+
+    const dueClock = correlationFor(fixedNow("2026-03-01T13:01:00.000Z"));
+    const dueForBob = await dueClock.attention(
+      tenantA,
+      new Date("2026-03-01T00:00:00.000Z"),
+      { userId: bob.id },
+    );
+    assert.equal(dueForBob.dueReminders.items.length, 0);
+
+    const dueForAlice = await dueClock.attention(
+      tenantA,
+      new Date("2026-03-01T00:00:00.000Z"),
+      { userId: alice.id },
+    );
+    assert.equal(dueForAlice.dueReminders.items.length, 0);
+  });
+
+  it("rejects remindAt that is not strictly in the future", async () => {
+    const userId = "22222222-2222-4222-8222-222222222222";
+    const id = await seedOpenFinding();
+
+    const setClock = correlationFor(
+      fixedNow("2026-03-01T12:00:00.000Z"),
+    );
+    const claimed = await setClock.patchFinding(
+      tenantA,
+      id,
+      { claimOwner: true },
+      { userId },
+    );
+    assert.equal(claimed.ok, true);
+
+    const remindAtNow = new Date("2026-03-01T12:00:00.000Z");
+    const notFuture = await setClock.patchFinding(
+      tenantA,
+      id,
+      { remindAt: remindAtNow },
+      { userId },
+    );
+    assert.equal(notFuture.ok, false);
+    if (!notFuture.ok) {
+      assert.equal(notFuture.reason, "rejected");
+    }
   });
 
   it("lists findings by ownerScope me and none", async () => {

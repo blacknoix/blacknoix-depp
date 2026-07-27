@@ -660,11 +660,11 @@ describe("WorkQueuePage", () => {
       expect(
         screen.getByText(/Showing tenant default Work view “Intake only”/i),
       ).toBeInTheDocument();
+      expect(
+        document.querySelector('[data-section="unowned_open"]'),
+      ).toBeTruthy();
+      expect(document.querySelector('[data-section="mine"]')).toBeNull();
     });
-    expect(
-      document.querySelector('[data-section="unowned_open"]'),
-    ).toBeTruthy();
-    expect(document.querySelector('[data-section="mine"]')).toBeNull();
     expect(
       screen.getByRole("button", { name: /Intake only · default/i }),
     ).toBeInTheDocument();

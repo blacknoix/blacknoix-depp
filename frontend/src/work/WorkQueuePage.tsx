@@ -170,9 +170,14 @@ export function WorkQueuePage() {
   const [tenantDefault, setTenantDefault] = useState<
     TenantDefaultWorkView | null | undefined
   >(undefined);
-  const [tenantDefaultBanner, setTenantDefaultBanner] = useState<string | null>(
-    null,
-  );
+  /**
+   * Set when bare /work applies a tenant default. Banner shows only once the
+   * URL has the matching explicit sections (avoids banner/section divergence).
+   */
+  const [tenantDefaultLanding, setTenantDefaultLanding] = useState<{
+    name: string;
+    sections: WorkQueueSectionId[];
+  } | null>(null);
 
   const {
     phase,
@@ -195,14 +200,24 @@ export function WorkQueuePage() {
   const selectedCount = selectedIds.size;
   const canBulk = hasIdentity && selectedCount > 0 && !bulkPending;
 
+  const tenantDefaultBanner =
+    tenantDefaultLanding &&
+    urlState.kind === "explicit" &&
+    sectionsEqual(urlState.sections, tenantDefaultLanding.sections)
+      ? tenantDefaultLanding.name
+      : null;
+
   function writeSections(
     next: readonly WorkQueueSectionId[],
     opts?: { tenantDefaultName?: string | null },
   ) {
-    if (opts && "tenantDefaultName" in opts) {
-      setTenantDefaultBanner(opts.tenantDefaultName ?? null);
+    if (opts && opts.tenantDefaultName) {
+      setTenantDefaultLanding({
+        name: opts.tenantDefaultName,
+        sections: [...next],
+      });
     } else {
-      setTenantDefaultBanner(null);
+      setTenantDefaultLanding(null);
     }
     const params = serializeWorkSearchParams({ sections: next });
     setSearchParams(params, { replace: true });

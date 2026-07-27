@@ -15,17 +15,15 @@ import type { AgentsService } from "./agents/service";
 import type { DatabaseHealthCheck } from "./db/pool";
 import { createAgentsRouter } from "./routes/agents";
 import { createAuthRouter } from "./routes/auth";
+import { createFindingsRouter } from "./routes/findings";
 import { createHealthRouter } from "./routes/health";
 import rootRouter from "./routes/root";
 import { createTenantsRouter } from "./routes/tenants";
 import { createTelemetryRouter } from "./routes/telemetry";
 import type { TenantLookup } from "./tenants/repository";
 import type { TelemetryService } from "./telemetry/service";
-<<<<<<< HEAD
-=======
 import type { CorrelationService } from "./correlation/service";
 import type { FindingSharedViewsRepository } from "./findings-views/repository";
->>>>>>> 12b026d (feat: deepen Findings operator workflow with views, jump bar, and attention)
 
 /**
  * Maximum accepted JSON request body.
@@ -81,8 +79,8 @@ export interface AppOptions {
   };
 
   /**
-   * Backs POST /v1/telemetry/events. Omitted means the route fails closed;
-   * index.ts wires it when a database is configured.
+   * Backs POST/GET /v1/telemetry/events (+ batch). Omitted means those routes
+   * fail closed; index.ts wires it when a database is configured.
    */
   telemetryService?: TelemetryService;
 
@@ -96,8 +94,6 @@ export interface AppOptions {
    * routes fail closed; index.ts wires it when database + JWT config are present.
    */
   agentsService?: AgentsService;
-<<<<<<< HEAD
-=======
 
   /**
    * Backs GET /v1/findings. Omitted means the route fails closed; index.ts
@@ -110,7 +106,6 @@ export interface AppOptions {
    * means those routes fail closed.
    */
   sharedViews?: FindingSharedViewsRepository;
->>>>>>> 12b026d (feat: deepen Findings operator workflow with views, jump bar, and attention)
 }
 
 export function createApp(options: AppOptions = {}) {
@@ -180,8 +175,6 @@ export function createApp(options: AppOptions = {}) {
     }),
   );
 
-<<<<<<< HEAD
-=======
   // Correlation findings: narrow operator read surface (not an alert console).
   app.use(
     "/v1/findings",
@@ -192,7 +185,6 @@ export function createApp(options: AppOptions = {}) {
     }),
   );
 
->>>>>>> 12b026d (feat: deepen Findings operator workflow with views, jump bar, and attention)
   // Terminal handlers, in order.
   app.use(notFound);
   app.use(errorHandler);

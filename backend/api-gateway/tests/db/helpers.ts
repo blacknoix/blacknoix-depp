@@ -73,14 +73,27 @@ export async function connectDb(): Promise<DbHandles> {
  * will pull fixtures out from under another's inserts (FK violations, duplicate
  * slugs). This is enforced by `--test-concurrency=1` in the `test:db` script; do
  * not remove it without giving each file its own isolated data.
+ *
+ * RESET_TABLES matches Database in src/db/schema.ts (union of snooze +
+ * shared-views sides). CASCADE clears any extra tenant-owned relations.
  */
+const RESET_TABLES = [
+  "finding_shared_views",
+  "finding_suppressions",
+  "correlation_findings",
+  "telemetry_events",
+  "agent_credentials",
+  "oidc_initiations",
+  "refresh_tokens",
+  "sessions",
+  "users",
+  "agents",
+  "tenants",
+] as const;
+
 export async function resetSchema(migrator: Pool): Promise<void> {
   await migrator.query(
-<<<<<<< HEAD
-    "truncate table telemetry_events, agent_credentials, oidc_initiations, refresh_tokens, sessions, users, agents, tenants restart identity cascade",
-=======
-    "truncate table finding_suppressions, correlation_findings, telemetry_events, agent_credentials, oidc_initiations, refresh_tokens, sessions, users, agents, tenants restart identity cascade",
->>>>>>> dec9ffc (feat(api-gateway): add findings snooze and operator dashboard summary)
+    `truncate table ${RESET_TABLES.join(", ")} restart identity cascade`,
   );
 }
 

@@ -122,8 +122,6 @@ export interface TelemetryEventsTable {
   payload: Record<string, unknown>;
 }
 
-<<<<<<< HEAD
-=======
 /**
  * Tenant-owned correlation output (ADR-0001 alerts, minimal).
  * Mutable operator fields: status, ownership, current operator note.
@@ -167,9 +165,6 @@ export interface FindingSuppressionsTable {
   cleared_by_user_id: string | null;
 }
 
-<<<<<<< HEAD
->>>>>>> dec9ffc (feat(api-gateway): add findings snooze and operator dashboard summary)
-=======
 /**
  * Tenant-owned shared Findings filter view. Operator product only.
  * Filter columns are nullable; findingId is never stored.
@@ -185,7 +180,6 @@ export interface FindingSharedViewsTable {
   created_by_user_id: string | null;
 }
 
->>>>>>> 12b026d (feat: deepen Findings operator workflow with views, jump bar, and attention)
 export interface Database {
   tenants: TenantsTable;
   agents: AgentsTable;
@@ -195,13 +189,7 @@ export interface Database {
   refresh_tokens: RefreshTokensTable;
   oidc_initiations: OidcInitiationsTable;
   telemetry_events: TelemetryEventsTable;
-<<<<<<< HEAD
-=======
   correlation_findings: CorrelationFindingsTable;
   finding_suppressions: FindingSuppressionsTable;
-<<<<<<< HEAD
->>>>>>> dec9ffc (feat(api-gateway): add findings snooze and operator dashboard summary)
-=======
   finding_shared_views: FindingSharedViewsTable;
->>>>>>> 12b026d (feat: deepen Findings operator workflow with views, jump bar, and attention)
 }

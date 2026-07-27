@@ -12,20 +12,18 @@ import { requireTenant } from "./middleware/tenant-context";
 import type { OidcLoginService } from "./auth/oidc/login";
 import type { AuthService } from "./auth/service";
 import type { AgentsService } from "./agents/service";
+import type { CorrelationService } from "./correlation/service";
 import type { DatabaseHealthCheck } from "./db/pool";
+import type { FindingSharedViewsRepository } from "./findings-views/repository";
 import { createAgentsRouter } from "./routes/agents";
 import { createAuthRouter } from "./routes/auth";
+import { createFindingsRouter } from "./routes/findings";
 import { createHealthRouter } from "./routes/health";
 import rootRouter from "./routes/root";
 import { createTenantsRouter } from "./routes/tenants";
 import { createTelemetryRouter } from "./routes/telemetry";
 import type { TenantLookup } from "./tenants/repository";
 import type { TelemetryService } from "./telemetry/service";
-<<<<<<< HEAD
-=======
-import type { CorrelationService } from "./correlation/service";
-import type { FindingSharedViewsRepository } from "./findings-views/repository";
->>>>>>> 12b026d (feat: deepen Findings operator workflow with views, jump bar, and attention)
 
 /**
  * Maximum accepted JSON request body.
@@ -40,7 +38,7 @@ import type { FindingSharedViewsRepository } from "./findings-views/repository";
 const DEFAULT_JSON_BODY_LIMIT = "100kb";
 
 export interface AppOptions {
-  /** Accepts a `bytes` string such as "100kb" or "1mb", or a raw byte count. */
+  /** Accepts a `bytes` string such as "100kb" or a raw byte count. */
   jsonBodyLimit?: string | number;
 
   /**
@@ -96,12 +94,11 @@ export interface AppOptions {
    * routes fail closed; index.ts wires it when database + JWT config are present.
    */
   agentsService?: AgentsService;
-<<<<<<< HEAD
-=======
 
   /**
-   * Backs GET /v1/findings. Omitted means the route fails closed; index.ts
-   * wires it when a database (and correlation) is configured.
+   * Backs GET /v1/findings (and snooze/dashboard/attention). Omitted means the
+   * route fails closed; index.ts wires it when a database (and correlation) is
+   * configured.
    */
   correlationService?: CorrelationService;
 
@@ -110,7 +107,6 @@ export interface AppOptions {
    * means those routes fail closed.
    */
   sharedViews?: FindingSharedViewsRepository;
->>>>>>> 12b026d (feat: deepen Findings operator workflow with views, jump bar, and attention)
 }
 
 export function createApp(options: AppOptions = {}) {
@@ -180,9 +176,8 @@ export function createApp(options: AppOptions = {}) {
     }),
   );
 
-<<<<<<< HEAD
-=======
   // Correlation findings: narrow operator read surface (not an alert console).
+  // Mounts snooze/dashboard (dec9ffc) and shared views/attention (12b026d).
   app.use(
     "/v1/findings",
     requireTenant,
@@ -192,7 +187,6 @@ export function createApp(options: AppOptions = {}) {
     }),
   );
 
->>>>>>> 12b026d (feat: deepen Findings operator workflow with views, jump bar, and attention)
   // Terminal handlers, in order.
   app.use(notFound);
   app.use(errorHandler);

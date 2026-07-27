@@ -58,6 +58,7 @@ function stubService(
       ok: true,
       events: [],
     }),
+    query: async () => ({ ok: false, reason: "agent_not_found" }),
   };
 }
 

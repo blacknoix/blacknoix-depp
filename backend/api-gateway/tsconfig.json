@@ -14,5 +14,34 @@
     "sourceMap": true
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/__tests__",
+    "src/lib/prisma.ts",
+    "src/lib/telemetryContract.ts",
+    "src/lib/correlationEngine.ts",
+    "src/lib/correlationEngineV2.ts",
+    "src/lib/correlationEngineV2Gap.ts",
+    "src/lib/correlationEngineV2Lateral.ts",
+    "src/lib/agentToken.ts",
+    "src/lib/alertIndicator.ts",
+    "src/lib/authAudit.ts",
+    "src/lib/authRouteAudit.ts",
+    "src/lib/authTelemetryExtractors.ts",
+    "src/lib/authValidation.ts",
+    "src/lib/metrics.ts",
+    "src/lib/tenantScope.ts",
+    "src/services",
+    "src/routes/alerts.ts",
+    "src/routes/api.ts",
+    "src/routes/agentTraffic.ts",
+    "src/routes/internal.ts",
+    "src/middleware/authRateLimit.ts",
+    "src/middleware/authenticateAgent.ts",
+    "src/middleware/requireMatchingTenantParam.ts",
+    "src/middleware/requireRole.ts",
+    "src/middleware/requireTenantContext.ts",
+    "src/middleware/tenantScoped.ts"
+  ]
 }

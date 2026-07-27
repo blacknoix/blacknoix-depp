@@ -1,13 +1,5 @@
-﻿import { logLifecycle } from "../lib/log";
-import type { CorrelationService } from "../correlation/service";
 import type { TelemetryEventV1 } from "./contract";
-import type { TelemetryQueryV1 } from "./query";
-import type {
-  TelemetryAgentSummary,
-  TelemetryEventRow,
-  TelemetryQueryResult,
-  TelemetryRepository,
-} from "./repository";
+import type { TelemetryRepository } from "./repository";
 
 export interface IngestedTelemetry {
   id: string;
@@ -20,10 +12,6 @@ export type IngestOutcome =
 
 export type IngestBatchOutcome =
   | { ok: true; events: IngestedTelemetry[] }
-  | { ok: false; reason: "agent_not_found" };
-
-export type QueryOutcome =
-  | { ok: true; result: TelemetryQueryResult }
   | { ok: false; reason: "agent_not_found" };
 
 export interface TelemetryService {
@@ -44,54 +32,16 @@ export interface TelemetryService {
     tenantId: string,
     events: readonly TelemetryEventV1[],
   ): Promise<IngestBatchOutcome>;
-
-  /**
-   * Lists recent events and a tiny operator summary for one agent.
-   * Unknown/cross-tenant agents return agent_not_found (mapped to empty
-   * non-oracular response at the route).
-   */
-  query(
-    tenantId: string,
-    query: TelemetryQueryV1,
-  ): Promise<QueryOutcome>;
 }
 
 export interface TelemetryServiceDeps {
   telemetry: TelemetryRepository;
-  /**
-   * Optional post-ingest correlation. When present, runs after a successful
-   * insert; failures are logged and never fail the ingest response.
-   */
-  correlation?: CorrelationService;
 }
-
-export type { TelemetryAgentSummary, TelemetryEventRow, TelemetryQueryResult };
 
 export function createTelemetryService(
   deps: TelemetryServiceDeps,
 ): TelemetryService {
-  const { telemetry, correlation } = deps;
-
-  async function runCorrelationSafe(
-    tenantId: string,
-    agentId: string,
-  ): Promise<void> {
-    if (!correlation) {
-      return;
-    }
-    try {
-      await correlation.evaluateAfterIngest(tenantId, agentId);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      const name = err instanceof Error ? err.name : "Error";
-      logLifecycle("error", "correlation_eval_failed", {
-        tenantId,
-        agentId,
-        errorName: name,
-        errorMessage: message,
-      });
-    }
-  }
+  const { telemetry } = deps;
 
   async function ingestBatch(
     tenantId: string,
@@ -128,8 +78,6 @@ export function createTelemetryService(
       })),
     );
 
-    await runCorrelationSafe(tenantId, agentId);
-
     return { ok: true, events: inserted };
   }
 
@@ -143,19 +91,5 @@ export function createTelemetryService(
     },
 
     ingestBatch,
-
-    async query(tenantId, query) {
-      if (typeof tenantId !== "string" || tenantId.trim() === "") {
-        throw new Error("query requires a non-empty tenantId");
-      }
-
-      const exists = await telemetry.agentExists(tenantId, query.agentId);
-      if (!exists) {
-        return { ok: false, reason: "agent_not_found" };
-      }
-
-      const result = await telemetry.queryAgentEvents(tenantId, query);
-      return { ok: true, result };
-    },
   };
 }

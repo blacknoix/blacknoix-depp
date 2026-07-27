@@ -19,7 +19,7 @@ Early. One backend service exists; everything else is still scaffolding.
 
 What actually exists:
 - CLAUDE.md
-- docs/architecture/adr/ — ADR-0001 (tenancy and data model), Accepted
+- docs/architecture/adr/ — ADR-0001–0004 (tenancy, auth seam, production auth, persistence)
 - backend/api-gateway/ — running Express service, see below
 - frontend/ — operator app shell + findings + agents inventory (Vite + React + TypeScript)
 - infra/ — empty
@@ -44,7 +44,7 @@ Still assumptions, not yet implemented:
 
 Frontend (confirmed in `frontend/`):
 - React 19 + TypeScript + Vite
-- React Router (authenticated operator shell; Findings at `/findings`)
+- React Router (authenticated operator shell; default home Work at `/work`; Findings at `/findings`; Agents at `/agents`)
 - Vitest + Testing Library
 - Local `/v1` proxy to api-gateway (CORS on gateway deferred)
 
@@ -65,47 +65,18 @@ Treat this as the current priority order unless explicitly changed.
 
 ## Current status
 - Repository setup: done (git, hygiene files, ADR log)
-- Product docs: ADR-0001 accepted; no product/spec docs yet
-<<<<<<< HEAD
-- Backend implementation: api-gateway — middleware baseline; `/v1/tenants/me`; tenant-scoped telemetry ingest; agent enrollment + hashed credentials + agent JWT exchange for authenticated ingest
-- Frontend implementation: not started
-=======
-- Backend implementation: api-gateway — middleware baseline; `/v1/tenants/me`; tenant-scoped telemetry ingest + query/summary; minimal post-ingest correlation findings; agent enrollment + hashed credentials + agent JWT exchange for authenticated ingest
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-- Frontend implementation: operator findings console (session gate + summary/list/detail/snooze)
->>>>>>> 67a715a (feat(frontend): add operator findings console)
-=======
-- Frontend implementation: operator app shell + findings console (`/findings`; Agents placeholder)
->>>>>>> 14caadf (feat(frontend): add operator app shell and routing)
-=======
-- Frontend implementation: operator app shell + findings console (`/findings`) + agents inventory (`/agents`)
->>>>>>> 5d32e30 (feat(agents): add operator inventory API and Agents console)
-=======
-- Frontend implementation: operator app shell + findings (`/findings`) + agents (`/agents`) with URL cross-links (`agentId` / `findingId`)
->>>>>>> 8d0bbe0 (feat(frontend): cross-link Findings and Agents via URL context)
+- Product docs: ADRs 0001–0004 accepted; Work/Findings/Attention runbook at `docs/runbooks/work-findings-attention.md` (operational invariants — not a full product spec)
+- Backend implementation: api-gateway — middleware baseline; `/v1/tenants/me`; tenant-scoped telemetry ingest + query/summary; minimal post-ingest correlation findings; agent enrollment + hashed credentials + agent JWT exchange for authenticated ingest; Findings triage + Attention + Work views/default
+- Frontend implementation: operator app shell (default `/work`) + findings (`/findings`) + agents (`/agents`) with URL cross-links (`agentId` / `findingId`)
 - Infra setup: not started
 - Auth / RBAC: authentication seam (ADR-0002) with `dev-header` + `jwt`; human OIDC/refresh and agent credential exchange implemented; no RBAC
-<<<<<<< HEAD
-- Database: schema + RLS (tenants, agents, agent_credentials, users, sessions, refresh_tokens, telemetry_events) via Kysely + migrator, plus platform-global `oidc_initiations`. NOTE: some auth narrative elsewhere may still need a docs-sync pass.
-=======
-- Database: schema + RLS (tenants, agents, agent_credentials, users, sessions, refresh_tokens, telemetry_events, correlation_findings, finding_suppressions) via Kysely + migrator, plus platform-global `oidc_initiations`. NOTE: some auth narrative elsewhere may still need a docs-sync pass.
->>>>>>> dec9ffc (feat(api-gateway): add findings snooze and operator dashboard summary)
+- Database: schema + RLS (tenants, agents, agent_credentials, users, sessions, refresh_tokens, telemetry_events, correlation_findings, finding_suppressions, finding_revisit_reminders, finding_attention_dismissals, finding_shared_views, work_shared_views, work_tenant_defaults) via Kysely + migrator, plus platform-global `oidc_initiations`. NOTE: some auth narrative elsewhere may still need a docs-sync pass.
 - Enterprise hardening: not started
 
 ## backend/api-gateway
 Implemented:
 - Middleware: request ID, structured JSON request logging, tenant context, 404 handler, centralized error handler
-<<<<<<< HEAD
-<<<<<<< HEAD
-- Routes: `GET /`, `GET /health`, `GET /v1/tenants/me`, `POST /v1/agents` (enroll), `POST /v1/agents/:id/credentials/revoke`, `POST /v1/auth/agent/token`, `POST /v1/telemetry/events`, `POST /v1/telemetry/events/batch`
-=======
-- Routes: `GET /`, `GET /health`, `GET /v1/tenants/me`, `POST /v1/agents` (enroll), `POST /v1/agents/:id/credentials/revoke`, `POST /v1/auth/agent/token`, `POST /v1/telemetry/events`, `POST /v1/telemetry/events/batch`, `GET /v1/telemetry/events`, `GET /v1/findings`, `GET /v1/findings/dashboard`, `POST /v1/findings/evaluate-silence`, `PATCH /v1/findings/:id`, `GET|POST /v1/findings/suppressions`, `DELETE /v1/findings/suppressions/:id`
->>>>>>> dec9ffc (feat(api-gateway): add findings snooze and operator dashboard summary)
-=======
-- Routes: `GET /`, `GET /health`, `GET /v1/tenants/me`, `GET /v1/agents` (operator inventory), `POST /v1/agents` (enroll), `POST /v1/agents/:id/credentials/revoke`, `POST /v1/auth/agent/token`, `POST /v1/telemetry/events`, `POST /v1/telemetry/events/batch`, `GET /v1/telemetry/events`, `GET /v1/findings`, `GET /v1/findings/dashboard`, `POST /v1/findings/evaluate-silence`, `PATCH /v1/findings/:id`, `GET|POST /v1/findings/suppressions`, `DELETE /v1/findings/suppressions/:id`
->>>>>>> 5d32e30 (feat(agents): add operator inventory API and Agents console)
+- Routes: `GET /`, `GET /health`, `GET /v1/tenants/me`, `GET /v1/agents` (operator inventory), `POST /v1/agents` (enroll), `POST /v1/agents/:id/credentials/revoke`, `POST /v1/auth/agent/token`, `POST /v1/telemetry/events`, `POST /v1/telemetry/events/batch`, `GET /v1/telemetry/events`, `GET /v1/findings`, `GET /v1/findings/dashboard`, `GET /v1/findings/attention`, `POST /v1/findings/attention/dismiss`, `POST /v1/findings/evaluate-silence`, `PATCH /v1/findings/:id`, `GET|POST /v1/findings/suppressions`, `DELETE /v1/findings/suppressions/:id`, `GET|POST|DELETE /v1/findings/views`, `GET|POST|DELETE /v1/work/views`, `PUT|DELETE /v1/work/default`
 - Error envelope: `{ ok: false, error: { code, message }, requestId }`
 - Success envelope on /v1: `{ ok: true, data, requestId }`
 - Tests: `node:test` integration suite against `createApp()` (`npm test`)
@@ -115,8 +86,6 @@ Implemented:
   agent identity from verified principal (agent JWT / dev `x-agent-id`), not body.
   Batch ingest: `POST /v1/telemetry/events/batch` (all-or-nothing, max events
   via `TELEMETRY_BATCH_MAX_EVENTS`, default 50).
-<<<<<<< HEAD
-=======
   Query: `GET /v1/telemetry/events` returns a recent page + tiny operator summary
   (lastSeenAt, lastHeartbeatAt, countsByEventType). Tenant from principal only;
   agents are self-scoped; human operators must pass `agentId`. Filters: eventType,
@@ -139,47 +108,24 @@ Implemented:
   `POST/GET/DELETE /v1/findings/suppressions`; one uncleared snooze per rule.
   Operator dashboard: `GET /v1/findings/dashboard` — fixed 24h windows; counts by
   status and ruleId (zero-filled); recentCreated/recentChanged; active
-<<<<<<< HEAD
-  suppression count; no query params; agents rejected. UI/charts, export,
-  scheduled digests, case management, comments, assignment, notifications,
-  rule DSL, malware, and remediation deferred.
->>>>>>> dec9ffc (feat(api-gateway): add findings snooze and operator dashboard summary)
-=======
   suppression count; no query params; agents rejected. Frontend console consumes
-<<<<<<< HEAD
-<<<<<<< HEAD
-  these surfaces (see `frontend/`). Charts, export, scheduled digests, case
-  management, comments, assignment, notifications, rule DSL, malware, and
-  remediation deferred.
->>>>>>> 67a715a (feat(frontend): add operator findings console)
-=======
   these surfaces (see `frontend/`). Finding detail includes a static rule catalog
-=======
-  these surfaces (see `frontend/`).   Finding detail includes a static rule catalog
->>>>>>> acf0156 (feat: add finding ownership claim and current operator note)
   explanation, compact evidence summary (no sample ids/payloads), active rule
   snooze context, agent cross-link, triage ergonomics (prev/next, post-mutation
   advance when a status change removes the finding from the current filter, URL
   `findingId` kept coherent), plus minimal investigation intent: self-claim
-  ownership (`claimOwner` / clear) and one current plain-text operator note
-  (bounded, replace/clear) on `PATCH /v1/findings/:id`. Soft UUID audit fields;
-  operator-only; assign-to-others / threads / case entities deferred. Local
-  saved views persist status/ruleId/agentId
-  only (never findingId) in tenant-scoped localStorage; shared tenant views use
-  operator-only `GET/POST/DELETE /v1/findings/views` (RLS). Apply writes the URL.
-  Jump bar lists both. Folders/favorites/rename deferred. Operator Attention
-  digest: pull-based `GET /v1/findings/attention` (created + status-changed
-  since a browser cursor, max 24h); shell popover deep-links into Findings URL
-  context; Mark caught up is localStorage-only. Not live, not email/Slack, not
-  an inbox platform. Triage/snooze actions
-<<<<<<< HEAD
-  unchanged in meaning. Charts, export, scheduled digests, case management,
-  comments, assignment, push notifications, rule DSL, malware, and remediation deferred.
->>>>>>> 12b026d (feat: deepen Findings operator workflow with views, jump bar, and attention)
-=======
-  unchanged in meaning. Charts, export, scheduled digests, full case management,
-  comments/threads, assignment queues, push notifications, rule DSL, malware, and remediation deferred.
->>>>>>> acf0156 (feat: add finding ownership claim and current operator note)
+  ownership (`claimOwner` / clear / reassign), one current plain-text operator
+  note, and explicit `remindAt` on `PATCH /v1/findings/:id`. Soft UUID audit
+  fields; operator-only; threads / case entities deferred.
+  **Work / Findings / Attention operational invariants** (landing precedence,
+  shared vs local Work views, tenant default, `ownerScope`, Attention soft vs
+  escalation bands, dismiss-until-change, bulk action bounds, auth fail-closed
+  rules): see `docs/runbooks/work-findings-attention.md` — keep that runbook
+  current when this stack changes. Frontend Work home is `/work` (shell
+  default). Findings local/shared views + Jump bar + Attention popover remain
+  as composed in the frontend. Charts, export, scheduled digests, full case
+  management, comments/threads, queue balancing, SLA engines, push
+  notifications, rule DSL, malware, and remediation deferred.
 - Agent identity (ADR-0003 §5 minimal): register agent → hashed credential once;
   exchange for short-lived agent access JWT (`tid`+`aid`); revoke blocks exchange.
   Operator inventory: `GET /v1/agents` returns name/id/createdAt, last heartbeat,
@@ -210,7 +156,8 @@ Implemented:
   pull-based findings digest.
 
 Not implemented: RBAC, agent runtime, mTLS, enrollment UX, credential rotation UX,
-access-token denylist, policy/remediation, mesh, correlation, agent-side spool.
+access-token denylist, policy/remediation, mesh, in-process timers / job framework,
+agent-side spool, alert console / case management / finding comments.
 
 ## Persistence and RLS
 Authoritative decision: docs/architecture/adr/0004-persistence-and-data-access.md.
@@ -284,6 +231,8 @@ when Postgres lands.
 - Update docs when architecture or behavior changes.
 - Avoid hardcoded secrets.
 - Prefer maintainable code over clever code.
+- Never commit unresolved merge-conflict markers; CI and `.githooks/pre-commit`
+  run `scripts/check-merge-markers.cjs` (see `docs/contributing.md`).
 
 ## Hard rules
 - Never commit secrets or .env files.
@@ -302,6 +251,9 @@ Run from `backend/api-gateway/`:
 - Lint: not configured yet
 - Test: `npm test` (`node:test` + tsx; see `tests/`)
 - Typecheck tests: `npm run typecheck:test`
+- Merge-marker scan (repo root): `node scripts/check-merge-markers.cjs`
+- Fresh migrate verify (repo root): `node scripts/verify-fresh-migrate.cjs`
+- Enable local marker hook once: `git config core.hooksPath .githooks`
 
 No commands exist for infra/ yet.
 

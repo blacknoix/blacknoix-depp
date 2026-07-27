@@ -1,0 +1,37 @@
+name: api-gateway
+
+on:
+  push:
+    branches: [main, "cursor/**", "feature/**", "fix/**"]
+  pull_request:
+
+jobs:
+  merge-markers:
+    name: merge-conflict markers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Fail on unresolved merge markers
+        run: node scripts/check-merge-markers.cjs
+
+  api-gateway:
+    name: typecheck / unit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend/api-gateway
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: backend/api-gateway/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run typecheck:test
+      - run: npm run build
+      - run: npm run test:unit

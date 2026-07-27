@@ -125,8 +125,8 @@ export interface TelemetryEventsTable {
 <<<<<<< HEAD
 =======
 /**
- * Tenant-owned correlation output (ADR-0001 alerts, minimal). Inserts are
- * append-oriented; status is the only mutable triage field in this slice.
+ * Tenant-owned correlation output (ADR-0001 alerts, minimal).
+ * Mutable operator fields: status, ownership, current operator note.
  */
 export interface CorrelationFindingsTable {
   id: Generated<string>;
@@ -143,6 +143,12 @@ export interface CorrelationFindingsTable {
   status: string;
   status_changed_at: NullableTimestamp;
   status_changed_by_user_id: string | null;
+  owner_user_id: string | null;
+  owner_changed_at: NullableTimestamp;
+  owner_changed_by_user_id: string | null;
+  operator_note: string | null;
+  operator_note_updated_at: NullableTimestamp;
+  operator_note_updated_by_user_id: string | null;
 }
 
 /**

@@ -6,6 +6,7 @@ import {
   fetchDashboard,
   fetchFindings,
   fetchSuppressions,
+  patchFinding,
   patchFindingStatus,
 } from "../api/findings";
 import { ApiError } from "../api/client";
@@ -319,17 +320,63 @@ export function useFindingsConsole(session: OperatorSession | null) {
     }
   }
 
+  async function claimOwner(findingId: string): Promise<string | null> {
+    if (!session) return selectedRef.current;
+    dispatch({ type: "mutation_start" });
+    try {
+      await patchFinding(session, findingId, { claimOwner: true });
+      return await refreshKeepingSelection(selectedRef.current);
+    } catch (err) {
+      dispatch({ type: "mutation_error", message: errorMessage(err) });
+      return selectedRef.current;
+    }
+  }
+
+  async function clearOwner(findingId: string): Promise<string | null> {
+    if (!session) return selectedRef.current;
+    dispatch({ type: "mutation_start" });
+    try {
+      await patchFinding(session, findingId, { ownerUserId: null });
+      return await refreshKeepingSelection(selectedRef.current);
+    } catch (err) {
+      dispatch({ type: "mutation_error", message: errorMessage(err) });
+      return selectedRef.current;
+    }
+  }
+
+  async function saveNote(
+    findingId: string,
+    operatorNote: string | null,
+  ): Promise<string | null> {
+    if (!session) return selectedRef.current;
+    dispatch({ type: "mutation_start" });
+    try {
+      await patchFinding(session, findingId, { operatorNote });
+      return await refreshKeepingSelection(selectedRef.current);
+    } catch (err) {
+      dispatch({ type: "mutation_error", message: errorMessage(err) });
+      return selectedRef.current;
+    }
+  }
+
   const selected =
     state.data.findings.find((f) => f.id === state.selectedId) ?? null;
+
+  const sessionUserId =
+    session?.kind === "tenant" ? (session.userId ?? null) : null;
 
   return {
     state,
     selected,
+    sessionUserId,
     setFilters,
     selectFinding,
     changeStatus,
     snoozeRule,
     clearSnooze,
+    claimOwner,
+    clearOwner,
+    saveNote,
     clearTriageNote,
   };
 }

@@ -33,7 +33,11 @@ export function authHeaders(session: OperatorSession): Record<string, string> {
   }
   // Operator console never sends x-agent-id — agent principals are rejected
   // by dashboard/suppressions/PATCH and must not be affordanced here.
-  return { "x-tenant-id": session.tenantId };
+  const headers: Record<string, string> = { "x-tenant-id": session.tenantId };
+  if (session.userId) {
+    headers["x-user-id"] = session.userId;
+  }
+  return headers;
 }
 
 export async function apiRequest<T>(

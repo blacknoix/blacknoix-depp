@@ -38,11 +38,15 @@ export function FindingsConsoleView({ session }: ViewProps) {
   const {
     state,
     selected,
+    sessionUserId,
     setFilters,
     selectFinding,
     changeStatus,
     snoozeRule,
     clearSnooze,
+    claimOwner,
+    clearOwner,
+    saveNote,
   } = useFindingsConsole(session);
 
   const contextAgentId = selected?.agentId ?? null;
@@ -127,6 +131,18 @@ export function FindingsConsoleView({ session }: ViewProps) {
   async function onClearSnooze(id: string) {
     const nextId = await clearSnooze(id);
     writeUrl({ filters: state.filters, findingId: nextId });
+  }
+
+  async function onClaimOwner(id: string) {
+    await claimOwner(id);
+  }
+
+  async function onClearOwner(id: string) {
+    await clearOwner(id);
+  }
+
+  async function onSaveNote(id: string, note: string | null) {
+    await saveNote(id, note);
   }
 
   const busy = state.load === "loading" || state.mutation === "pending";
@@ -241,6 +257,10 @@ export function FindingsConsoleView({ session }: ViewProps) {
           agentActivity={agentActivityState.activity}
           agentActivityPhase={agentActivityState.phase}
           agentActivityError={agentActivityState.error}
+          sessionUserId={sessionUserId}
+          onClaimOwner={onClaimOwner}
+          onClearOwner={onClearOwner}
+          onSaveNote={onSaveNote}
         />
       </div>
 

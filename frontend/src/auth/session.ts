@@ -9,7 +9,7 @@
 
 export type OperatorSession =
   | { kind: "bearer"; accessToken: string }
-  | { kind: "tenant"; tenantId: string };
+  | { kind: "tenant"; tenantId: string; userId?: string };
 
 const STORAGE_KEY = "depp.findings.session.v1";
 
@@ -53,7 +53,17 @@ export function loadSession(): OperatorSession | null {
     }
     if (record.kind === "tenant" && typeof record.tenantId === "string") {
       const tenantId = parseTenantId(record.tenantId);
-      return tenantId ? { kind: "tenant", tenantId } : null;
+      if (!tenantId) {
+        return null;
+      }
+      if (typeof record.userId === "string" && record.userId.trim() !== "") {
+        const userId = parseTenantId(record.userId);
+        if (!userId) {
+          return null;
+        }
+        return { kind: "tenant", tenantId, userId };
+      }
+      return { kind: "tenant", tenantId };
     }
     return null;
   } catch {

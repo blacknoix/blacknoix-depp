@@ -26,6 +26,12 @@ export interface Finding {
   status: FindingStatus;
   statusChangedAt: string | null;
   statusChangedByUserId: string | null;
+  ownerUserId: string | null;
+  ownerChangedAt: string | null;
+  ownerChangedByUserId: string | null;
+  operatorNote: string | null;
+  operatorNoteUpdatedAt: string | null;
+  operatorNoteUpdatedByUserId: string | null;
   evidence: Record<string, unknown>;
   windowStart: string;
   windowEnd: string;

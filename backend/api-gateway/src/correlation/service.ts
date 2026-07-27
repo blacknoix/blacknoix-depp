@@ -15,10 +15,12 @@ import {
   assertFindingTransition,
   type FindingStatus,
 } from "./lifecycle";
+import type { FindingPatchInput } from "./query";
 import type {
   CorrelationFindingRow,
   CorrelationFindingsRepository,
   ListFindingsQuery,
+  UpdateFindingIntentInput,
 } from "./repository";
 import {
   CORRELATION_RULES,
@@ -50,6 +52,12 @@ export type UpdateStatusOutcome =
   | { ok: true; finding: CorrelationFindingRow }
   | { ok: false; reason: "not_found" }
   | { ok: false; reason: "invalid_transition"; message: string };
+
+export type PatchFindingOutcome =
+  | { ok: true; finding: CorrelationFindingRow }
+  | { ok: false; reason: "not_found" }
+  | { ok: false; reason: "invalid_transition"; message: string }
+  | { ok: false; reason: "rejected"; message: string };
 
 export type CreateSuppressionOutcome =
   | { ok: true; suppression: FindingSuppressionRow }
@@ -90,6 +98,16 @@ export interface CorrelationService {
     nextStatus: FindingStatus,
     actor: { userId?: string },
   ): Promise<UpdateStatusOutcome>;
+
+  /**
+   * Partial operator patch: status and/or self-claim ownership and/or current note.
+   */
+  patchFinding(
+    tenantId: string,
+    findingId: string,
+    patch: FindingPatchInput,
+    actor: { userId?: string },
+  ): Promise<PatchFindingOutcome>;
 
   createSuppression(
     tenantId: string,
@@ -207,6 +225,111 @@ export function createCorrelationService(
       return "suppressed";
     }
     return outcome;
+  }
+
+  async function patchFinding(
+    tenantId: string,
+    findingId: string,
+    patch: FindingPatchInput,
+    actor: { userId?: string },
+  ): Promise<PatchFindingOutcome> {
+    if (typeof tenantId !== "string" || tenantId.trim() === "") {
+      throw new Error("patchFinding requires a non-empty tenantId");
+    }
+    if (typeof findingId !== "string" || findingId.trim() === "") {
+      throw new Error("patchFinding requires a non-empty findingId");
+    }
+
+    const current = await findings.getFindingById(tenantId, findingId);
+    if (!current) {
+      return { ok: false, reason: "not_found" };
+    }
+
+    const intent: UpdateFindingIntentInput = {};
+    const at = now();
+
+    if (patch.status !== undefined) {
+      const transition = assertFindingTransition(current.status, patch.status);
+      if (!transition.ok) {
+        return {
+          ok: false,
+          reason: "invalid_transition",
+          message: transition.message,
+        };
+      }
+      if (transition.kind === "transition") {
+        intent.status = patch.status;
+        intent.statusChangedAt = at;
+        intent.statusChangedByUserId = actor.userId ?? null;
+      }
+    }
+
+    if ("ownerUserId" in patch || patch.claimOwner === true) {
+      let nextOwner: string | null | undefined;
+      if (patch.claimOwner === true) {
+        if (!actor.userId) {
+          return {
+            ok: false,
+            reason: "rejected",
+            message: "Operator identity is required to claim ownership",
+          };
+        }
+        nextOwner = actor.userId;
+      } else if (patch.ownerUserId === null) {
+        nextOwner = null;
+      } else if (typeof patch.ownerUserId === "string") {
+        if (!actor.userId) {
+          return {
+            ok: false,
+            reason: "rejected",
+            message: "Operator identity is required to claim ownership",
+          };
+        }
+        if (patch.ownerUserId !== actor.userId) {
+          return {
+            ok: false,
+            reason: "rejected",
+            message: "Ownership is self-claim only",
+          };
+        }
+        nextOwner = patch.ownerUserId;
+      }
+
+      if (nextOwner !== undefined && current.ownerUserId !== nextOwner) {
+        intent.ownerUserId = nextOwner;
+        intent.ownerChangedAt = at;
+        intent.ownerChangedByUserId = actor.userId ?? null;
+      }
+    }
+
+    if ("operatorNote" in patch) {
+      let nextNote = patch.operatorNote ?? null;
+      if (typeof nextNote === "string") {
+        nextNote = nextNote.trim();
+        if (nextNote.length === 0) {
+          nextNote = null;
+        }
+      }
+      if (current.operatorNote !== nextNote) {
+        intent.operatorNote = nextNote;
+        intent.operatorNoteUpdatedAt = at;
+        intent.operatorNoteUpdatedByUserId = actor.userId ?? null;
+      }
+    }
+
+    if (Object.keys(intent).length === 0) {
+      return { ok: true, finding: current };
+    }
+
+    const updated = await findings.updateFindingIntent(
+      tenantId,
+      findingId,
+      intent,
+    );
+    if (!updated) {
+      return { ok: false, reason: "not_found" };
+    }
+    return { ok: true, finding: updated };
   }
 
   return {
@@ -357,43 +480,19 @@ export function createCorrelationService(
     },
 
     async updateStatus(tenantId, findingId, nextStatus, actor) {
-      if (typeof tenantId !== "string" || tenantId.trim() === "") {
-        throw new Error("updateStatus requires a non-empty tenantId");
-      }
-      if (typeof findingId !== "string" || findingId.trim() === "") {
-        throw new Error("updateStatus requires a non-empty findingId");
-      }
-
-      const current = await findings.getFindingById(tenantId, findingId);
-      if (!current) {
+      const outcome = await patchFinding(
+        tenantId,
+        findingId,
+        { status: nextStatus },
+        actor,
+      );
+      if (!outcome.ok && outcome.reason === "rejected") {
         return { ok: false, reason: "not_found" };
       }
-
-      const transition = assertFindingTransition(current.status, nextStatus);
-      if (!transition.ok) {
-        return {
-          ok: false,
-          reason: "invalid_transition",
-          message: transition.message,
-        };
-      }
-
-      if (transition.kind === "noop") {
-        return { ok: true, finding: current };
-      }
-
-      const updated = await findings.updateFindingStatus(tenantId, findingId, {
-        status: nextStatus,
-        changedAt: now(),
-        changedByUserId: actor.userId ?? null,
-      });
-
-      if (!updated) {
-        return { ok: false, reason: "not_found" };
-      }
-
-      return { ok: true, finding: updated };
+      return outcome;
     },
+
+    patchFinding,
 
     async createSuppression(tenantId, input) {
       if (typeof tenantId !== "string" || tenantId.trim() === "") {

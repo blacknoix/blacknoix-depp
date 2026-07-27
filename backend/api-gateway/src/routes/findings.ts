@@ -3,7 +3,7 @@ import { type NextFunction, type Request, type Response, Router } from "express"
 import { parseAttentionSinceQuery } from "../correlation/attention";
 import {
   parseFindingsQueryV1,
-  parsePatchFindingStatusBody,
+  parsePatchFindingBody,
 } from "../correlation/query";
 import type { CorrelationFindingRow } from "../correlation/repository";
 import type { CorrelationService } from "../correlation/service";
@@ -50,6 +50,16 @@ function serializeFinding(finding: CorrelationFindingRow) {
       ? finding.statusChangedAt.toISOString()
       : null,
     statusChangedByUserId: finding.statusChangedByUserId,
+    ownerUserId: finding.ownerUserId,
+    ownerChangedAt: finding.ownerChangedAt
+      ? finding.ownerChangedAt.toISOString()
+      : null,
+    ownerChangedByUserId: finding.ownerChangedByUserId,
+    operatorNote: finding.operatorNote,
+    operatorNoteUpdatedAt: finding.operatorNoteUpdatedAt
+      ? finding.operatorNoteUpdatedAt.toISOString()
+      : null,
+    operatorNoteUpdatedByUserId: finding.operatorNoteUpdatedByUserId,
     evidence: finding.evidence,
     windowStart: finding.windowStart.toISOString(),
     windowEnd: finding.windowEnd.toISOString(),
@@ -525,8 +535,9 @@ export function createFindingsRouter(
   );
 
   /**
-   * PATCH /v1/findings/:id — operator status triage.
-   * Agent principals rejected. Case management / notes deferred.
+   * PATCH /v1/findings/:id — operator status triage, self-claim ownership,
+   * and current operator note. Agent principals rejected.
+   * Assign-to-others, threads, and case entities are deferred.
    */
   router.patch(
     "/:id",
@@ -552,15 +563,15 @@ export function createFindingsRouter(
           );
         }
 
-        const parsed = parsePatchFindingStatusBody(req.body);
+        const parsed = parsePatchFindingBody(req.body);
         if (!parsed.ok) {
           throw new AppError("FINDINGS_INVALID", 400, parsed.message);
         }
 
-        const outcome = await service.updateStatus(
+        const outcome = await service.patchFinding(
           principal.tenantId,
           findingId.toLowerCase(),
-          parsed.status,
+          parsed.patch,
           { userId: principal.userId },
         );
 
@@ -571,6 +582,9 @@ export function createFindingsRouter(
               404,
               "Finding not found",
             );
+          }
+          if (outcome.reason === "rejected") {
+            throw new AppError("FINDINGS_REJECTED", 403, outcome.message);
           }
           throw new AppError("FINDINGS_INVALID", 400, outcome.message);
         }

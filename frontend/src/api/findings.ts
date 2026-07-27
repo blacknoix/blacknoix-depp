@@ -48,12 +48,27 @@ export async function patchFindingStatus(
   findingId: string,
   status: FindingStatus,
 ): Promise<Finding> {
+  return patchFinding(session, findingId, { status });
+}
+
+export interface FindingPatch {
+  status?: FindingStatus;
+  ownerUserId?: string | null;
+  claimOwner?: true;
+  operatorNote?: string | null;
+}
+
+export async function patchFinding(
+  session: OperatorSession,
+  findingId: string,
+  patch: FindingPatch,
+): Promise<Finding> {
   const data = await apiRequest<{ finding: Finding }>(
     session,
     `/v1/findings/${findingId}`,
     {
       method: "PATCH",
-      body: JSON.stringify({ status }),
+      body: JSON.stringify(patch),
     },
   );
   return data.finding;

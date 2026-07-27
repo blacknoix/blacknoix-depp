@@ -39,6 +39,7 @@ function stubCorrelation(
       suppressed: 0,
     }),
     updateStatus: async () => ({ ok: false, reason: "not_found" }),
+    patchFinding: async () => ({ ok: false, reason: "not_found" }),
     createSuppression: async () => ({ ok: false, reason: "conflict" }),
     clearSuppression: async () => ({ ok: false, reason: "not_found" }),
     listSuppressions: async () => [],
@@ -66,6 +67,17 @@ function stubCorrelation(
       truncated: false,
     }),
     ...overrides,
+  };
+}
+
+function emptyIntentFields() {
+  return {
+    ownerUserId: null as string | null,
+    ownerChangedAt: null as Date | null,
+    ownerChangedByUserId: null as string | null,
+    operatorNote: null as string | null,
+    operatorNoteUpdatedAt: null as Date | null,
+    operatorNoteUpdatedByUserId: null as string | null,
   };
 }
 
@@ -117,6 +129,7 @@ describe("GET /v1/findings", () => {
                 status: "open" as const,
                 statusChangedAt: null,
                 statusChangedByUserId: null,
+                ...emptyIntentFields(),
               },
             ];
           },
@@ -500,7 +513,7 @@ describe("PATCH /v1/findings/:id", () => {
     await withServer(
       {
         correlationService: stubCorrelation({
-          updateStatus: async () => ({
+          patchFinding: async () => ({
             ok: false,
             reason: "invalid_transition",
             message: "transition from resolved to acknowledged is not allowed",
@@ -525,10 +538,10 @@ describe("PATCH /v1/findings/:id", () => {
     await withServer(
       {
         correlationService: stubCorrelation({
-          updateStatus: async (tenantId, findingId, status) => {
+          patchFinding: async (tenantId, findingId, patch) => {
             assert.equal(tenantId, TENANT_ID);
             assert.equal(findingId, FINDING_ID);
-            assert.equal(status, "acknowledged");
+            assert.equal(patch.status, "acknowledged");
             return {
               ok: true,
               finding: {
@@ -546,6 +559,7 @@ describe("PATCH /v1/findings/:id", () => {
                 status: "acknowledged",
                 statusChangedAt: changedAt,
                 statusChangedByUserId: null,
+                ...emptyIntentFields(),
               },
             };
           },
@@ -564,6 +578,150 @@ describe("PATCH /v1/findings/:id", () => {
           body.data.finding.statusChangedAt,
           changedAt.toISOString(),
         );
+      },
+    );
+  });
+
+  const USER_ID = "22222222-2222-4222-8222-222222222222";
+
+  it("claims and clears ownership with operator identity", async () => {
+    let owner: string | null = null;
+    await withServer(
+      {
+        correlationService: stubCorrelation({
+          patchFinding: async (_t, _id, patch, actor) => {
+            assert.equal(actor.userId, USER_ID);
+            if (patch.claimOwner === true) {
+              owner = USER_ID;
+            } else if ("ownerUserId" in patch) {
+              owner = patch.ownerUserId ?? null;
+            }
+            return {
+              ok: true,
+              finding: {
+                id: FINDING_ID,
+                tenantId: TENANT_ID,
+                agentId: AGENT_ID,
+                ruleId: "agent.heartbeat_silence",
+                title: "Agent heartbeat silence",
+                severity: "medium",
+                evidence: {},
+                windowStart: new Date("2026-03-01T12:00:00.000Z"),
+                windowEnd: new Date("2026-03-01T12:05:00.000Z"),
+                windowBucket: new Date("2026-03-01T12:00:00.000Z"),
+                createdAt: new Date("2026-03-01T12:05:00.000Z"),
+                status: "open",
+                statusChangedAt: null,
+                statusChangedByUserId: null,
+                ...emptyIntentFields(),
+                ownerUserId: owner,
+                ownerChangedAt: new Date("2026-03-01T13:00:00.000Z"),
+                ownerChangedByUserId: USER_ID,
+              },
+            };
+          },
+        }),
+      },
+      async (server) => {
+        const claim = await fetch(`${server.url}/v1/findings/${FINDING_ID}`, {
+          method: "PATCH",
+          headers: {
+            ...tenantHeaders({ "x-user-id": USER_ID }),
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ claimOwner: true }),
+        });
+        assert.equal(claim.status, 200);
+        assert.equal((await claim.json()).data.finding.ownerUserId, USER_ID);
+
+        const clear = await fetch(`${server.url}/v1/findings/${FINDING_ID}`, {
+          method: "PATCH",
+          headers: {
+            ...tenantHeaders({ "x-user-id": USER_ID }),
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ ownerUserId: null }),
+        });
+        assert.equal(clear.status, 200);
+        assert.equal((await clear.json()).data.finding.ownerUserId, null);
+      },
+    );
+  });
+
+  it("rejects claim without operator identity", async () => {
+    await withServer(
+      {
+        correlationService: stubCorrelation({
+          patchFinding: async () => ({
+            ok: false,
+            reason: "rejected",
+            message: "Operator identity is required to claim ownership",
+          }),
+        }),
+      },
+      async (server) => {
+        const res = await fetch(`${server.url}/v1/findings/${FINDING_ID}`, {
+          method: "PATCH",
+          headers: { ...tenantHeaders(), "content-type": "application/json" },
+          body: JSON.stringify({ claimOwner: true }),
+        });
+        assert.equal(res.status, 403);
+        const body = await res.json();
+        assert.equal(body.error.code, "FINDINGS_REJECTED");
+      },
+    );
+  });
+
+  it("sets and clears the current operator note", async () => {
+    await withServer(
+      {
+        correlationService: stubCorrelation({
+          patchFinding: async (_t, _id, patch) => {
+            assert.ok("operatorNote" in patch);
+            return {
+              ok: true,
+              finding: {
+                id: FINDING_ID,
+                tenantId: TENANT_ID,
+                agentId: AGENT_ID,
+                ruleId: "agent.heartbeat_silence",
+                title: "Agent heartbeat silence",
+                severity: "medium",
+                evidence: {},
+                windowStart: new Date("2026-03-01T12:00:00.000Z"),
+                windowEnd: new Date("2026-03-01T12:05:00.000Z"),
+                windowBucket: new Date("2026-03-01T12:00:00.000Z"),
+                createdAt: new Date("2026-03-01T12:05:00.000Z"),
+                status: "open",
+                statusChangedAt: null,
+                statusChangedByUserId: null,
+                ...emptyIntentFields(),
+                operatorNote: patch.operatorNote ?? null,
+                operatorNoteUpdatedAt: new Date("2026-03-01T13:00:00.000Z"),
+              },
+            };
+          },
+        }),
+      },
+      async (server) => {
+        const set = await fetch(`${server.url}/v1/findings/${FINDING_ID}`, {
+          method: "PATCH",
+          headers: { ...tenantHeaders(), "content-type": "application/json" },
+          body: JSON.stringify({ operatorNote: "Likely false positive" }),
+        });
+        assert.equal(set.status, 200);
+        assert.equal(
+          (await set.json()).data.finding.operatorNote,
+          "Likely false positive",
+        );
+
+        const clear = await fetch(`${server.url}/v1/findings/${FINDING_ID}`, {
+          method: "PATCH",
+          headers: { ...tenantHeaders(), "content-type": "application/json" },
+          body: JSON.stringify({ operatorNote: null }),
+        });
+        assert.equal(clear.status, 200);
+        assert.equal((await clear.json()).data.finding.operatorNote, null);
       },
     );
   });

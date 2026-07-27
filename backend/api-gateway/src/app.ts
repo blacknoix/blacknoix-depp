@@ -21,10 +21,12 @@ import { createTenantsRouter } from "./routes/tenants";
 import { createTelemetryRouter } from "./routes/telemetry";
 import { createFindingsRouter } from "./routes/findings";
 import { createOperatorsRouter } from "./routes/operators";
+import { createWorkRouter } from "./routes/work";
 import type { TenantLookup } from "./tenants/repository";
 import type { TelemetryService } from "./telemetry/service";
 import type { CorrelationService } from "./correlation/service";
 import type { FindingSharedViewsRepository } from "./findings-views/repository";
+import type { WorkSharedViewsRepository } from "./work-views/repository";
 import type { UsersRepository } from "./users/repository";
 
 /**
@@ -110,6 +112,12 @@ export interface AppOptions {
   sharedViews?: FindingSharedViewsRepository;
 
   /**
+   * Backs GET/POST/DELETE /v1/work/views (tenant shared Work views). Omitted
+   * means those routes fail closed.
+   */
+  sharedWorkViews?: WorkSharedViewsRepository;
+
+  /**
    * Backs GET /v1/operators (assignment picker seam). Omitted means the route
    * fails closed.
    */
@@ -190,6 +198,15 @@ export function createApp(options: AppOptions = {}) {
     createFindingsRouter({
       correlationService: options.correlationService,
       sharedViews: options.sharedViews,
+    }),
+  );
+
+  // Work home: shared section views only (not a dashboard product).
+  app.use(
+    "/v1/work",
+    requireTenant,
+    createWorkRouter({
+      sharedWorkViews: options.sharedWorkViews,
     }),
   );
 

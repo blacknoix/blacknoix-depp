@@ -115,6 +115,9 @@ function stubOperatorShellFetch(opts?: {
       if (url.includes("/v1/findings/views")) {
         return jsonOk({ views: [] });
       }
+      if (url.includes("/v1/work/views")) {
+        return jsonOk({ views: [] });
+      }
       if (url.includes("/v1/agents")) {
         return jsonOk({ agents });
       }
@@ -634,6 +637,9 @@ describe("OperatorShell", () => {
         if (url.includes("/v1/findings/views")) {
           return jsonOk({ views: [] });
         }
+        if (url.includes("/v1/work/views")) {
+          return jsonOk({ views: [] });
+        }
         if (url.includes("/v1/agents")) {
           return jsonOk({ agents: [] });
         }
@@ -781,6 +787,17 @@ describe("App routing + auth gate", () => {
           } as Response;
         }
         if (url.includes("/v1/findings/views")) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              ok: true,
+              data: { views: [] },
+              requestId: "r",
+            }),
+          } as Response;
+        }
+        if (url.includes("/v1/work/views")) {
           return {
             ok: true,
             status: 200,

@@ -212,6 +212,19 @@ export interface FindingSharedViewsTable {
   created_by_user_id: string | null;
 }
 
+/**
+ * Tenant-owned shared Work section view. Operator product only.
+ * Stores section allowlist only — never findingId / selection / ownerScope.
+ */
+export interface WorkSharedViewsTable {
+  id: Generated<string>;
+  tenant_id: string;
+  name: string;
+  sections: string[];
+  created_at: Generated<Timestamp>;
+  created_by_user_id: string | null;
+}
+
 export interface Database {
   tenants: TenantsTable;
   agents: AgentsTable;
@@ -226,4 +239,5 @@ export interface Database {
   finding_revisit_reminders: FindingRevisitRemindersTable;
   finding_attention_dismissals: FindingAttentionDismissalsTable;
   finding_shared_views: FindingSharedViewsTable;
+  work_shared_views: WorkSharedViewsTable;
 }

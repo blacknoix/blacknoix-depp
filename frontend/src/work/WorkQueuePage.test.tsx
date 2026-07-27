@@ -140,6 +140,10 @@ function stubWorkQueueFetch(opts?: {
         });
       }
 
+      if (url.includes("/v1/work/views")) {
+        return jsonOk({ views: [] });
+      }
+
       if (url.includes("/v1/findings/attention")) {
         return jsonOk({
           ...emptyAttention(),
@@ -294,6 +298,10 @@ describe("WorkQueuePage", () => {
           return jsonOk(emptyAttention());
         }
 
+        if (url.includes("/v1/work/views")) {
+          return jsonOk({ views: [] });
+        }
+
         if (url.includes("/v1/findings?")) {
           const parsed = new URL(url, "http://local.test");
           const ownerScope = parsed.searchParams.get("ownerScope");
@@ -401,6 +409,10 @@ describe("WorkQueuePage", () => {
           });
         }
 
+        if (url.includes("/v1/work/views")) {
+          return jsonOk({ views: [] });
+        }
+
         if (url.includes("/v1/findings?")) {
           const parsed = new URL(url, "http://local.test");
           if (parsed.searchParams.get("ownerScope") === "me") {
@@ -442,6 +454,97 @@ describe("WorkQueuePage", () => {
       screen.queryByRole("checkbox", { name: /Select Resolve ok/i }),
     ).not.toBeInTheDocument();
     expect(window.confirm).toHaveBeenCalled();
+  });
+
+  it("applies a shared Work view into the sections URL and hides other sections", async () => {
+    const user = userEvent.setup();
+    stubWorkQueueFetch({
+      unowned: [finding({ id: FINDING_UNOWNED, title: "Claim me" })],
+      mine: [
+        finding({
+          id: FINDING_MINE,
+          title: "My finding",
+          ownerUserId: USER,
+        }),
+      ],
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes("/v1/work/views") && (init?.method ?? "GET") === "GET") {
+          return jsonOk({
+            views: [
+              {
+                id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                name: "Intake only",
+                definition: { sections: ["unowned_open"] },
+                createdAt: "2026-03-01T12:00:00.000Z",
+                createdByUserId: null,
+              },
+            ],
+          });
+        }
+        if (url.includes("/v1/findings/attention")) {
+          return jsonOk(emptyAttention());
+        }
+        if (url.includes("/v1/findings?")) {
+          const parsed = new URL(url, "http://local.test");
+          if (parsed.searchParams.get("ownerScope") === "none") {
+            return jsonOk({
+              findings: [finding({ id: FINDING_UNOWNED, title: "Claim me" })],
+            });
+          }
+          if (parsed.searchParams.get("ownerScope") === "me") {
+            return jsonOk({
+              findings: [
+                finding({
+                  id: FINDING_MINE,
+                  title: "My finding",
+                  ownerUserId: USER,
+                }),
+              ],
+            });
+          }
+          return jsonOk({ findings: [] });
+        }
+        return jsonOk({});
+      }),
+    );
+
+    render(
+      <MemoryRouter initialEntries={["/work"]}>
+        <Routes>
+          <Route
+            element={
+              <OutletSession
+                session={{ kind: "tenant", tenantId: TENANT, userId: USER }}
+              />
+            }
+          >
+            <Route path="work" element={<WorkQueuePage />} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "Intake only" }),
+      ).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Intake only" }));
+
+    await waitFor(() => {
+      expect(
+        document.querySelector('[data-section="unowned_open"]'),
+      ).toBeTruthy();
+    });
+    expect(document.querySelector('[data-section="mine"]')).toBeNull();
+    expect(document.querySelector('[data-section="action_needed"]')).toBeNull();
+    expect(screen.getByText(/Applied shared “Intake only”/i)).toBeInTheDocument();
   });
 
   it("dismisses Action needed until condition changes and reloads", async () => {
@@ -490,6 +593,10 @@ describe("WorkQueuePage", () => {
               })),
             },
           });
+        }
+
+        if (url.includes("/v1/work/views")) {
+          return jsonOk({ views: [] });
         }
 
         if (url.includes("/v1/findings?")) {

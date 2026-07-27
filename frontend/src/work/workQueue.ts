@@ -3,7 +3,7 @@
  *
  * Not an inbox, analytics dashboard, SLA board, or case-management product.
  * Deferred: live updates, Findings-list multi-select, charts, queue balancing,
- * generic mass-edit.
+ * generic mass-edit, folders/tagging for Work views.
  */
 
 import type { AttentionItem } from "../api/findings";

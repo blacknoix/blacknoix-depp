@@ -1098,6 +1098,18 @@ a.attention-item:hover {
   gap: 0.45rem;
 }
 
+.work-queue-section-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.work-section-chip.is-on {
+  border-color: #9bb5b0;
+  background: #eef5f4;
+}
+
 .command-bar {
   position: relative;
   min-width: min(22rem, 100%);

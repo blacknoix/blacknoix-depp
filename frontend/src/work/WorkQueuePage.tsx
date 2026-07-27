@@ -1,9 +1,21 @@
 import type { ReactNode } from "react";
-import { Link, useOutletContext } from "react-router-dom";
+import { useMemo } from "react";
+import {
+  Link,
+  useOutletContext,
+  useSearchParams,
+} from "react-router-dom";
 
 import type { AttentionItem } from "../api/findings";
 import type { OperatorSession } from "../auth/session";
 import type { Finding } from "../findings/types";
+import {
+  allWorkSections,
+  parseWorkSearchParams,
+  sectionsEqual,
+  serializeWorkSearchParams,
+  toggleWorkSection,
+} from "../routing/workUrlState";
 import { attentionKindLabel } from "../shell/attentionLinks";
 import {
   BULK_ACTIONS,
@@ -16,7 +28,9 @@ import {
   attentionWorkQueuePath,
   findingWorkQueuePath,
   WORK_QUEUE_SECTIONS,
+  type WorkQueueSectionId,
 } from "./workQueue";
+import { WorkViewsBar } from "./WorkViewsBar";
 
 export interface WorkOutletContext {
   session: OperatorSession;
@@ -137,6 +151,17 @@ function FindingRow(props: {
  */
 export function WorkQueuePage() {
   const { session } = useOutletContext<WorkOutletContext>();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlState = useMemo(
+    () => parseWorkSearchParams(searchParams),
+    [searchParams],
+  );
+  const activeSections = urlState.sections;
+  const activeSectionSet = useMemo(
+    () => new Set(activeSections),
+    [activeSections],
+  );
+
   const {
     phase,
     error,
@@ -158,6 +183,19 @@ export function WorkQueuePage() {
   const selectedCount = selectedIds.size;
   const canBulk = hasIdentity && selectedCount > 0 && !bulkPending;
 
+  function writeSections(next: readonly WorkQueueSectionId[]) {
+    const params = serializeWorkSearchParams({ sections: next });
+    setSearchParams(params, { replace: true });
+  }
+
+  function onToggleSection(id: WorkQueueSectionId) {
+    writeSections(toggleWorkSection(activeSections, id));
+  }
+
+  function onApplyView(sections: WorkQueueSectionId[]) {
+    writeSections(sections);
+  }
+
   async function onBulk(action: BulkAction) {
     if (!canBulk) {
       return;
@@ -173,16 +211,63 @@ export function WorkQueuePage() {
     await runBulkAction(action);
   }
 
+  const visibleSections = WORK_QUEUE_SECTIONS.filter((section) =>
+    activeSectionSet.has(section.id),
+  );
+
   return (
     <div className="console work-queue">
       <header className="page-header">
         <h1>Work</h1>
         <p className="muted">
-          What to look at first — Action needed, due reminders, then Mine and
-          Unowned open. Select a few findings for claim, clear owner, or
-          resolve. Detail triage stays on Findings.
+          What to look at first — choose sections, save local or tenant-shared
+          Work views, then claim / clear / resolve selected findings. Detail
+          triage stays on Findings.
         </p>
       </header>
+
+      <div
+        className="work-queue-section-toggles"
+        role="group"
+        aria-label="Work sections"
+      >
+        {WORK_QUEUE_SECTIONS.map((section) => {
+          const on = activeSectionSet.has(section.id);
+          return (
+            <button
+              key={section.id}
+              type="button"
+              className={
+                on
+                  ? "btn btn-secondary work-section-chip is-on"
+                  : "btn btn-secondary work-section-chip"
+              }
+              aria-pressed={on}
+              disabled={loading || bulkPending}
+              onClick={() => onToggleSection(section.id)}
+            >
+              {section.title}
+            </button>
+          );
+        })}
+        {!sectionsEqual(activeSections, allWorkSections()) ? (
+          <button
+            type="button"
+            className="btn btn-secondary"
+            disabled={loading || bulkPending}
+            onClick={() => writeSections(allWorkSections())}
+          >
+            Show all
+          </button>
+        ) : null}
+      </div>
+
+      <WorkViewsBar
+        session={session}
+        sections={activeSections}
+        disabled={loading || bulkPending || dismissPending}
+        onApply={onApplyView}
+      />
 
       <div className="work-queue-toolbar">
         <button
@@ -243,6 +328,13 @@ export function WorkQueuePage() {
         </div>
       ) : null}
 
+      {urlState.invalidSections ? (
+        <p className="banner" role="status">
+          Invalid sections in the URL were ignored — showing the default Work
+          home.
+        </p>
+      ) : null}
+
       {error ? (
         <p className="error" role="alert">
           {error}
@@ -263,7 +355,7 @@ export function WorkQueuePage() {
       ) : null}
 
       <div className="work-queue-sections">
-        {WORK_QUEUE_SECTIONS.map((section) => {
+        {visibleSections.map((section) => {
           const identityBlocked =
             section.requiresOperatorIdentity && !hasIdentity;
 

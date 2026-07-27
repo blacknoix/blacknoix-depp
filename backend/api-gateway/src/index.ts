@@ -19,6 +19,7 @@ import { createCorrelationFindingsRepository } from "./correlation/repository";
 import { createFindingSuppressionsRepository } from "./correlation/suppression-repository";
 import { createCorrelationService } from "./correlation/service";
 import { createFindingSharedViewsRepository } from "./findings-views/repository";
+import { createWorkSharedViewsRepository } from "./work-views/repository";
 import { createUsersRepository } from "./users/repository";
 
 /**
@@ -49,6 +50,7 @@ const telemetry = db ? createTelemetryRepository(db) : undefined;
 const findings = db ? createCorrelationFindingsRepository(db) : undefined;
 const suppressions = db ? createFindingSuppressionsRepository(db) : undefined;
 const sharedViews = db ? createFindingSharedViewsRepository(db) : undefined;
+const sharedWorkViews = db ? createWorkSharedViewsRepository(db) : undefined;
 const correlationService =
   telemetry && findings && suppressions
     ? createCorrelationService({
@@ -117,6 +119,7 @@ const app = createApp({
   agentsService,
   correlationService,
   sharedViews,
+  sharedWorkViews,
   users,
 });
 

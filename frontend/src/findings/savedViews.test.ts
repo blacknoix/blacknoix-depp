@@ -8,6 +8,8 @@ import {
   sanitizeSavedFilters,
   saveCurrentFilters,
   savedViewsStorageKey,
+  sessionCanApplyOwnerScopeMe,
+  validateFiltersForApply,
   type StorageLike,
 } from "./savedViews";
 
@@ -59,6 +61,41 @@ describe("sanitizeSavedFilters", () => {
     ).toBeNull();
     expect(sanitizeSavedFilters({ status: "nope" })).toBeNull();
     expect(sanitizeSavedFilters({ ruleId: "obsolete.rule" })).toBeNull();
+  });
+
+  it("accepts ownerScope me|none and rejects unsupported values", () => {
+    expect(sanitizeSavedFilters({ ownerScope: "me" })).toEqual({
+      ownerScope: "me",
+    });
+    expect(
+      sanitizeSavedFilters({ ownerScope: "none", status: "open" }),
+    ).toEqual({ ownerScope: "none", status: "open" });
+    expect(sanitizeSavedFilters({ ownerScope: "everyone" })).toBeNull();
+  });
+});
+
+describe("validateFiltersForApply", () => {
+  it("requires operator identity for ownerScope=me", () => {
+    expect(
+      validateFiltersForApply(session, { ownerScope: "me" }).ok,
+    ).toBe(false);
+    expect(
+      validateFiltersForApply(
+        { ...session, userId: "22222222-2222-4222-8222-222222222222" },
+        { ownerScope: "me" },
+      ).ok,
+    ).toBe(true);
+    expect(
+      validateFiltersForApply(
+        { kind: "bearer", accessToken: "x".repeat(24) },
+        { ownerScope: "me" },
+      ).ok,
+    ).toBe(true);
+    expect(
+      validateFiltersForApply(session, { ownerScope: "none", status: "open" })
+        .ok,
+    ).toBe(true);
+    expect(sessionCanApplyOwnerScopeMe(session)).toBe(false);
   });
 });
 
@@ -145,12 +182,28 @@ describe("saveCurrentFilters", () => {
     expect(dup.views).toHaveLength(1);
   });
 
+  it("persists ownerScope work-queue filters without findingId", () => {
+    const storage = memoryStorage();
+    const result = saveCurrentFilters({
+      session,
+      name: "Mine",
+      filters: { ownerScope: "me" },
+      storage,
+      now: new Date("2026-03-01T12:00:00.000Z"),
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.view.filters).toEqual({ ownerScope: "me" });
+    expect(loadSavedViews(session, storage)[0].filters).toEqual({
+      ownerScope: "me",
+    });
+  });
+
   it("createSavedView never copies findingId from a polluted object", () => {
     const polluted = {
       status: "open" as const,
       findingId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
     };
-    // Public API only accepts FindingsFilters; defensive sanitize path:
     expect(
       sanitizeSavedFilters(polluted as unknown as Record<string, unknown>),
     ).toBeNull();

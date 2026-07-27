@@ -53,6 +53,7 @@ function mapRow(row: {
   status: string | null;
   rule_id: string | null;
   agent_id: string | null;
+  owner_scope: string | null;
   created_at: unknown;
   created_by_user_id: string | null;
 }): FindingSharedViewRow {
@@ -65,6 +66,9 @@ function mapRow(row: {
   }
   if (row.agent_id) {
     filters.agentId = row.agent_id;
+  }
+  if (row.owner_scope === "me" || row.owner_scope === "none") {
+    filters.ownerScope = row.owner_scope;
   }
   return {
     id: row.id,
@@ -120,6 +124,7 @@ export function createFindingSharedViewsRepository(
               status: input.filters.status ?? null,
               rule_id: input.filters.ruleId ?? null,
               agent_id: input.filters.agentId ?? null,
+              owner_scope: input.filters.ownerScope ?? null,
               created_by_user_id: input.createdByUserId,
             })
             .returningAll()

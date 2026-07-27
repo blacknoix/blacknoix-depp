@@ -176,6 +176,8 @@ export interface FindingSharedViewsTable {
   status: string | null;
   rule_id: string | null;
   agent_id: string | null;
+  /** Relative ownership queue: me | none | null. Not a user id. */
+  owner_scope: string | null;
   created_at: Generated<Timestamp>;
   created_by_user_id: string | null;
 }

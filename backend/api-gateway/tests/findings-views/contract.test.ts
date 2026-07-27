@@ -45,4 +45,40 @@ describe("parseCreateSharedFindingViewBody", () => {
       false,
     );
   });
+
+  it("accepts ownerScope me|none and rejects ownerUserId / bad scope", () => {
+    const mine = parseCreateSharedFindingViewBody({
+      name: "Mine",
+      filters: { ownerScope: "me" },
+    });
+    assert.equal(mine.ok, true);
+    if (!mine.ok) return;
+    assert.deepEqual(mine.input.filters, { ownerScope: "me" });
+
+    const unowned = parseCreateSharedFindingViewBody({
+      name: "Unowned open",
+      filters: { ownerScope: "none", status: "open" },
+    });
+    assert.equal(unowned.ok, true);
+    if (!unowned.ok) return;
+    assert.deepEqual(unowned.input.filters, {
+      ownerScope: "none",
+      status: "open",
+    });
+
+    assert.equal(
+      parseCreateSharedFindingViewBody({
+        name: "x",
+        filters: { ownerScope: "everyone" },
+      }).ok,
+      false,
+    );
+    assert.equal(
+      parseCreateSharedFindingViewBody({
+        name: "x",
+        filters: { ownerUserId: "22222222-2222-4222-8222-222222222222" },
+      }).ok,
+      false,
+    );
+  });
 });

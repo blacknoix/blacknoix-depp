@@ -5,6 +5,7 @@
  * Storage is browser-local and tenant-scoped (bearer uses a single bucket).
  * Tenant shared views live on the backend (`/v1/findings/views`) and coexist;
  * this module does not sync or migrate local views.
+ * ownerScope=me is relative to the applying operator — apply requires identity.
  * Cross-product views, folders, and favorites remain deferred.
  */
 
@@ -328,4 +329,38 @@ export function describeFilters(filters: FindingsFilters): string {
     parts.push(`agent=${filters.agentId.slice(0, 8)}…`);
   }
   return parts.length > 0 ? parts.join(" · ") : "All findings";
+}
+
+/**
+ * ownerScope=me is relative to the applying operator. Bearer JWT sessions and
+ * tenant sessions with a user UUID can apply it; bare tenant sessions cannot.
+ */
+export function sessionCanApplyOwnerScopeMe(
+  session: OperatorSession,
+): boolean {
+  if (session.kind === "bearer") {
+    return true;
+  }
+  return Boolean(session.userId);
+}
+
+/**
+ * Validates filters for apply. Returns a user-facing error when Mine views
+ * cannot be applied safely (prefer non-application over stripping ownerScope).
+ */
+export function validateFiltersForApply(
+  session: OperatorSession,
+  filters: FindingsFilters,
+): { ok: true } | { ok: false; message: string } {
+  if (
+    filters.ownerScope === "me" &&
+    !sessionCanApplyOwnerScopeMe(session)
+  ) {
+    return {
+      ok: false,
+      message:
+        "This view uses Mine (ownerScope=me). Connect with an operator user UUID or JWT before applying it.",
+    };
+  }
+  return { ok: true };
 }

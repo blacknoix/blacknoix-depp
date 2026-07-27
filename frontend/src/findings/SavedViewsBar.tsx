@@ -15,6 +15,7 @@ import {
   loadSavedViews,
   sanitizeSavedFilters,
   saveCurrentFilters,
+  validateFiltersForApply,
   type SavedFindingView,
 } from "./savedViews";
 
@@ -141,6 +142,35 @@ export function SavedViewsBar({
 
   const locked = disabled || busy;
 
+  function tryApply(
+    label: "shared" | "local",
+    name: string,
+    rawFilters: unknown,
+  ) {
+    setMessage(null);
+    setError(null);
+    const next = sanitizeSavedFilters(rawFilters);
+    if (!next) {
+      setError(
+        label === "shared"
+          ? "This shared view has obsolete or invalid filters. Delete it and create a new one."
+          : "This local view has obsolete or invalid filters. Delete it and create a new one.",
+      );
+      return;
+    }
+    const identity = validateFiltersForApply(session, next);
+    if (!identity.ok) {
+      setError(identity.message);
+      return;
+    }
+    onApply(next);
+    setMessage(
+      label === "shared"
+        ? `Applied shared “${name}”.`
+        : `Applied local “${name}”.`,
+    );
+  }
+
   return (
     <div className="saved-views" aria-label="Saved views">
       <div className="saved-views-row">
@@ -160,19 +190,7 @@ export function SavedViewsBar({
                   className="btn btn-secondary saved-view-apply"
                   disabled={locked}
                   title={describeFilters(view.filters)}
-                  onClick={() => {
-                    setMessage(null);
-                    setError(null);
-                    const filters = sanitizeSavedFilters(view.filters);
-                    if (!filters) {
-                      setError(
-                        "This shared view has obsolete or invalid filters. Delete it and create a new one.",
-                      );
-                      return;
-                    }
-                    onApply(filters);
-                    setMessage(`Applied shared “${view.name}”.`);
-                  }}
+                  onClick={() => tryApply("shared", view.name, view.filters)}
                 >
                   {view.name}
                 </button>
@@ -204,12 +222,7 @@ export function SavedViewsBar({
                   className="btn btn-secondary saved-view-apply"
                   disabled={locked}
                   title={describeFilters(view.filters)}
-                  onClick={() => {
-                    setMessage(null);
-                    setError(null);
-                    onApply(view.filters);
-                    setMessage(`Applied local “${view.name}”.`);
-                  }}
+                  onClick={() => tryApply("local", view.name, view.filters)}
                 >
                   {view.name}
                 </button>

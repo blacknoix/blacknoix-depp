@@ -9,7 +9,8 @@ import {
 
 /**
  * Create-body contract for POST /v1/findings/views.
- * findingId is rejected if present. Tenant id never accepted from body.
+ * findingId / ownerUserId are rejected if present. Tenant id never accepted
+ * from body. ownerScope is optional and relative (me | none).
  */
 
 export const SHARED_VIEW_NAME_MAX = 40;
@@ -18,10 +19,14 @@ export const SHARED_VIEWS_MAX_PER_TENANT = 32;
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+export type SharedFindingOwnerScope = "me" | "none";
+
 export interface SharedFindingViewFilters {
   status?: FindingStatus;
   ruleId?: CorrelationRuleId;
   agentId?: string;
+  /** Relative ownership queue — not a stored user id. */
+  ownerScope?: SharedFindingOwnerScope;
 }
 
 export interface CreateSharedFindingViewInput {
@@ -45,7 +50,7 @@ function normalizeName(raw: unknown): string | null {
 }
 
 /**
- * Parses POST body: `{ name, filters: { status?, ruleId?, agentId? } }`.
+ * Parses POST body: `{ name, filters: { status?, ruleId?, agentId?, ownerScope? } }`.
  * Empty filters (all findings) are allowed.
  */
 export function parseCreateSharedFindingViewBody(
@@ -91,6 +96,12 @@ export function parseCreateSharedFindingViewBody(
       message: "findingId must not be stored on a shared view",
     };
   }
+  if ("ownerUserId" in filtersRaw || "owner_user_id" in filtersRaw) {
+    return {
+      ok: false,
+      message: "ownerUserId must not be stored; use ownerScope=me|none",
+    };
+  }
 
   const filters: SharedFindingViewFilters = {};
 
@@ -119,6 +130,13 @@ export function parseCreateSharedFindingViewBody(
       return { ok: false, message: "agentId must be a UUID" };
     }
     filters.agentId = filtersRaw.agentId.trim().toLowerCase();
+  }
+
+  if ("ownerScope" in filtersRaw && filtersRaw.ownerScope !== undefined) {
+    if (filtersRaw.ownerScope !== "me" && filtersRaw.ownerScope !== "none") {
+      return { ok: false, message: "ownerScope must be me or none" };
+    }
+    filters.ownerScope = filtersRaw.ownerScope;
   }
 
   return { ok: true, input: { name, filters } };

@@ -681,6 +681,73 @@ describe("FindingsConsole", () => {
     expect(screen.getByLabelText("Rule")).toHaveValue("");
   });
 
+  it("refuses Mine shared views without operator identity and applies with identity", async () => {
+    const user = userEvent.setup();
+    const USER = "22222222-2222-4222-8222-222222222222";
+    const base = mockConsoleApis();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (url.includes("/v1/findings/views") && method === "GET") {
+          return jsonResponse({
+            views: [
+              {
+                id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                name: "Mine queue",
+                filters: { ownerScope: "me" },
+                createdAt: "2026-03-01T12:00:00.000Z",
+                createdByUserId: null,
+              },
+            ],
+          });
+        }
+        return base(input, init);
+      }),
+    );
+
+    const { rerender } = render(
+      <MemoryRouter>
+        <FindingsConsoleView
+          session={{ kind: "tenant", tenantId: TENANT }}
+        />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: /^Mine queue$/i }),
+      ).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: /^Mine queue$/i }));
+    expect(
+      screen.getByText(/Connect with an operator user UUID or JWT/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Work queue: Mine/i)).not.toBeInTheDocument();
+
+    rerender(
+      <MemoryRouter>
+        <FindingsConsoleView
+          session={{ kind: "tenant", tenantId: TENANT, userId: USER }}
+        />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: /^Mine queue$/i }),
+      ).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: /^Mine queue$/i }));
+    await waitFor(() => {
+      expect(screen.getByText(/Work queue: Mine/i)).toBeInTheDocument();
+    });
+    expect(
+      screen.getByText(/Applied shared “Mine queue”/i),
+    ).toBeInTheDocument();
+  });
+
   it("shows a load error banner when the API fails", async () => {
     vi.stubGlobal(
       "fetch",

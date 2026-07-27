@@ -147,6 +147,9 @@ export async function createSharedFindingView(
           ...(input.filters.status ? { status: input.filters.status } : {}),
           ...(input.filters.ruleId ? { ruleId: input.filters.ruleId } : {}),
           ...(input.filters.agentId ? { agentId: input.filters.agentId } : {}),
+          ...(input.filters.ownerScope
+            ? { ownerScope: input.filters.ownerScope }
+            : {}),
         },
       }),
     },

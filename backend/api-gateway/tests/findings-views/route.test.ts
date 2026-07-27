@@ -131,6 +131,21 @@ describe("GET/POST/DELETE /v1/findings/views", () => {
         assert.equal(ok.status, 201);
         assert.equal(created.length, 1);
         assert.equal(created[0].name, "Churn");
+
+        const withOwner = await fetch(`${server.url}/v1/findings/views`, {
+          method: "POST",
+          headers: {
+            ...tenantHeaders(),
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            name: "Mine",
+            filters: { ownerScope: "me" },
+          }),
+        });
+        assert.equal(withOwner.status, 201);
+        assert.equal(created.length, 2);
+        assert.equal(created[1].name, "Mine");
       },
     );
   });

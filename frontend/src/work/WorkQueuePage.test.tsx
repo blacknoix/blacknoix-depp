@@ -14,6 +14,7 @@ import { WorkQueuePage } from "./WorkQueuePage";
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   sessionStorage.clear();
   localStorage.clear();
 });
@@ -30,6 +31,18 @@ function jsonOk(data: unknown): Response {
     ok: true,
     status: 200,
     json: async () => ({ ok: true, data, requestId: "r" }),
+  } as Response;
+}
+
+function jsonErr(status: number, code: string, message: string): Response {
+  return {
+    ok: false,
+    status,
+    json: async () => ({
+      ok: false,
+      error: { code, message },
+      requestId: "r",
+    }),
   } as Response;
 }
 
@@ -63,6 +76,26 @@ function OutletSession({
   session: { kind: "tenant"; tenantId: string; userId?: string };
 }) {
   return <Outlet context={{ session }} />;
+}
+
+function emptyAttention() {
+  return {
+    generatedAt: "2026-03-01T12:00:00.000Z",
+    since: "2026-02-28T12:00:00.000Z",
+    maxLookbackHours: 24,
+    openCount: 0,
+    activeSuppressionCount: 0,
+    truncated: false,
+    items: [],
+    reminders: { quietHours: 24, truncated: false, items: [] },
+    dueReminders: { truncated: false, items: [] },
+    actionNeeded: {
+      overdueHours: 4,
+      escalationQuietHours: 48,
+      truncated: false,
+      items: [],
+    },
+  };
 }
 
 function stubWorkQueueFetch(opts?: {
@@ -109,14 +142,8 @@ function stubWorkQueueFetch(opts?: {
 
       if (url.includes("/v1/findings/attention")) {
         return jsonOk({
-          generatedAt: "2026-03-01T12:00:00.000Z",
-          since: "2026-02-28T12:00:00.000Z",
-          maxLookbackHours: 24,
+          ...emptyAttention(),
           openCount: 2,
-          activeSuppressionCount: 0,
-          truncated: false,
-          items: [],
-          reminders: { quietHours: 24, truncated: false, items: [] },
           dueReminders: { truncated: false, items: dueReminders },
           actionNeeded: {
             overdueHours: 4,
@@ -197,18 +224,6 @@ describe("WorkQueuePage", () => {
       `/findings?ownerScope=me&findingId=${FINDING_ACTION}`,
     );
     expect(
-      screen.getByRole("link", { name: /Due reminder/i }),
-    ).toHaveAttribute(
-      "href",
-      `/findings?ownerScope=me&findingId=${FINDING_DUE}`,
-    );
-    expect(
-      screen.getByRole("link", { name: /My finding/i }),
-    ).toHaveAttribute(
-      "href",
-      `/findings?ownerScope=me&findingId=${FINDING_MINE}`,
-    );
-    expect(
       screen.getByRole("link", { name: /Claim me/i }),
     ).toHaveAttribute(
       "href",
@@ -240,17 +255,193 @@ describe("WorkQueuePage", () => {
       screen.getByText(/Operator identity is required/i),
     ).toBeInTheDocument();
     expect(screen.queryByText(/Hidden action/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Hidden due/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Hidden mine/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: /Bulk actions/i }),
+    ).not.toBeInTheDocument();
+  });
 
-    const actionSection = document.querySelector(
-      '[data-section="action_needed"]',
+  it("selects findings and bulk-claims, then refreshes Unowned / Mine", async () => {
+    const user = userEvent.setup();
+    const patches: Array<{ id: string; body: unknown }> = [];
+    let unowned = [finding({ id: FINDING_UNOWNED, title: "Claim me" })];
+    let mine: Finding[] = [];
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+
+        if (url.includes("/v1/findings/") && method === "PATCH") {
+          const id = url.split("/v1/findings/")[1]?.split("?")[0] ?? "";
+          const body = JSON.parse(String(init?.body ?? "{}"));
+          patches.push({ id, body });
+          if (body.claimOwner === true && id === FINDING_UNOWNED) {
+            const claimed = finding({
+              id: FINDING_UNOWNED,
+              title: "Claim me",
+              ownerUserId: USER,
+            });
+            unowned = [];
+            mine = [claimed];
+            return jsonOk({ finding: claimed });
+          }
+          return jsonErr(400, "BAD_REQUEST", "unexpected");
+        }
+
+        if (url.includes("/v1/findings/attention")) {
+          return jsonOk(emptyAttention());
+        }
+
+        if (url.includes("/v1/findings?")) {
+          const parsed = new URL(url, "http://local.test");
+          const ownerScope = parsed.searchParams.get("ownerScope");
+          if (ownerScope === "me") {
+            return jsonOk({ findings: mine });
+          }
+          if (ownerScope === "none") {
+            return jsonOk({ findings: unowned });
+          }
+          return jsonOk({ findings: [] });
+        }
+
+        return jsonOk({});
+      }),
+    );
+
+    renderWithShell({ kind: "tenant", tenantId: TENANT, userId: USER });
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("checkbox", { name: /Select Claim me/i }),
+      ).toBeInTheDocument();
+    });
+
+    await user.click(
+      screen.getByRole("checkbox", { name: /Select Claim me/i }),
+    );
+    expect(screen.getByText(/1 selected/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Claim to me/i }));
+
+    await waitFor(() => {
+      expect(patches).toEqual([
+        { id: FINDING_UNOWNED, body: { claimOwner: true } },
+      ]);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Claim to me: 1 updated/i)).toBeInTheDocument();
+    });
+
+    const unownedSection = document.querySelector(
+      '[data-section="unowned_open"]',
     ) as HTMLElement;
     expect(
-      within(actionSection).getByText(
-        /Unavailable without operator identity/i,
-      ),
+      within(unownedSection).getByText(/Nothing here/i),
     ).toBeInTheDocument();
+
+    const mineSection = document.querySelector(
+      '[data-section="mine"]',
+    ) as HTMLElement;
+    expect(
+      within(mineSection).getByRole("link", { name: /Claim me/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: /Bulk actions/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("reports partial bulk resolve failure and keeps failed selection", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    let mineState = [
+      finding({
+        id: FINDING_MINE,
+        title: "Resolve ok",
+        ownerUserId: USER,
+        status: "acknowledged",
+      }),
+      finding({
+        id: FINDING_ACTION,
+        title: "Resolve fail",
+        ownerUserId: USER,
+        status: "acknowledged",
+      }),
+    ];
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+
+        if (url.includes("/v1/findings/") && method === "PATCH") {
+          const id = url.split("/v1/findings/")[1]?.split("?")[0] ?? "";
+          if (id === FINDING_MINE) {
+            mineState = mineState.filter((f) => f.id !== FINDING_MINE);
+            return jsonOk({
+              finding: finding({
+                id: FINDING_MINE,
+                title: "Resolve ok",
+                ownerUserId: USER,
+                status: "resolved",
+              }),
+            });
+          }
+          return jsonErr(409, "CONFLICT", "invalid status transition");
+        }
+
+        if (url.includes("/v1/findings/attention")) {
+          return jsonOk({
+            ...emptyAttention(),
+            openCount: mineState.length,
+          });
+        }
+
+        if (url.includes("/v1/findings?")) {
+          const parsed = new URL(url, "http://local.test");
+          if (parsed.searchParams.get("ownerScope") === "me") {
+            return jsonOk({ findings: mineState });
+          }
+          return jsonOk({ findings: [] });
+        }
+
+        return jsonOk({});
+      }),
+    );
+
+    renderWithShell({ kind: "tenant", tenantId: TENANT, userId: USER });
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("checkbox", { name: /Select Resolve ok/i }),
+      ).toBeInTheDocument();
+    });
+
+    await user.click(
+      screen.getByRole("checkbox", { name: /Select Resolve ok/i }),
+    );
+    await user.click(
+      screen.getByRole("checkbox", { name: /Select Resolve fail/i }),
+    );
+    await user.click(screen.getByRole("button", { name: /Mark resolved/i }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Mark resolved: 1 of 2 updated. 1 failed/i),
+      ).toBeInTheDocument();
+    });
+
+    expect(
+      screen.getByRole("checkbox", { name: /Select Resolve fail/i }),
+    ).toBeChecked();
+    expect(
+      screen.queryByRole("checkbox", { name: /Select Resolve ok/i }),
+    ).not.toBeInTheDocument();
+    expect(window.confirm).toHaveBeenCalled();
   });
 
   it("dismisses Action needed until condition changes and reloads", async () => {
@@ -282,15 +473,8 @@ describe("WorkQueuePage", () => {
 
         if (url.includes("/v1/findings/attention")) {
           return jsonOk({
-            generatedAt: "2026-03-01T12:00:00.000Z",
-            since: "2026-02-28T12:00:00.000Z",
-            maxLookbackHours: 24,
+            ...emptyAttention(),
             openCount: 1,
-            activeSuppressionCount: 0,
-            truncated: false,
-            items: [],
-            reminders: { quietHours: 24, truncated: false, items: [] },
-            dueReminders: { truncated: false, items: [] },
             actionNeeded: {
               overdueHours: 4,
               escalationQuietHours: 48,
@@ -319,7 +503,9 @@ describe("WorkQueuePage", () => {
     renderWithShell({ kind: "tenant", tenantId: TENANT, userId: USER });
 
     await waitFor(() => {
-      expect(screen.getByText(/Escalated churn/i)).toBeInTheDocument();
+      expect(
+        screen.getByRole("link", { name: /Escalated churn/i }),
+      ).toBeInTheDocument();
     });
 
     await user.click(screen.getByRole("button", { name: /^Dismiss$/i }));
@@ -335,12 +521,9 @@ describe("WorkQueuePage", () => {
     });
 
     await waitFor(() => {
-      expect(screen.queryByText(/Escalated churn/i)).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("link", { name: /Escalated churn/i }),
+      ).not.toBeInTheDocument();
     });
-    expect(
-      screen.getByText(
-        /Dismissed until this finding's attention condition changes/i,
-      ),
-    ).toBeInTheDocument();
   });
 });

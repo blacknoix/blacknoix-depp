@@ -5,6 +5,12 @@ import type { AttentionItem } from "../api/findings";
 import type { OperatorSession } from "../auth/session";
 import type { Finding } from "../findings/types";
 import { attentionKindLabel } from "../shell/attentionLinks";
+import {
+  BULK_ACTIONS,
+  bulkActionLabel,
+  MAX_BULK_SELECTION,
+  type BulkAction,
+} from "./bulkActions";
 import { useWorkQueue } from "./useWorkQueue";
 import {
   attentionWorkQueuePath,
@@ -31,6 +37,10 @@ function formatWhen(iso: string): string {
 
 function AttentionRow(props: {
   item: AttentionItem;
+  selectable: boolean;
+  selected: boolean;
+  selectionDisabled: boolean;
+  onToggleSelect: (findingId: string) => void;
   onDismiss?: (item: AttentionItem) => void;
   dismissDisabled?: boolean;
 }) {
@@ -46,6 +56,19 @@ function AttentionRow(props: {
 
   return (
     <li className="work-queue-row">
+      {props.selectable ? (
+        <label className="work-queue-select">
+          <span className="visually-hidden">
+            Select {props.item.title}
+          </span>
+          <input
+            type="checkbox"
+            checked={props.selected}
+            disabled={props.selectionDisabled}
+            onChange={() => props.onToggleSelect(props.item.findingId)}
+          />
+        </label>
+      ) : null}
       {path ? (
         <Link className="work-queue-link" to={path}>
           {body}
@@ -70,14 +93,38 @@ function AttentionRow(props: {
   );
 }
 
-function FindingRow({ finding }: { finding: Finding }) {
+function FindingRow(props: {
+  finding: Finding;
+  selectable: boolean;
+  selected: boolean;
+  selectionDisabled: boolean;
+  onToggleSelect: (findingId: string) => void;
+}) {
   return (
     <li className="work-queue-row">
-      <Link className="work-queue-link" to={findingWorkQueuePath(finding)}>
-        <span className="work-queue-kind">{finding.status}</span>
-        <span className="work-queue-title">{finding.title}</span>
-        <span className="muted tiny mono">{finding.ruleId}</span>
-        <span className="muted tiny">{formatWhen(finding.createdAt)}</span>
+      {props.selectable ? (
+        <label className="work-queue-select">
+          <span className="visually-hidden">
+            Select {props.finding.title}
+          </span>
+          <input
+            type="checkbox"
+            checked={props.selected}
+            disabled={props.selectionDisabled}
+            onChange={() => props.onToggleSelect(props.finding.id)}
+          />
+        </label>
+      ) : null}
+      <Link
+        className="work-queue-link"
+        to={findingWorkQueuePath(props.finding)}
+      >
+        <span className="work-queue-kind">{props.finding.status}</span>
+        <span className="work-queue-title">{props.finding.title}</span>
+        <span className="muted tiny mono">{props.finding.ruleId}</span>
+        <span className="muted tiny">
+          {formatWhen(props.finding.createdAt)}
+        </span>
       </Link>
     </li>
   );
@@ -85,7 +132,8 @@ function FindingRow({ finding }: { finding: Finding }) {
 
 /**
  * Daily operator entry point: prioritized queues composed from existing
- * Findings / Attention semantics. Not an inbox or analytics dashboard.
+ * Findings / Attention semantics. Tiny bulk claim / clear / resolve only —
+ * not an inbox, mass-edit, or analytics dashboard.
  */
 export function WorkQueuePage() {
   const { session } = useOutletContext<WorkOutletContext>();
@@ -96,11 +144,34 @@ export function WorkQueuePage() {
     data,
     hasIdentity,
     dismissPending,
+    bulkPending,
+    selectedIds,
     reload,
     dismissFollowUp,
+    toggleSelected,
+    clearSelection,
+    runBulkAction,
   } = useWorkQueue(session);
 
   const loading = phase === "loading" || phase === "idle";
+  const selectionDisabled = loading || bulkPending || dismissPending;
+  const selectedCount = selectedIds.size;
+  const canBulk = hasIdentity && selectedCount > 0 && !bulkPending;
+
+  async function onBulk(action: BulkAction) {
+    if (!canBulk) {
+      return;
+    }
+    if (action === "resolve") {
+      const ok = window.confirm(
+        `Mark ${selectedCount} finding${selectedCount === 1 ? "" : "s"} resolved?`,
+      );
+      if (!ok) {
+        return;
+      }
+    }
+    await runBulkAction(action);
+  }
 
   return (
     <div className="console work-queue">
@@ -108,8 +179,8 @@ export function WorkQueuePage() {
         <h1>Work</h1>
         <p className="muted">
           What to look at first — Action needed, due reminders, then Mine and
-          Unowned open. Triage stays on Findings; Attention remains the change
-          digest.
+          Unowned open. Select a few findings for claim, clear owner, or
+          resolve. Detail triage stays on Findings.
         </p>
       </header>
 
@@ -117,7 +188,7 @@ export function WorkQueuePage() {
         <button
           type="button"
           className="btn btn-secondary"
-          disabled={loading || dismissPending}
+          disabled={loading || dismissPending || bulkPending}
           onClick={() => void reload()}
         >
           Refresh
@@ -127,7 +198,50 @@ export function WorkQueuePage() {
             Loading queues…
           </span>
         ) : null}
+        {bulkPending ? (
+          <span className="muted tiny" role="status">
+            Applying bulk action…
+          </span>
+        ) : null}
       </div>
+
+      {hasIdentity && selectedCount > 0 ? (
+        <div
+          className="work-queue-bulk-bar"
+          role="region"
+          aria-label="Bulk actions"
+        >
+          <span className="work-queue-bulk-count" role="status">
+            {selectedCount} selected
+            {selectedCount >= MAX_BULK_SELECTION
+              ? ` (max ${MAX_BULK_SELECTION})`
+              : ""}
+          </span>
+          <div className="work-queue-bulk-actions">
+            {BULK_ACTIONS.map((action) => (
+              <button
+                key={action}
+                type="button"
+                className={
+                  action === "resolve" ? "btn" : "btn btn-secondary"
+                }
+                disabled={!canBulk}
+                onClick={() => void onBulk(action)}
+              >
+                {bulkActionLabel(action)}
+              </button>
+            ))}
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={bulkPending}
+              onClick={clearSelection}
+            >
+              Clear selection
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {error ? (
         <p className="error" role="alert">
@@ -142,9 +256,9 @@ export function WorkQueuePage() {
 
       {!hasIdentity ? (
         <p className="banner" role="status">
-          Operator identity is required for Action needed, Reminders due, and
-          Mine. Unowned open still loads. Connect with a user id (or bearer
-          session) to see owner-aware queues.
+          Operator identity is required for Action needed, Reminders due, Mine,
+          and bulk actions. Unowned open still loads. Connect with a user id
+          (or bearer session) to select and act.
         </p>
       ) : null}
 
@@ -166,7 +280,11 @@ export function WorkQueuePage() {
                   <AttentionRow
                     key={`${item.kind}:${item.findingId}`}
                     item={item}
-                    dismissDisabled={dismissPending}
+                    selectable={hasIdentity}
+                    selected={selectedIds.has(item.findingId)}
+                    selectionDisabled={selectionDisabled}
+                    onToggleSelect={toggleSelected}
+                    dismissDisabled={dismissPending || bulkPending}
                     onDismiss={(row) => void dismissFollowUp(row)}
                   />
                 ))}
@@ -181,7 +299,11 @@ export function WorkQueuePage() {
                   <AttentionRow
                     key={`${item.kind}:${item.findingId}`}
                     item={item}
-                    dismissDisabled={dismissPending}
+                    selectable={hasIdentity}
+                    selected={selectedIds.has(item.findingId)}
+                    selectionDisabled={selectionDisabled}
+                    onToggleSelect={toggleSelected}
+                    dismissDisabled={dismissPending || bulkPending}
                     onDismiss={(row) => void dismissFollowUp(row)}
                   />
                 ))}
@@ -193,7 +315,14 @@ export function WorkQueuePage() {
             itemsNode = identityBlocked ? null : (
               <ul className="work-queue-list">
                 {data.mine.map((finding) => (
-                  <FindingRow key={finding.id} finding={finding} />
+                  <FindingRow
+                    key={finding.id}
+                    finding={finding}
+                    selectable={hasIdentity}
+                    selected={selectedIds.has(finding.id)}
+                    selectionDisabled={selectionDisabled}
+                    onToggleSelect={toggleSelected}
+                  />
                 ))}
               </ul>
             );
@@ -203,7 +332,14 @@ export function WorkQueuePage() {
             itemsNode = (
               <ul className="work-queue-list">
                 {data.unownedOpen.map((finding) => (
-                  <FindingRow key={finding.id} finding={finding} />
+                  <FindingRow
+                    key={finding.id}
+                    finding={finding}
+                    selectable={hasIdentity}
+                    selected={selectedIds.has(finding.id)}
+                    selectionDisabled={selectionDisabled || !hasIdentity}
+                    onToggleSelect={toggleSelected}
+                  />
                 ))}
               </ul>
             );

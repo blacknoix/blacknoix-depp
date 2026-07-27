@@ -1068,6 +1068,36 @@ a.attention-item:hover {
   flex-shrink: 0;
 }
 
+.work-queue-select {
+  display: flex;
+  align-items: center;
+  padding: 0 0.15rem;
+  align-self: center;
+}
+
+.work-queue-bulk-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #f4f7fa;
+}
+
+.work-queue-bulk-count {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.work-queue-bulk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
 .command-bar {
   position: relative;
   min-width: min(22rem, 100%);

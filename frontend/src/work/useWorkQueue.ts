@@ -5,6 +5,7 @@ import {
   dismissFindingsAttentionItem,
   fetchFindings,
   fetchFindingsAttention,
+  patchFinding,
   type AttentionItem,
   type DismissableAttentionKind,
   type FindingsAttentionDigest,
@@ -15,6 +16,17 @@ import {
 } from "../auth/session";
 import type { Finding } from "../findings/types";
 import { loadAttentionSeenAt } from "../shell/attentionSeen";
+import {
+  collectVisibleFindingIds,
+  formatBulkActionMessage,
+  orderedBulkIds,
+  patchForBulkAction,
+  pruneBulkSelection,
+  summarizeBulkResults,
+  toggleBulkSelection,
+  type BulkAction,
+  type BulkActionItemResult,
+} from "./bulkActions";
 import { capWorkQueueItems } from "./workQueue";
 
 export type WorkQueuePhase = "idle" | "loading" | "ready" | "error";
@@ -72,6 +84,10 @@ export function useWorkQueue(session: OperatorSession) {
   const [message, setMessage] = useState<string | null>(null);
   const [data, setData] = useState<WorkQueueData>(emptyData);
   const [dismissPending, setDismissPending] = useState(false);
+  const [bulkPending, setBulkPending] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   const hasIdentity = sessionHasOperatorIdentity(session);
 
@@ -104,7 +120,7 @@ export function useWorkQueue(session: OperatorSession) {
       const mineCapped = capWorkQueueItems(mine);
       const unownedCapped = capWorkQueueItems(unownedOpen);
 
-      setData({
+      const nextData: WorkQueueData = {
         actionNeeded: actionCapped.items,
         actionNeededTruncated:
           actionCapped.truncated || attention.actionNeeded.truncated,
@@ -120,10 +136,24 @@ export function useWorkQueue(session: OperatorSession) {
           dueReminders: attention.dueReminders,
           reminders: attention.reminders,
         },
-      });
+      };
+
+      setData(nextData);
+      setSelectedIds((prev) =>
+        pruneBulkSelection(
+          prev,
+          collectVisibleFindingIds({
+            actionNeeded: nextData.actionNeeded,
+            remindersDue: nextData.remindersDue,
+            mine: nextData.mine,
+            unownedOpen: nextData.unownedOpen,
+          }),
+        ),
+      );
       setPhase("ready");
     } catch (err) {
       setData(emptyData);
+      setSelectedIds(new Set());
       setError(errorMessage(err));
       setPhase("error");
     }
@@ -132,6 +162,17 @@ export function useWorkQueue(session: OperatorSession) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  function toggleSelected(findingId: string) {
+    if (!hasIdentity || bulkPending || dismissPending) {
+      return;
+    }
+    setSelectedIds((prev) => toggleBulkSelection(prev, findingId));
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set());
+  }
 
   async function dismissFollowUp(item: AttentionItem) {
     if (!hasIdentity || !isDismissableKind(item.kind)) {
@@ -157,6 +198,54 @@ export function useWorkQueue(session: OperatorSession) {
     }
   }
 
+  async function runBulkAction(action: BulkAction) {
+    if (!hasIdentity || bulkPending) {
+      return;
+    }
+    const ids = orderedBulkIds(selectedIds);
+    if (ids.length === 0) {
+      return;
+    }
+
+    setBulkPending(true);
+    setError(null);
+    setMessage(null);
+
+    const patch = patchForBulkAction(action);
+    const results: BulkActionItemResult[] = [];
+
+    for (const findingId of ids) {
+      try {
+        await patchFinding(session, findingId, patch);
+        results.push({ findingId, ok: true });
+      } catch (err) {
+        results.push({
+          findingId,
+          ok: false,
+          error: errorMessage(err),
+        });
+      }
+    }
+
+    const summary = summarizeBulkResults(action, results);
+    setMessage(formatBulkActionMessage(summary));
+    if (summary.failed.length > 0 && summary.succeeded.length === 0) {
+      setError(
+        summary.failed[0]?.error ??
+          `${summary.failed.length} bulk action(s) failed.`,
+      );
+    }
+
+    const failedIds = new Set(summary.failed.map((row) => row.findingId));
+    setSelectedIds(failedIds);
+
+    try {
+      await load();
+    } finally {
+      setBulkPending(false);
+    }
+  }
+
   return {
     phase,
     error,
@@ -164,7 +253,12 @@ export function useWorkQueue(session: OperatorSession) {
     data,
     hasIdentity,
     dismissPending,
+    bulkPending,
+    selectedIds,
     reload: load,
     dismissFollowUp,
+    toggleSelected,
+    clearSelection,
+    runBulkAction,
   };
 }

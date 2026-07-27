@@ -62,29 +62,6 @@ export async function connectDb(): Promise<DbHandles> {
 }
 
 /**
- * Tenant-owned + registry tables cleared between dbtests (owner connection).
- * Must exactly match relations present in the current migrated schema
- * (excluding kysely_migration*).
- */
-const RESET_TABLES = [
-  "work_tenant_defaults",
-  "work_shared_views",
-  "finding_attention_dismissals",
-  "finding_revisit_reminders",
-  "finding_shared_views",
-  "finding_suppressions",
-  "correlation_findings",
-  "telemetry_events",
-  "agent_credentials",
-  "oidc_initiations",
-  "refresh_tokens",
-  "sessions",
-  "users",
-  "agents",
-  "tenants",
-] as const;
-
-/**
  * Clears fixture data via the owner connection.
  *
  * TRUNCATE is used rather than DELETE: RLS does not gate TRUNCATE, whereas a
@@ -99,7 +76,11 @@ const RESET_TABLES = [
  */
 export async function resetSchema(migrator: Pool): Promise<void> {
   await migrator.query(
-    `truncate table ${RESET_TABLES.join(", ")} restart identity cascade`,
+<<<<<<< HEAD
+    "truncate table telemetry_events, agent_credentials, oidc_initiations, refresh_tokens, sessions, users, agents, tenants restart identity cascade",
+=======
+    "truncate table finding_suppressions, correlation_findings, telemetry_events, agent_credentials, oidc_initiations, refresh_tokens, sessions, users, agents, tenants restart identity cascade",
+>>>>>>> dec9ffc (feat(api-gateway): add findings snooze and operator dashboard summary)
   );
 }
 

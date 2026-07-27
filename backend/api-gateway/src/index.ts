@@ -15,10 +15,16 @@ import { createSessionsRepository } from "./sessions/repository";
 import { createTenantsRepository } from "./tenants/repository";
 import { createTelemetryRepository } from "./telemetry/repository";
 import { createTelemetryService } from "./telemetry/service";
+<<<<<<< HEAD
+=======
 import { createCorrelationFindingsRepository } from "./correlation/repository";
 import { createFindingSuppressionsRepository } from "./correlation/suppression-repository";
 import { createCorrelationService } from "./correlation/service";
+<<<<<<< HEAD
+>>>>>>> dec9ffc (feat(api-gateway): add findings snooze and operator dashboard summary)
+=======
 import { createFindingSharedViewsRepository } from "./findings-views/repository";
+>>>>>>> 12b026d (feat: deepen Findings operator workflow with views, jump bar, and attention)
 import { createUsersRepository } from "./users/repository";
 
 /**
@@ -46,6 +52,8 @@ const users = db ? createUsersRepository(db) : undefined;
 const sessions = db ? createSessionsRepository(db) : undefined;
 const agents = db ? createAgentsRepository(db) : undefined;
 const telemetry = db ? createTelemetryRepository(db) : undefined;
+<<<<<<< HEAD
+=======
 const findings = db ? createCorrelationFindingsRepository(db) : undefined;
 const suppressions = db ? createFindingSuppressionsRepository(db) : undefined;
 const sharedViews = db ? createFindingSharedViewsRepository(db) : undefined;
@@ -53,11 +61,9 @@ const correlationService =
   telemetry && findings && suppressions
     ? createCorrelationService({ telemetry, findings, suppressions })
     : undefined;
+>>>>>>> dec9ffc (feat(api-gateway): add findings snooze and operator dashboard summary)
 const telemetryService = telemetry
-  ? createTelemetryService({
-      telemetry,
-      ...(correlationService ? { correlation: correlationService } : {}),
-    })
+  ? createTelemetryService({ telemetry })
   : undefined;
 
 // Resolved at startup so AUTH_MODE=jwt with invalid/missing JWT config fails to
@@ -110,8 +116,11 @@ const app = createApp({
   telemetryService,
   telemetryBatchMaxEvents: env.telemetryBatchMaxEvents,
   agentsService,
+<<<<<<< HEAD
+=======
   correlationService,
   sharedViews,
+>>>>>>> 12b026d (feat: deepen Findings operator workflow with views, jump bar, and attention)
 });
 
 const server = app.listen(env.port, () => {

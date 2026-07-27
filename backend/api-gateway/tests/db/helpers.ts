@@ -18,6 +18,25 @@ export interface DbHandles {
   close: () => Promise<void>;
 }
 
+/** Tenant-owned + registry tables cleared between dbtests (owner connection). */
+const RESET_TABLES = [
+  "work_tenant_defaults",
+  "work_shared_views",
+  "finding_attention_dismissals",
+  "finding_revisit_reminders",
+  "finding_shared_views",
+  "finding_suppressions",
+  "correlation_findings",
+  "telemetry_events",
+  "agent_credentials",
+  "oidc_initiations",
+  "refresh_tokens",
+  "sessions",
+  "users",
+  "agents",
+  "tenants",
+] as const;
+
 function requireEnv(name: string): string {
   const value = process.env[name];
 
@@ -25,18 +44,54 @@ function requireEnv(name: string): string {
     throw new Error(
       `The database-backed isolation suite requires ${name}, which is not set. ` +
         "Start Postgres (docker compose -f infra/docker-compose.yml up -d), run " +
-        "`npm run migrate:latest`, and set DATABASE_URL and DATABASE_MIGRATION_URL. " +
-        "This suite fails rather than skipping: tenant isolation must never be " +
-        "silently unverified.",
+        "`npm run migrate:latest`, and set DATABASE_URL and DATABASE_MIGRATION_URL " +
+        "(see tests/test.env). This suite fails rather than skipping: tenant " +
+        "isolation must never be silently unverified.",
     );
   }
 
   return value;
 }
 
+async function assertRole(
+  pool: Pool,
+  expected: { role: string; allowSuper: boolean; label: string },
+): Promise<void> {
+  const { rows } = await pool.query<{
+    role: string;
+    super: string;
+    bypass: boolean;
+  }>(
+    `select current_user as role,
+            current_setting('is_superuser') as super,
+            (select rolbypassrls from pg_roles where rolname = current_user) as bypass`,
+  );
+  const row = rows[0];
+  if (!row) {
+    throw new Error(`${expected.label}: could not resolve connection role`);
+  }
+  if (row.role !== expected.role) {
+    throw new Error(
+      `${expected.label} must connect as ${expected.role}, got ${row.role}. ` +
+        "A superuser or table-owner connection bypasses / weakens RLS and makes " +
+        "isolation tests meaningless.",
+    );
+  }
+  if (!expected.allowSuper && row.super === "on") {
+    throw new Error(
+      `${expected.label} must not be a superuser (got ${row.role}).`,
+    );
+  }
+  if (row.bypass) {
+    throw new Error(
+      `${expected.label} must be NOBYPASSRLS (role ${row.role} has BYPASSRLS).`,
+    );
+  }
+}
+
 /**
- * Opens both connections and proves they are reachable. Throws — never skips —
- * if the environment is missing or the database is unavailable.
+ * Opens both connections and proves they are reachable with the correct roles.
+ * Throws — never skips — if the environment is missing or roles are wrong.
  */
 export async function connectDb(): Promise<DbHandles> {
   const appUrl = requireEnv("DATABASE_URL");
@@ -45,9 +100,24 @@ export async function connectDb(): Promise<DbHandles> {
   const appPool = new Pool({ connectionString: appUrl, max: 4 });
   const migratorPool = new Pool({ connectionString: migratorUrl, max: 2 });
 
-  // Fail loudly now, with a clear error, rather than deep inside a test.
-  await migratorPool.query("select 1");
-  await appPool.query("select 1");
+  try {
+    await migratorPool.query("select 1");
+    await appPool.query("select 1");
+    await assertRole(appPool, {
+      role: "depp_app",
+      allowSuper: false,
+      label: "DATABASE_URL",
+    });
+    await assertRole(migratorPool, {
+      role: "depp_migrator",
+      allowSuper: false,
+      label: "DATABASE_MIGRATION_URL",
+    });
+  } catch (err) {
+    await appPool.end().catch(() => undefined);
+    await migratorPool.end().catch(() => undefined);
+    throw err;
+  }
 
   const app = createKysely(appPool);
 
@@ -73,10 +143,14 @@ export async function connectDb(): Promise<DbHandles> {
  * will pull fixtures out from under another's inserts (FK violations, duplicate
  * slugs). This is enforced by `--test-concurrency=1` in the `test:db` script; do
  * not remove it without giving each file its own isolated data.
+ *
+ * Tables must be owned by depp_migrator. If truncate fails with permission
+ * denied, migrations were likely applied as postgres — run
+ * `npx tsx tests/db/repair-ownership.ts` then remigrate only if needed.
  */
 export async function resetSchema(migrator: Pool): Promise<void> {
   await migrator.query(
-    "truncate table finding_suppressions, correlation_findings, telemetry_events, agent_credentials, oidc_initiations, refresh_tokens, sessions, users, agents, tenants restart identity cascade",
+    `truncate table ${RESET_TABLES.join(", ")} restart identity cascade`,
   );
 }
 

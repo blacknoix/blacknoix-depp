@@ -16,6 +16,7 @@ import {
 } from "./auth/session";
 import { FindingsConsole } from "./findings/FindingsConsole";
 import { OperatorShell } from "./shell/OperatorShell";
+import { WorkQueuePage } from "./work/WorkQueuePage";
 
 export function App() {
   const [session, setSession] = useState<OperatorSession | null>(() =>
@@ -47,10 +48,11 @@ export function App() {
             />
           }
         >
-          <Route index element={<Navigate to="/findings" replace />} />
+          <Route index element={<Navigate to="/work" replace />} />
+          <Route path="work" element={<WorkQueuePage />} />
           <Route path="findings" element={<FindingsConsole />} />
           <Route path="agents" element={<AgentsConsole />} />
-          <Route path="*" element={<Navigate to="/findings" replace />} />
+          <Route path="*" element={<Navigate to="/work" replace />} />
         </Route>
       </Routes>
     </BrowserRouter>

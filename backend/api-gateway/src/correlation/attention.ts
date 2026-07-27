@@ -327,3 +327,155 @@ export function reminderQuietBefore(
 ): Date {
   return new Date(generatedAt.getTime() - quietHours * 60 * 60 * 1000);
 }
+
+/** Follow-up kinds that support dismiss-until-change (not the change feed). */
+export const DISMISSABLE_ATTENTION_KINDS = [
+  "finding.needs_revisit",
+  "finding.reminder_due",
+  "finding.action_needed",
+] as const;
+
+export type DismissableAttentionKind =
+  (typeof DISMISSABLE_ATTENTION_KINDS)[number];
+
+export function isDismissableAttentionKind(
+  value: string,
+): value is DismissableAttentionKind {
+  return (DISMISSABLE_ATTENTION_KINDS as readonly string[]).includes(value);
+}
+
+export interface AttentionDismissal {
+  findingId: string;
+  kind: DismissableAttentionKind;
+  /** Watermark: item.at at dismiss time. */
+  conditionAt: Date;
+}
+
+export function attentionDismissalKey(
+  kind: string,
+  findingId: string,
+): string {
+  return `${kind}:${findingId}`;
+}
+
+/**
+ * True when the operator dismissed this item and the derived condition has
+ * not advanced. Reappears when item.at > conditionAt or the kind changes.
+ */
+export function isAttentionItemDismissed(
+  item: AttentionItem,
+  dismissals: ReadonlyMap<string, Date>,
+): boolean {
+  if (!isDismissableAttentionKind(item.kind)) {
+    return false;
+  }
+  const conditionAt = dismissals.get(
+    attentionDismissalKey(item.kind, item.findingId),
+  );
+  if (!conditionAt) {
+    return false;
+  }
+  return item.at.getTime() <= conditionAt.getTime();
+}
+
+export function filterDismissedAttentionItems(
+  items: AttentionItem[],
+  dismissals: ReadonlyMap<string, Date>,
+): AttentionItem[] {
+  return items.filter((item) => !isAttentionItemDismissed(item, dismissals));
+}
+
+export function toAttentionDismissalMap(
+  rows: AttentionDismissal[],
+): Map<string, Date> {
+  const map = new Map<string, Date>();
+  for (const row of rows) {
+    map.set(attentionDismissalKey(row.kind, row.findingId), row.conditionAt);
+  }
+  return map;
+}
+
+const UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export interface DismissAttentionInput {
+  findingId: string;
+  kind: DismissableAttentionKind;
+  conditionAt: Date;
+}
+
+export type ParseDismissAttentionResult =
+  | { ok: true; dismiss: DismissAttentionInput }
+  | { ok: false; message: string };
+
+/**
+ * Parses POST /v1/findings/attention/dismiss body.
+ * conditionAt must match the surfaced item.at watermark from the digest.
+ */
+export function parseDismissAttentionBody(
+  body: unknown,
+): ParseDismissAttentionResult {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return { ok: false, message: "body must be a JSON object" };
+  }
+
+  const record = body as Record<string, unknown>;
+  const allowed = new Set(["findingId", "kind", "conditionAt"]);
+
+  for (const key of Object.keys(record)) {
+    if (key === "tenantId" || key === "tenant_id" || key === "tid") {
+      return {
+        ok: false,
+        message: "tenant identity must not be supplied in the body",
+      };
+    }
+    if (!allowed.has(key)) {
+      return { ok: false, message: `unknown field: ${key}` };
+    }
+  }
+
+  if (typeof record.findingId !== "string") {
+    return { ok: false, message: "findingId must be a UUID" };
+  }
+  const findingId = record.findingId.trim().toLowerCase();
+  if (!UUID.test(findingId)) {
+    return { ok: false, message: "findingId must be a UUID" };
+  }
+
+  if (typeof record.kind !== "string") {
+    return { ok: false, message: "kind must be a dismissable attention kind" };
+  }
+  if (!isDismissableAttentionKind(record.kind)) {
+    return { ok: false, message: "kind must be a dismissable attention kind" };
+  }
+
+  if (typeof record.conditionAt !== "string") {
+    return {
+      ok: false,
+      message: "conditionAt must be an ISO-8601 timestamp",
+    };
+  }
+  const trimmed = record.conditionAt.trim();
+  if (trimmed.length === 0) {
+    return {
+      ok: false,
+      message: "conditionAt must be an ISO-8601 timestamp",
+    };
+  }
+  const conditionAt = new Date(trimmed);
+  if (Number.isNaN(conditionAt.getTime())) {
+    return {
+      ok: false,
+      message: "conditionAt must be an ISO-8601 timestamp",
+    };
+  }
+
+  return {
+    ok: true,
+    dismiss: {
+      findingId,
+      kind: record.kind,
+      conditionAt,
+    },
+  };
+}

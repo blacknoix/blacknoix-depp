@@ -41,6 +41,7 @@ describe("buildOperatorCommands / filterOperatorCommands", () => {
     });
 
     const commands = buildOperatorCommands({ session, storage });
+    expect(commands.some((c) => c.id === "nav.work")).toBe(true);
     expect(commands.some((c) => c.id === "nav.findings")).toBe(true);
     expect(commands.some((c) => c.id === "nav.agents")).toBe(true);
     expect(commands.some((c) => c.id === "agents.freshness.stale")).toBe(true);

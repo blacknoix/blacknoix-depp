@@ -2,12 +2,17 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import {
+  dismissFindingsAttentionItem,
   fetchFindingsAttention,
   type AttentionItem,
+  type DismissableAttentionKind,
   type FindingsAttentionDigest,
 } from "../api/findings";
 import { ApiError } from "../api/client";
-import type { OperatorSession } from "../auth/session";
+import {
+  sessionHasOperatorIdentity,
+  type OperatorSession,
+} from "../auth/session";
 import { attentionItemPath, attentionKindLabel } from "./attentionLinks";
 import {
   loadAttentionSeenAt,
@@ -41,39 +46,66 @@ function formatWhen(iso: string): string {
   });
 }
 
-function sessionHasOperatorIdentity(session: OperatorSession): boolean {
-  if (session.kind === "bearer") {
-    return true;
-  }
-  return Boolean(session.userId);
+function isDismissableKind(
+  kind: AttentionItem["kind"],
+): kind is DismissableAttentionKind {
+  return (
+    kind === "finding.needs_revisit" ||
+    kind === "finding.reminder_due" ||
+    kind === "finding.action_needed"
+  );
 }
 
 function AttentionItemRow({
   item,
   onNavigate,
+  canDismiss,
+  dismissPending,
+  onDismiss,
 }: {
   item: AttentionItem;
   onNavigate: () => void;
+  canDismiss: boolean;
+  dismissPending: boolean;
+  onDismiss: (item: AttentionItem) => void;
 }) {
   const to = attentionItemPath(item);
-  if (to) {
-    return (
-      <Link to={to} className="attention-item" onClick={onNavigate}>
-        <span className="attention-kind">{attentionKindLabel(item.kind)}</span>
-        <span className="attention-title">{item.title}</span>
-        <span className="muted tiny mono">
-          {item.status} · {item.ruleId}
-        </span>
-        <span className="muted tiny">{formatWhen(item.at)}</span>
-      </Link>
-    );
-  }
+  const showDismiss = canDismiss && isDismissableKind(item.kind);
+
   return (
-    <div className="attention-item is-invalid">
-      <span className="attention-kind">{attentionKindLabel(item.kind)}</span>
-      <span className="error tiny">
-        Obsolete filters — open Findings manually.
-      </span>
+    <div className="attention-item-row">
+      {to ? (
+        <Link to={to} className="attention-item" onClick={onNavigate}>
+          <span className="attention-kind">
+            {attentionKindLabel(item.kind)}
+          </span>
+          <span className="attention-title">{item.title}</span>
+          <span className="muted tiny mono">
+            {item.status} · {item.ruleId}
+          </span>
+          <span className="muted tiny">{formatWhen(item.at)}</span>
+        </Link>
+      ) : (
+        <div className="attention-item is-invalid">
+          <span className="attention-kind">
+            {attentionKindLabel(item.kind)}
+          </span>
+          <span className="error tiny">
+            Obsolete filters — open Findings manually.
+          </span>
+        </div>
+      )}
+      {showDismiss ? (
+        <button
+          type="button"
+          className="btn btn-secondary attention-dismiss"
+          disabled={dismissPending}
+          title="Hide until this finding's attention condition changes"
+          onClick={() => onDismiss(item)}
+        >
+          Dismiss
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -81,6 +113,7 @@ function AttentionItemRow({
 /**
  * Compact shell attention digest — pull on open, no live stream.
  * Soft ownership / due reminders plus exclusive Action needed escalation.
+ * Follow-ups support dismiss-until-change; change feed uses Mark caught up.
  */
 export function AttentionPanel({ session }: Props) {
   const panelId = useId();
@@ -88,6 +121,7 @@ export function AttentionPanel({ session }: Props) {
   const [open, setOpen] = useState(false);
   const [digest, setDigest] = useState<FindingsAttentionDigest | null>(null);
   const [loading, setLoading] = useState(false);
+  const [dismissPending, setDismissPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -159,9 +193,33 @@ export function AttentionPanel({ session }: Props) {
       return;
     }
     setMessage(
-      "Marked change feed caught up for this browser. Soft reminders and Action needed stay until the finding is touched/resolved or the operator clears them.",
+      "Marked change feed caught up for this browser. Soft reminders and Action needed stay until dismissed, touched/resolved, or cleared.",
     );
     void load();
+  }
+
+  async function onDismiss(item: AttentionItem) {
+    if (!isDismissableKind(item.kind) || !hasIdentity) {
+      return;
+    }
+    setDismissPending(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await dismissFindingsAttentionItem(session, {
+        findingId: item.findingId,
+        kind: item.kind,
+        conditionAt: item.at,
+      });
+      setMessage(
+        "Dismissed until this finding's attention condition changes.",
+      );
+      await load();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setDismissPending(false);
+    }
   }
 
   function closePanel() {
@@ -210,8 +268,9 @@ export function AttentionPanel({ session }: Props) {
                 Recent changes (max {digest?.maxLookbackHours ?? 24}h), soft
                 follow-ups, and Action needed escalation (overdue reminders ≥
                 {digest?.actionNeeded.overdueHours ?? 4}h / quiet ≥{" "}
-                {digest?.actionNeeded.escalationQuietHours ?? 48}h). Pull-based
-                — not live.
+                {digest?.actionNeeded.escalationQuietHours ?? 48}h). Follow-ups
+                can be dismissed until their condition changes. Pull-based —
+                not live.
               </p>
             </div>
             <div className="attention-actions">
@@ -281,7 +340,13 @@ export function AttentionPanel({ session }: Props) {
               <ul className="attention-list">
                 {digest.actionNeeded.items.map((item) => (
                   <li key={`${item.kind}:${item.findingId}:${item.at}`}>
-                    <AttentionItemRow item={item} onNavigate={closePanel} />
+                    <AttentionItemRow
+                      item={item}
+                      onNavigate={closePanel}
+                      canDismiss={hasIdentity}
+                      dismissPending={dismissPending}
+                      onDismiss={(next) => void onDismiss(next)}
+                    />
                   </li>
                 ))}
               </ul>
@@ -299,7 +364,13 @@ export function AttentionPanel({ session }: Props) {
               <ul className="attention-list">
                 {digest.items.map((item) => (
                   <li key={`${item.kind}:${item.findingId}:${item.at}`}>
-                    <AttentionItemRow item={item} onNavigate={closePanel} />
+                    <AttentionItemRow
+                      item={item}
+                      onNavigate={closePanel}
+                      canDismiss={false}
+                      dismissPending={false}
+                      onDismiss={() => undefined}
+                    />
                   </li>
                 ))}
               </ul>
@@ -326,7 +397,13 @@ export function AttentionPanel({ session }: Props) {
               <ul className="attention-list">
                 {digest.reminders.items.map((item) => (
                   <li key={`${item.kind}:${item.findingId}:${item.at}`}>
-                    <AttentionItemRow item={item} onNavigate={closePanel} />
+                    <AttentionItemRow
+                      item={item}
+                      onNavigate={closePanel}
+                      canDismiss={hasIdentity}
+                      dismissPending={dismissPending}
+                      onDismiss={(next) => void onDismiss(next)}
+                    />
                   </li>
                 ))}
               </ul>
@@ -353,6 +430,9 @@ export function AttentionPanel({ session }: Props) {
                     <AttentionItemRow
                       item={item}
                       onNavigate={closePanel}
+                      canDismiss={hasIdentity}
+                      dismissPending={dismissPending}
+                      onDismiss={(next) => void onDismiss(next)}
                     />
                   </li>
                 ))}

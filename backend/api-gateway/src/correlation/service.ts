@@ -10,12 +10,16 @@ import {
   emptyDueReminders,
   emptyOwnershipReminders,
   ESCALATION_QUIET_HOURS,
+  filterDismissedAttentionItems,
+  isDismissableAttentionKind,
   partitionDueReminders,
   partitionOwnershipReminders,
   REMINDER_ITEMS_MAX,
   REMINDER_OVERDUE_HOURS,
   reminderQuietBefore,
   resolveAttentionSince,
+  toAttentionDismissalMap,
+  type DismissAttentionInput,
   type FindingsAttentionDigest,
 } from "./attention";
 import {
@@ -87,6 +91,10 @@ export type ClearSuppressionOutcome =
   | { ok: true; suppression: FindingSuppressionRow }
   | { ok: false; reason: "not_found" };
 
+export type DismissAttentionOutcome =
+  | { ok: true }
+  | { ok: false; reason: "rejected"; message: string };
+
 export interface CorrelationService {
   evaluateAfterIngest(tenantId: string, agentId: string): Promise<void>;
 
@@ -105,7 +113,8 @@ export interface CorrelationService {
 
   /**
    * Operator attention digest since an optional cursor, plus derived
-   * ownership reminders when actor.userId is present.
+   * follow-ups when actor.userId is present. Soft/escalated streams honor
+   * per-operator dismiss-until-change watermarks.
    * Null/omitted since uses the max lookback window.
    */
   attention(
@@ -113,6 +122,16 @@ export interface CorrelationService {
     requestedSince: Date | null,
     actor?: { userId?: string },
   ): Promise<FindingsAttentionDigest>;
+
+  /**
+   * Dismiss a derived Attention follow-up until its condition watermark
+   * advances or the attention kind class changes.
+   */
+  dismissAttentionItem(
+    tenantId: string,
+    input: DismissAttentionInput,
+    actor: { userId?: string },
+  ): Promise<DismissAttentionOutcome>;
 
   updateStatus(
     tenantId: string,
@@ -643,9 +662,31 @@ export function createCorrelationService(
           generatedAt,
           REMINDER_OVERDUE_HOURS,
         );
-        // Fetch enough for soft + escalated bands (oldest-first sources).
+
+        const dismissalRows = await findings.listAttentionDismissals(
+          tenantId,
+          ownerUserId,
+        );
+        const dismissals = toAttentionDismissalMap(
+          dismissalRows.flatMap((row) =>
+            isDismissableAttentionKind(row.kind)
+              ? [
+                  {
+                    findingId: row.findingId,
+                    kind: row.kind,
+                    conditionAt: row.conditionAt,
+                  },
+                ]
+              : [],
+          ),
+        );
+
+        // Over-fetch when dismissals exist so filtered streams can still fill.
+        const baseFetch = REMINDER_ITEMS_MAX + ACTION_NEEDED_ITEMS_MAX;
         const followUpFetchLimit =
-          REMINDER_ITEMS_MAX + ACTION_NEEDED_ITEMS_MAX;
+          dismissals.size > 0
+            ? Math.min(100, baseFetch * 3)
+            : baseFetch;
 
         const reminderRows = await findings.listOwnershipReminders(
           tenantId,
@@ -681,19 +722,33 @@ export function createCorrelationService(
         const followUpTruncated =
           reminderRows.length >= followUpFetchLimit ||
           dueRows.length >= followUpFetchLimit;
-        actionNeeded = assembleActionNeeded(
+
+        const actionVisible = filterDismissedAttentionItems(
           [...overdue, ...escalatedQuiet],
+          dismissals,
+        );
+        const softQuietVisible = filterDismissedAttentionItems(
+          softQuiet,
+          dismissals,
+        );
+        const softDueVisible = filterDismissedAttentionItems(
+          softDueExclusive,
+          dismissals,
+        );
+
+        actionNeeded = assembleActionNeeded(
+          actionVisible,
           followUpTruncated,
         );
         reminders = assembleOwnershipReminders(
-          softQuiet,
+          softQuietVisible,
           reminderRows.length >= followUpFetchLimit,
         );
         dueReminders = {
-          items: softDueExclusive.slice(0, REMINDER_ITEMS_MAX),
+          items: softDueVisible.slice(0, REMINDER_ITEMS_MAX),
           truncated:
             dueRows.length >= followUpFetchLimit ||
-            softDueExclusive.length > REMINDER_ITEMS_MAX,
+            softDueVisible.length > REMINDER_ITEMS_MAX,
         };
       }
 
@@ -710,6 +765,34 @@ export function createCorrelationService(
         dueReminders,
         actionNeeded,
       );
+    },
+
+    async dismissAttentionItem(tenantId, input, actor) {
+      if (typeof tenantId !== "string" || tenantId.trim() === "") {
+        throw new Error("dismissAttentionItem requires a non-empty tenantId");
+      }
+      const userId = actor.userId?.trim().toLowerCase();
+      if (!userId) {
+        return {
+          ok: false,
+          reason: "rejected",
+          message: "Operator identity is required to dismiss attention items",
+        };
+      }
+      if (!isDismissableAttentionKind(input.kind)) {
+        return {
+          ok: false,
+          reason: "rejected",
+          message: "kind must be a dismissable attention kind",
+        };
+      }
+
+      await findings.upsertAttentionDismissal(tenantId, userId, {
+        findingId: input.findingId,
+        kind: input.kind,
+        conditionAt: input.conditionAt,
+      });
+      return { ok: true };
     },
 
     async updateStatus(tenantId, findingId, nextStatus, actor) {

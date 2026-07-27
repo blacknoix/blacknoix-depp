@@ -1,6 +1,6 @@
 import { type NextFunction, type Request, type Response, Router } from "express";
 
-import { parseAttentionSinceQuery } from "../correlation/attention";
+import { parseAttentionSinceQuery, parseDismissAttentionBody } from "../correlation/attention";
 import {
   parseFindingsQueryV1,
   parsePatchFindingBody,
@@ -294,6 +294,62 @@ export function createFindingsRouter(
                 at: item.at.toISOString(),
               })),
             },
+          },
+          requestId: req.requestId,
+        });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  /**
+   * POST /v1/findings/attention/dismiss — dismiss a derived follow-up until
+   * its condition watermark advances or the attention kind class changes.
+   * Operator identity required. Change-feed items are not dismissable here.
+   */
+  router.post(
+    "/attention/dismiss",
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const principal = requirePrincipal(req);
+        const service = requireCorrelationService(options);
+
+        if (principal.agentId) {
+          throw new AppError(
+            "FINDINGS_REJECTED",
+            403,
+            "Attention dismiss requires an operator principal",
+          );
+        }
+        if (!principal.userId) {
+          throw new AppError(
+            "FINDINGS_REJECTED",
+            403,
+            "Operator identity is required to dismiss attention items",
+          );
+        }
+
+        const parsed = parseDismissAttentionBody(req.body);
+        if (!parsed.ok) {
+          throw new AppError("FINDINGS_INVALID", 400, parsed.message);
+        }
+
+        const outcome = await service.dismissAttentionItem(
+          principal.tenantId,
+          parsed.dismiss,
+          { userId: principal.userId },
+        );
+        if (!outcome.ok) {
+          throw new AppError("FINDINGS_REJECTED", 403, outcome.message);
+        }
+
+        res.status(200).json({
+          ok: true,
+          data: {
+            findingId: parsed.dismiss.findingId,
+            kind: parsed.dismiss.kind,
+            conditionAt: parsed.dismiss.conditionAt.toISOString(),
           },
           requestId: req.requestId,
         });

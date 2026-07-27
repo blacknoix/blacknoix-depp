@@ -182,6 +182,20 @@ export interface FindingRevisitRemindersTable {
 }
 
 /**
+ * Per-operator dismiss-until-change watermarks for derived Attention follow-ups.
+ * Unique per (tenant_id, user_id, finding_id, kind).
+ */
+export interface FindingAttentionDismissalsTable {
+  id: Generated<string>;
+  tenant_id: string;
+  user_id: string;
+  finding_id: string;
+  kind: string;
+  condition_at: Timestamp;
+  dismissed_at: Timestamp;
+}
+
+/**
  * Tenant-owned shared Findings filter view. Operator product only.
  * Filter columns are nullable; findingId is never stored.
  */
@@ -210,5 +224,6 @@ export interface Database {
   correlation_findings: CorrelationFindingsTable;
   finding_suppressions: FindingSuppressionsTable;
   finding_revisit_reminders: FindingRevisitRemindersTable;
+  finding_attention_dismissals: FindingAttentionDismissalsTable;
   finding_shared_views: FindingSharedViewsTable;
 }

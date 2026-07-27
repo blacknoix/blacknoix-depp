@@ -81,6 +81,7 @@ function stubCorrelation(
         truncated: false,
       },
     }),
+    dismissAttentionItem: async () => ({ ok: true }),
     ...overrides,
   };
 }
@@ -400,6 +401,95 @@ describe("GET /v1/findings/attention", () => {
         assert.equal(body.data.actionNeeded.overdueHours, 4);
         assert.equal(body.data.actionNeeded.escalationQuietHours, 48);
         assert.equal(body.data.actionNeeded.items.length, 0);
+      },
+    );
+  });
+});
+
+describe("POST /v1/findings/attention/dismiss", () => {
+  it("requires operator identity and dismisses a follow-up item", async () => {
+    const operatorUserId = "22222222-2222-4222-8222-222222222222";
+    let dismissed: {
+      findingId: string;
+      kind: string;
+      conditionAt: string;
+    } | null = null;
+
+    await withServer(
+      {
+        correlationService: stubCorrelation({
+          dismissAttentionItem: async (tenantId, input, actor) => {
+            assert.equal(tenantId, TENANT_ID);
+            assert.equal(actor.userId, operatorUserId);
+            dismissed = {
+              findingId: input.findingId,
+              kind: input.kind,
+              conditionAt: input.conditionAt.toISOString(),
+            };
+            return { ok: true };
+          },
+        }),
+      },
+      async (server) => {
+        const noIdentity = await fetch(
+          `${server.url}/v1/findings/attention/dismiss`,
+          {
+            method: "POST",
+            headers: {
+              ...tenantHeaders(),
+              "content-type": "application/json",
+            },
+            body: JSON.stringify({
+              findingId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+              kind: "finding.action_needed",
+              conditionAt: "2026-02-28T12:00:00.000Z",
+            }),
+          },
+        );
+        assert.equal(noIdentity.status, 403);
+
+        const badKind = await fetch(
+          `${server.url}/v1/findings/attention/dismiss`,
+          {
+            method: "POST",
+            headers: {
+              ...tenantHeaders({ "x-user-id": operatorUserId }),
+              "content-type": "application/json",
+            },
+            body: JSON.stringify({
+              findingId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+              kind: "finding.created",
+              conditionAt: "2026-02-28T12:00:00.000Z",
+            }),
+          },
+        );
+        assert.equal(badKind.status, 400);
+
+        const res = await fetch(`${server.url}/v1/findings/attention/dismiss`, {
+          method: "POST",
+          headers: {
+            ...tenantHeaders({ "x-user-id": operatorUserId }),
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            findingId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+            kind: "finding.action_needed",
+            conditionAt: "2026-02-28T12:00:00.000Z",
+          }),
+        });
+        assert.equal(res.status, 200);
+        const body = await res.json();
+        assert.equal(body.ok, true);
+        assert.equal(
+          body.data.findingId,
+          "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        );
+        assert.equal(body.data.kind, "finding.action_needed");
+        assert.deepEqual(dismissed, {
+          findingId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+          kind: "finding.action_needed",
+          conditionAt: "2026-02-28T12:00:00.000Z",
+        });
       },
     );
   });

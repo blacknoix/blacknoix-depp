@@ -301,6 +301,7 @@ describe("post-ingest correlation evaluation", () => {
             truncated: false,
           },
         }),
+        dismissAttentionItem: async () => ({ ok: true }),
       },
     });
 
@@ -997,6 +998,83 @@ describe("findings lifecycle triage", () => {
     );
     assert.equal(digest.actionNeeded.overdueHours, 4);
     assert.equal(digest.actionNeeded.escalationQuietHours, 48);
+  });
+
+  it("dismisses Action needed until the condition advances", async () => {
+    const userId = "22222222-2222-4222-8222-222222222222";
+    const id = await seedOpenFinding(new Date("2026-02-26T12:00:00.000Z"));
+
+    const claimClock = correlationFor(fixedNow("2026-02-26T12:00:00.000Z"));
+    assert.equal(
+      (
+        await claimClock.patchFinding(
+          tenantA,
+          id,
+          { claimOwner: true },
+          { userId },
+        )
+      ).ok,
+      true,
+    );
+
+    await withTenantTransaction(db.app, tenantA, async (trx) => {
+      await sql`
+        update correlation_findings
+        set created_at = ${new Date("2026-02-26T12:00:00.000Z")},
+            owner_changed_at = ${new Date("2026-02-26T12:00:00.000Z")}
+        where id = ${id}
+      `.execute(trx);
+    });
+
+    const evalClock = correlationFor(fixedNow("2026-03-01T12:00:00.000Z"));
+    const before = await evalClock.attention(
+      tenantA,
+      new Date("2026-03-01T00:00:00.000Z"),
+      { userId },
+    );
+    const target = before.actionNeeded.items.find((item) => item.findingId === id);
+    assert.ok(target);
+
+    const dismissed = await evalClock.dismissAttentionItem(
+      tenantA,
+      {
+        findingId: target.findingId,
+        kind: "finding.action_needed",
+        conditionAt: target.at,
+      },
+      { userId },
+    );
+    assert.equal(dismissed.ok, true);
+
+    const hidden = await evalClock.attention(
+      tenantA,
+      new Date("2026-03-01T00:00:00.000Z"),
+      { userId },
+    );
+    assert.ok(
+      !hidden.actionNeeded.items.some((item) => item.findingId === id),
+    );
+
+    // Advance the last-touch watermark while remaining in the escalated quiet band.
+    await withTenantTransaction(db.app, tenantA, async (trx) => {
+      await sql`
+        update correlation_findings
+        set owner_changed_at = ${new Date("2026-02-27T12:00:00.000Z")}
+        where id = ${id}
+      `.execute(trx);
+    });
+
+    const reappeared = await evalClock.attention(
+      tenantA,
+      new Date("2026-03-01T00:00:00.000Z"),
+      { userId },
+    );
+    assert.ok(
+      reappeared.actionNeeded.items.some(
+        (item) =>
+          item.findingId === id && item.kind === "finding.action_needed",
+      ),
+    );
   });
 
   it("lists findings by ownerScope me and none", async () => {

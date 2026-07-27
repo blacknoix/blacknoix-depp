@@ -133,9 +133,10 @@ function LocationProbe() {
   );
 }
 describe("nav helpers", () => {
-  it("marks findings and agents as live destinations", () => {
-    expect(OPERATOR_NAV.map((n) => n.id)).toEqual(["findings", "agents"]);
+  it("marks work, findings, and agents as live destinations", () => {
+    expect(OPERATOR_NAV.map((n) => n.id)).toEqual(["work", "findings", "agents"]);
     expect(OPERATOR_NAV.every((n) => n.kind === "live")).toBe(true);
+    expect(isNavActive("/work", "/work")).toBe(true);
     expect(isNavActive("/findings", "/findings")).toBe(true);
     expect(isNavActive("/agents", "/findings")).toBe(false);
   });
@@ -584,6 +585,105 @@ describe("OperatorShell", () => {
     );
   });
 
+  it("dismisses an Action needed item until refresh filters it out", async () => {
+    const user = userEvent.setup();
+    const USER = "22222222-2222-4222-8222-222222222222";
+    let dismissed = false;
+    const actionItem = {
+      kind: "finding.action_needed" as const,
+      findingId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      title: "Overdue revisit",
+      status: "open",
+      ruleId: "agent.lifecycle_churn",
+      agentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      at: "2026-02-27T10:00:00.000Z",
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (url.includes("/v1/findings/attention/dismiss") && method === "POST") {
+          dismissed = true;
+          return jsonOk({
+            findingId: actionItem.findingId,
+            kind: actionItem.kind,
+            conditionAt: actionItem.at,
+          });
+        }
+        if (url.includes("/v1/findings/attention")) {
+          return jsonOk({
+            generatedAt: "2026-03-01T12:00:00.000Z",
+            since: "2026-02-28T12:00:00.000Z",
+            maxLookbackHours: 24,
+            openCount: 1,
+            activeSuppressionCount: 0,
+            truncated: false,
+            items: [],
+            reminders: { quietHours: 24, truncated: false, items: [] },
+            dueReminders: { truncated: false, items: [] },
+            actionNeeded: {
+              overdueHours: 4,
+              escalationQuietHours: 48,
+              truncated: false,
+              items: dismissed ? [] : [actionItem],
+            },
+          });
+        }
+        if (url.includes("/v1/findings/views")) {
+          return jsonOk({ views: [] });
+        }
+        if (url.includes("/v1/agents")) {
+          return jsonOk({ agents: [] });
+        }
+        return jsonOk({});
+      }),
+    );
+
+    render(
+      <MemoryRouter initialEntries={["/agents"]}>
+        <Routes>
+          <Route
+            element={
+              <OperatorShell
+                session={{
+                  kind: "tenant",
+                  tenantId: TENANT,
+                  userId: USER,
+                }}
+                onSignOut={() => undefined}
+              />
+            }
+          >
+            <Route path="agents" element={<div>Agents page</div>} />
+            <Route path="findings" element={<div>Findings page</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Attention/i })).toHaveTextContent(
+        "1",
+      );
+    });
+    await user.click(screen.getByRole("button", { name: /Attention/i }));
+    expect(
+      screen.getByRole("link", { name: /Overdue revisit/i }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /^Dismiss$/i }));
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("link", { name: /Overdue revisit/i }),
+      ).not.toBeInTheDocument();
+    });
+    expect(
+      screen.getByText(/Dismissed until this finding's attention condition changes/i),
+    ).toBeInTheDocument();
+  });
+
   it("keeps shell structure present on a narrow viewport", async () => {
     stubOperatorShellFetch();
     Object.defineProperty(window, "innerWidth", {
@@ -781,9 +881,9 @@ describe("App routing + auth gate", () => {
       await screen.findByRole("navigation", { name: "Primary" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { level: 1, name: "Findings" }),
+      screen.getByRole("heading", { level: 1, name: "Work" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Findings/i })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: /^Work$/i })).toHaveAttribute(
       "aria-current",
       "page",
     );

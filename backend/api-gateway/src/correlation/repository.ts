@@ -191,6 +191,33 @@ export interface CorrelationFindingsRepository {
     now: Date,
     limit: number,
   ): Promise<AttentionItem[]>;
+
+  /**
+   * Per-operator dismiss-until-change watermarks for Attention follow-ups.
+   */
+  listAttentionDismissals(
+    tenantId: string,
+    userId: string,
+  ): Promise<
+    Array<{
+      findingId: string;
+      kind: string;
+      conditionAt: Date;
+    }>
+  >;
+
+  /**
+   * Upserts a dismiss-until-change watermark for one follow-up item.
+   */
+  upsertAttentionDismissal(
+    tenantId: string,
+    userId: string,
+    input: {
+      findingId: string;
+      kind: string;
+      conditionAt: Date;
+    },
+  ): Promise<void>;
 }
 
 function asDate(value: unknown): Date {
@@ -717,7 +744,7 @@ export function createCorrelationFindingsRepository(
         throw new Error("listDueExplicitRevisitReminders requires a valid now");
       }
 
-      const capped = Math.min(Math.max(1, Math.trunc(limit)), 50);
+      const capped = Math.min(Math.max(1, Math.trunc(limit)), 100);
       const owner = ownerUserId.trim().toLowerCase();
 
       return withTenantTransaction(db, tenantId, async (trx) => {
@@ -753,6 +780,87 @@ export function createCorrelationFindingsRepository(
           agentId: String((row as any).agent_id),
           at: asDate((row as any).remind_at),
         }));
+      });
+    },
+
+    async listAttentionDismissals(tenantId, userId) {
+      if (typeof tenantId !== "string" || tenantId.trim() === "") {
+        throw new Error(
+          "listAttentionDismissals requires a non-empty tenantId",
+        );
+      }
+      if (typeof userId !== "string" || userId.trim() === "") {
+        throw new Error("listAttentionDismissals requires a non-empty userId");
+      }
+      const owner = userId.trim().toLowerCase();
+
+      return withTenantTransaction(db, tenantId, async (trx) => {
+        const rows = await trx
+          .selectFrom("finding_attention_dismissals")
+          .select(["finding_id", "kind", "condition_at"])
+          .where("user_id", "=", owner)
+          .execute();
+
+        return rows.map((row) => ({
+          findingId: row.finding_id,
+          kind: row.kind,
+          conditionAt: asDate(row.condition_at),
+        }));
+      });
+    },
+
+    async upsertAttentionDismissal(tenantId, userId, input) {
+      if (typeof tenantId !== "string" || tenantId.trim() === "") {
+        throw new Error(
+          "upsertAttentionDismissal requires a non-empty tenantId",
+        );
+      }
+      if (typeof userId !== "string" || userId.trim() === "") {
+        throw new Error(
+          "upsertAttentionDismissal requires a non-empty userId",
+        );
+      }
+      if (typeof input.findingId !== "string" || input.findingId.trim() === "") {
+        throw new Error(
+          "upsertAttentionDismissal requires a non-empty findingId",
+        );
+      }
+      if (typeof input.kind !== "string" || input.kind.trim() === "") {
+        throw new Error("upsertAttentionDismissal requires a non-empty kind");
+      }
+      if (
+        !(input.conditionAt instanceof Date) ||
+        Number.isNaN(input.conditionAt.getTime())
+      ) {
+        throw new Error(
+          "upsertAttentionDismissal requires a valid conditionAt",
+        );
+      }
+
+      const owner = userId.trim().toLowerCase();
+      const findingId = input.findingId.trim().toLowerCase();
+      const now = new Date();
+
+      return withTenantTransaction(db, tenantId, async (trx) => {
+        await trx
+          .insertInto("finding_attention_dismissals")
+          .values({
+            tenant_id: tenantId,
+            user_id: owner,
+            finding_id: findingId,
+            kind: input.kind,
+            condition_at: input.conditionAt,
+            dismissed_at: now,
+          })
+          .onConflict((oc) =>
+            oc
+              .columns(["tenant_id", "user_id", "finding_id", "kind"])
+              .doUpdateSet({
+                condition_at: input.conditionAt,
+                dismissed_at: now,
+              }),
+          )
+          .execute();
       });
     },
   };

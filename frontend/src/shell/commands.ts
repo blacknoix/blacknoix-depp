@@ -62,6 +62,13 @@ export type OperatorCommand =
 
 const NAV_COMMANDS: readonly OperatorCommand[] = [
   {
+    id: "nav.work",
+    kind: "nav",
+    label: "Go to Work",
+    keywords: ["work", "queue", "home", "priority"],
+    to: "/work",
+  },
+  {
     id: "nav.findings",
     kind: "nav",
     label: "Go to Findings",

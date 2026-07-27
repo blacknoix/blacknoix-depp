@@ -1,8 +1,8 @@
 /**
  * Operator nav destinations.
  *
- * Findings and Agents are live. Keep this list honest — do not add destinations
- * that pretend to be implemented.
+ * Work, Findings, and Agents are live. Keep this list honest — do not add
+ * destinations that pretend to be implemented.
  */
 
 export type NavKind = "live" | "soon";
@@ -15,6 +15,7 @@ export interface NavItem {
 }
 
 export const OPERATOR_NAV: readonly NavItem[] = [
+  { id: "work", label: "Work", to: "/work", kind: "live" },
   { id: "findings", label: "Findings", to: "/findings", kind: "live" },
   { id: "agents", label: "Agents", to: "/agents", kind: "live" },
 ] as const;

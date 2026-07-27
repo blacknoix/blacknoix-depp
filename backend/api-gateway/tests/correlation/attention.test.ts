@@ -8,7 +8,10 @@ import {
   ATTENTION_ITEMS_MAX,
   ATTENTION_MAX_LOOKBACK_HOURS,
   ESCALATION_QUIET_HOURS,
+  filterDismissedAttentionItems,
+  isAttentionItemDismissed,
   parseAttentionSinceQuery,
+  parseDismissAttentionBody,
   partitionDueReminders,
   partitionOwnershipReminders,
   reminderQuietBefore,
@@ -16,6 +19,7 @@ import {
   REMINDER_OVERDUE_HOURS,
   REMINDER_QUIET_HOURS,
   resolveAttentionSince,
+  toAttentionDismissalMap,
   type AttentionItem,
 } from "../../src/correlation/attention";
 
@@ -255,5 +259,76 @@ describe("assembleActionNeeded", () => {
     assert.equal(action.truncated, true);
     assert.equal(action.overdueHours, REMINDER_OVERDUE_HOURS);
     assert.equal(action.escalationQuietHours, ESCALATION_QUIET_HOURS);
+  });
+});
+
+describe("dismiss-until-change", () => {
+  it("hides dismissed items until condition_at advances or kind changes", () => {
+    const conditionAt = new Date("2026-02-28T12:00:00.000Z");
+    const dismissed = item({
+      kind: "finding.action_needed",
+      findingId: FINDING_A,
+      at: conditionAt,
+    });
+    const advanced = item({
+      kind: "finding.action_needed",
+      findingId: FINDING_A,
+      at: new Date("2026-03-01T12:00:00.000Z"),
+    });
+    const otherKind = item({
+      kind: "finding.needs_revisit",
+      findingId: FINDING_A,
+      at: conditionAt,
+    });
+
+    const map = toAttentionDismissalMap([
+      {
+        findingId: FINDING_A,
+        kind: "finding.action_needed",
+        conditionAt,
+      },
+    ]);
+
+    assert.equal(isAttentionItemDismissed(dismissed, map), true);
+    assert.equal(isAttentionItemDismissed(advanced, map), false);
+    assert.equal(isAttentionItemDismissed(otherKind, map), false);
+    assert.deepEqual(filterDismissedAttentionItems([dismissed, advanced], map), [
+      advanced,
+    ]);
+  });
+
+  it("parses dismiss body and rejects bad kinds / identity fields", () => {
+    const ok = parseDismissAttentionBody({
+      findingId: FINDING_A,
+      kind: "finding.action_needed",
+      conditionAt: "2026-02-28T12:00:00.000Z",
+    });
+    assert.equal(ok.ok, true);
+    if (ok.ok) {
+      assert.equal(ok.dismiss.findingId, FINDING_A);
+      assert.equal(ok.dismiss.kind, "finding.action_needed");
+      assert.equal(
+        ok.dismiss.conditionAt.toISOString(),
+        "2026-02-28T12:00:00.000Z",
+      );
+    }
+
+    assert.equal(
+      parseDismissAttentionBody({
+        findingId: FINDING_A,
+        kind: "finding.created",
+        conditionAt: "2026-02-28T12:00:00.000Z",
+      }).ok,
+      false,
+    );
+    assert.equal(
+      parseDismissAttentionBody({
+        findingId: FINDING_A,
+        kind: "finding.action_needed",
+        conditionAt: "2026-02-28T12:00:00.000Z",
+        tenantId: "x",
+      }).ok,
+      false,
+    );
   });
 });

@@ -232,3 +232,22 @@ export async function fetchFindingsAttention(
     : "/v1/findings/attention";
   return apiRequest<FindingsAttentionDigest>(session, path);
 }
+
+export type DismissableAttentionKind =
+  | "finding.needs_revisit"
+  | "finding.reminder_due"
+  | "finding.action_needed";
+
+export async function dismissFindingsAttentionItem(
+  session: OperatorSession,
+  input: {
+    findingId: string;
+    kind: DismissableAttentionKind;
+    conditionAt: string;
+  },
+): Promise<{ findingId: string; kind: string; conditionAt: string }> {
+  return apiRequest(session, "/v1/findings/attention/dismiss", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}

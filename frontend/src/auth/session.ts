@@ -94,3 +94,11 @@ export function sessionFromEnv(): OperatorSession | null {
 export function resolveInitialSession(): OperatorSession | null {
   return loadSession() ?? sessionFromEnv();
 }
+
+/** True when the session can resolve ownerScope=me / Attention follow-ups. */
+export function sessionHasOperatorIdentity(session: OperatorSession): boolean {
+  if (session.kind === "bearer") {
+    return true;
+  }
+  return Boolean(session.userId);
+}

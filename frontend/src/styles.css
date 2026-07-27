@@ -731,6 +731,10 @@ select {
     grid-template-columns: 1fr;
     gap: 0.2rem;
   }
+
+  .work-analytics-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 560px) {
@@ -1108,6 +1112,38 @@ a.attention-item:hover {
 .work-section-chip.is-on {
   border-color: #9bb5b0;
   background: #eef5f4;
+}
+
+.work-analytics {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.work-analytics-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.work-analytics-metric {
+  text-align: left;
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 0.15rem 0.1rem;
+  border-radius: 8px;
+}
+
+button.work-analytics-metric.is-action {
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+button.work-analytics-metric.is-action:hover {
+  border-color: var(--line);
+  background: #f4f7fa;
+}
+
+.work-analytics-footnote {
+  margin: 0;
 }
 
 .command-bar {

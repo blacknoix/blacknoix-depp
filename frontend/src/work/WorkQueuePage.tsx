@@ -24,6 +24,7 @@ import {
   type BulkAction,
 } from "./bulkActions";
 import { useWorkQueue } from "./useWorkQueue";
+import { WorkAnalyticsStrip } from "./WorkAnalyticsStrip";
 import {
   attentionWorkQueuePath,
   findingWorkQueuePath,
@@ -146,8 +147,8 @@ function FindingRow(props: {
 
 /**
  * Daily operator entry point: prioritized queues composed from existing
- * Findings / Attention semantics. Tiny bulk claim / clear / resolve only —
- * not an inbox, mass-edit, or analytics dashboard.
+ * Findings / Attention semantics. Tiny bulk claim / clear / resolve and a
+ * compact queue-health strip — not an inbox, mass-edit, or BI dashboard.
  */
 export function WorkQueuePage() {
   const { session } = useOutletContext<WorkOutletContext>();
@@ -220,11 +221,17 @@ export function WorkQueuePage() {
       <header className="page-header">
         <h1>Work</h1>
         <p className="muted">
-          What to look at first — choose sections, save local or tenant-shared
-          Work views, then claim / clear / resolve selected findings. Detail
-          triage stays on Findings.
+          What to look at first — queue health, section focus, local or shared
+          Work views, then claim / clear / resolve. Detail triage stays on
+          Findings.
         </p>
       </header>
+
+      <WorkAnalyticsStrip
+        metrics={data.metrics}
+        loading={loading}
+        onFocusSection={(section) => writeSections([section])}
+      />
 
       <div
         className="work-queue-section-toggles"

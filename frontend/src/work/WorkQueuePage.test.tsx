@@ -263,6 +263,61 @@ describe("WorkQueuePage", () => {
     expect(
       screen.queryByRole("region", { name: /Bulk actions/i }),
     ).not.toBeInTheDocument();
+
+    const health = screen.getByRole("region", { name: /Work queue health/i });
+    expect(within(health).getByText("Action needed").closest(".metric")).toHaveTextContent(
+      "—",
+    );
+    expect(
+      within(health).queryByRole("button", { name: /Action needed/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(health).getByRole("button", { name: /Unowned open/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows queue-health counters and focuses a section on click", async () => {
+    const user = userEvent.setup();
+    stubWorkQueueFetch({
+      actionNeeded: [{ findingId: FINDING_ACTION, title: "Escalated churn" }],
+      dueReminders: [{ findingId: FINDING_DUE, title: "Due reminder" }],
+      mine: [
+        finding({
+          id: FINDING_MINE,
+          title: "My finding",
+          ownerUserId: USER,
+        }),
+      ],
+      unowned: [
+        finding({
+          id: FINDING_UNOWNED,
+          title: "Claim me",
+          createdAt: "2026-01-01T12:00:00.000Z",
+        }),
+      ],
+    });
+
+    renderWithShell({ kind: "tenant", tenantId: TENANT, userId: USER });
+
+    const health = await screen.findByRole("region", {
+      name: /Work queue health/i,
+    });
+    expect(within(health).getByRole("button", { name: /Action needed/i })).toHaveTextContent(
+      "1",
+    );
+    expect(
+      within(health).getByRole("button", { name: /Unowned ≥7d/i }),
+    ).toHaveTextContent("1");
+
+    await user.click(
+      within(health).getByRole("button", { name: /Action needed/i }),
+    );
+
+    await waitFor(() => {
+      expect(document.querySelector('[data-section="action_needed"]')).toBeTruthy();
+    });
+    expect(document.querySelector('[data-section="mine"]')).toBeNull();
+    expect(document.querySelector('[data-section="unowned_open"]')).toBeNull();
   });
 
   it("selects findings and bulk-claims, then refreshes Unowned / Mine", async () => {

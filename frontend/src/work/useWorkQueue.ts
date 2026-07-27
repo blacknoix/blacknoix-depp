@@ -27,7 +27,14 @@ import {
   type BulkAction,
   type BulkActionItemResult,
 } from "./bulkActions";
+import {
+  deriveWorkQueueMetrics,
+  type WorkQueueMetrics,
+} from "./workAnalytics";
 import { capWorkQueueItems } from "./workQueue";
+
+/** Matches frontend findings list page size used for Work sourcing. */
+const FINDINGS_LIST_PAGE_SIZE = 50;
 
 export type WorkQueuePhase = "idle" | "loading" | "ready" | "error";
 
@@ -44,6 +51,7 @@ export interface WorkQueueData {
     FindingsAttentionDigest,
     "actionNeeded" | "dueReminders" | "reminders"
   > | null;
+  metrics: WorkQueueMetrics;
 }
 
 function errorMessage(err: unknown): string {
@@ -66,6 +74,11 @@ function isDismissableKind(
   );
 }
 
+const emptyMetrics: WorkQueueMetrics = {
+  metrics: [],
+  generatedAt: null,
+};
+
 const emptyData: WorkQueueData = {
   actionNeeded: [],
   actionNeededTruncated: false,
@@ -76,6 +89,7 @@ const emptyData: WorkQueueData = {
   unownedOpen: [],
   unownedOpenTruncated: false,
   attentionMeta: null,
+  metrics: emptyMetrics,
 };
 
 export function useWorkQueue(session: OperatorSession) {
@@ -120,6 +134,18 @@ export function useWorkQueue(session: OperatorSession) {
       const mineCapped = capWorkQueueItems(mine);
       const unownedCapped = capWorkQueueItems(unownedOpen);
 
+      const metrics = deriveWorkQueueMetrics({
+        hasIdentity,
+        actionNeeded: hasIdentity ? attention.actionNeeded : null,
+        dueReminders: hasIdentity ? attention.dueReminders : null,
+        reminders: hasIdentity ? attention.reminders : null,
+        mine: hasIdentity ? mine : [],
+        minePageFull: hasIdentity && mine.length >= FINDINGS_LIST_PAGE_SIZE,
+        unownedOpen,
+        unownedPageFull: unownedOpen.length >= FINDINGS_LIST_PAGE_SIZE,
+        generatedAt: attention.generatedAt,
+      });
+
       const nextData: WorkQueueData = {
         actionNeeded: actionCapped.items,
         actionNeededTruncated:
@@ -136,6 +162,7 @@ export function useWorkQueue(session: OperatorSession) {
           dueReminders: attention.dueReminders,
           reminders: attention.reminders,
         },
+        metrics,
       };
 
       setData(nextData);

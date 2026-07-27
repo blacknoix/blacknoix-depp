@@ -2,8 +2,8 @@
  * Work queue page — composition of existing Findings / Attention semantics.
  *
  * Not an inbox, analytics dashboard, SLA board, or case-management product.
- * Deferred: live updates, Findings-list multi-select, charts, queue balancing,
- * generic mass-edit, folders/tagging for Work views.
+ * Deferred: live updates, Findings-list multi-select, charts-heavy dashboards,
+ * queue balancing, generic mass-edit, folders/tagging for Work views, exports.
  */
 
 import type { AttentionItem } from "../api/findings";

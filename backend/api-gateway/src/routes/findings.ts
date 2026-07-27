@@ -206,9 +206,10 @@ export function createFindingsRouter(
 
   /**
    * GET /v1/findings/attention — operator pull-based attention digest plus
-   * derived ownership reminders (quiet owned open/acknowledged findings).
+   * soft ownership reminders, soft due reminders, and Action needed
+   * escalation (overdue explicit reminders / long-quiet owned findings).
    * Optional `since` (ISO). Max lookback 24h. Agents rejected.
-   * Not a notification inbox, SLA engine, or live stream.
+   * Not a notification inbox, delivery channel, SLA engine, or live stream.
    */
   router.get(
     "/attention",
@@ -270,6 +271,20 @@ export function createFindingsRouter(
             dueReminders: {
               truncated: digest.dueReminders.truncated,
               items: digest.dueReminders.items.map((item) => ({
+                kind: item.kind,
+                findingId: item.findingId,
+                title: item.title,
+                status: item.status,
+                ruleId: item.ruleId,
+                agentId: item.agentId,
+                at: item.at.toISOString(),
+              })),
+            },
+            actionNeeded: {
+              overdueHours: digest.actionNeeded.overdueHours,
+              escalationQuietHours: digest.actionNeeded.escalationQuietHours,
+              truncated: digest.actionNeeded.truncated,
+              items: digest.actionNeeded.items.map((item) => ({
                 kind: item.kind,
                 findingId: item.findingId,
                 title: item.title,

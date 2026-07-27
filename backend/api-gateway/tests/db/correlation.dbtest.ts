@@ -294,6 +294,12 @@ describe("post-ingest correlation evaluation", () => {
             items: [],
             truncated: false,
           },
+          actionNeeded: {
+            overdueHours: 4,
+            escalationQuietHours: 48,
+            items: [],
+            truncated: false,
+          },
         }),
       },
     });
@@ -713,6 +719,7 @@ describe("findings lifecycle triage", () => {
     assert.equal(due.dueReminders.items.length, 1);
     assert.equal(due.dueReminders.items[0].kind, "finding.reminder_due");
     assert.equal(due.dueReminders.items[0].findingId, id);
+    assert.equal(due.actionNeeded.items.length, 0);
 
     const cleared = await dueClock.patchFinding(
       tenantA,
@@ -905,6 +912,91 @@ describe("findings lifecycle triage", () => {
     if (!notFuture.ok) {
       assert.equal(notFuture.reason, "rejected");
     }
+  });
+
+  it("escalates overdue reminders and long-quiet owned findings into Action needed exclusively", async () => {
+    const userId = "22222222-2222-4222-8222-222222222222";
+    const overdueFinding = await seedOpenFinding();
+    const longQuietFinding = await seedOpenFinding(
+      new Date("2026-02-26T12:00:00.000Z"),
+    );
+
+    const claimClock = correlationFor(fixedNow("2026-02-26T12:00:00.000Z"));
+    assert.equal(
+      (
+        await claimClock.patchFinding(
+          tenantA,
+          overdueFinding,
+          { claimOwner: true },
+          { userId },
+        )
+      ).ok,
+      true,
+    );
+    assert.equal(
+      (
+        await claimClock.patchFinding(
+          tenantA,
+          longQuietFinding,
+          { claimOwner: true },
+          { userId },
+        )
+      ).ok,
+      true,
+    );
+
+    // Reminder set far enough in the past relative to evaluation clock to be overdue (≥4h).
+    const setReminderClock = correlationFor(
+      fixedNow("2026-03-01T06:00:00.000Z"),
+    );
+    assert.equal(
+      (
+        await setReminderClock.patchFinding(
+          tenantA,
+          overdueFinding,
+          { remindAt: new Date("2026-03-01T07:00:00.000Z") },
+          { userId },
+        )
+      ).ok,
+      true,
+    );
+
+    await withTenantTransaction(db.app, tenantA, async (trx) => {
+      await sql`
+        update correlation_findings
+        set created_at = ${new Date("2026-02-26T12:00:00.000Z")},
+            owner_changed_at = ${new Date("2026-02-26T12:00:00.000Z")}
+        where id = ${longQuietFinding}
+      `.execute(trx);
+    });
+
+    const evalClock = correlationFor(fixedNow("2026-03-01T12:00:00.000Z"));
+    const digest = await evalClock.attention(
+      tenantA,
+      new Date("2026-03-01T00:00:00.000Z"),
+      { userId },
+    );
+
+    assert.equal(digest.dueReminders.items.length, 0);
+    assert.ok(
+      digest.actionNeeded.items.some(
+        (item) =>
+          item.findingId === overdueFinding &&
+          item.kind === "finding.action_needed",
+      ),
+    );
+    assert.ok(
+      digest.actionNeeded.items.some(
+        (item) =>
+          item.findingId === longQuietFinding &&
+          item.kind === "finding.action_needed",
+      ),
+    );
+    assert.ok(
+      !digest.reminders.items.some((item) => item.findingId === longQuietFinding),
+    );
+    assert.equal(digest.actionNeeded.overdueHours, 4);
+    assert.equal(digest.actionNeeded.escalationQuietHours, 48);
   });
 
   it("lists findings by ownerScope me and none", async () => {
@@ -1383,6 +1475,7 @@ describe("findings attention digest (real database)", () => {
     assert.equal(digest.reminders.items[0].kind, "finding.needs_revisit");
     assert.equal(digest.reminders.items[0].findingId, quietOwned);
     assert.equal(digest.reminders.items[0].title, "Quiet owned");
+    assert.equal(digest.actionNeeded.items.length, 0);
 
     assert.equal(
       (

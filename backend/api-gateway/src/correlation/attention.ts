@@ -1,12 +1,14 @@
 /**
  * Operator attention digest — pull-based “what changed since X”, plus
- * derived ownership reminders for quiet owned findings.
+ * derived ownership reminders, explicit due reminders, and a narrow
+ * Action needed escalation tier.
  *
- * Derived from correlation_findings only. Not a notification store, inbox,
- * rules engine, SLA engine, or real-time channel.
+ * Derived at read time from correlation_findings / revisit reminders.
+ * Not a notification store, inbox, rules engine, SLA engine, delivery
+ * channel, or real-time push system.
  *
- * Deferred: push/email/Slack, preferences, severity scoring, scheduled
- * reminder rules, escalations, live updates.
+ * Deferred: email/Slack, websockets/SSE, preferences, severity scoring,
+ * scheduled reminder rule configuration, full inbox, live updates.
  */
 
 import type { FindingStatus } from "./lifecycle";
@@ -22,18 +24,34 @@ export const ATTENTION_SOURCE_FETCH_LIMIT = 20;
 
 /**
  * Owned findings whose last investigation touch is older than this are
- * surfaced as needs-revisit reminders. Fixed product constant — not an SLA.
+ * surfaced as soft needs-revisit reminders. Fixed product constant — not an SLA.
  */
 export const REMINDER_QUIET_HOURS = 24;
 
+/**
+ * Owned findings quiet at least this long escalate into Action needed
+ * (exclusive of the soft Needs revisit band).
+ */
+export const ESCALATION_QUIET_HOURS = 48;
+
+/**
+ * Explicit reminders whose remind_at is at least this far past due escalate
+ * into Action needed (exclusive of the soft Reminders due band).
+ */
+export const REMINDER_OVERDUE_HOURS = 4;
+
 /** Cap on derived ownership reminders (oldest quiet first). */
 export const REMINDER_ITEMS_MAX = 20;
+
+/** Cap on Action needed escalation items. */
+export const ACTION_NEEDED_ITEMS_MAX = 20;
 
 export type AttentionKind =
   | "finding.created"
   | "finding.status_changed"
   | "finding.needs_revisit"
-  | "finding.reminder_due";
+  | "finding.reminder_due"
+  | "finding.action_needed";
 
 export interface AttentionItem {
   kind: AttentionKind;
@@ -42,7 +60,7 @@ export interface AttentionItem {
   status: FindingStatus;
   ruleId: string;
   agentId: string;
-  /** Event time: created_at, status_changed_at, or last touch for reminders. */
+  /** Event time: created_at, status_changed_at, last touch, or remind_at. */
   at: Date;
 }
 
@@ -52,8 +70,19 @@ export interface OwnershipReminders {
   truncated: boolean;
 }
 
-/** Explicit operator-deferred reminders due “now” or earlier. */
+/** Explicit operator-deferred reminders due “now” or earlier (not yet overdue). */
 export interface DueReminders {
+  items: AttentionItem[];
+  truncated: boolean;
+}
+
+/**
+ * Escalated in-product follow-ups: overdue explicit reminders and/or
+ * long-quiet owned findings. Exclusive of soft Needs revisit / Reminders due.
+ */
+export interface ActionNeeded {
+  overdueHours: number;
+  escalationQuietHours: number;
   items: AttentionItem[];
   truncated: boolean;
 }
@@ -66,10 +95,12 @@ export interface FindingsAttentionDigest {
   activeSuppressionCount: number;
   items: AttentionItem[];
   truncated: boolean;
-  /** Derived ownership follow-ups; empty when operator identity is absent. */
+  /** Soft derived ownership follow-ups; empty when operator identity is absent. */
   reminders: OwnershipReminders;
-  /** Due explicit operator revisit reminders; empty when identity is absent. */
+  /** Soft due explicit reminders; empty when identity is absent. */
   dueReminders: DueReminders;
+  /** Escalated action items; empty when identity is absent. */
+  actionNeeded: ActionNeeded;
 }
 
 export interface AttentionRawSources {
@@ -162,7 +193,7 @@ function readSingle(value: unknown): string | undefined {
 /**
  * Merges created + status-changed streams newest-first, capped.
  * Same finding may appear twice with different kinds (honest dual events).
- * Ownership reminders are assembled separately — not mixed into this feed.
+ * Ownership / due / action-needed streams are assembled separately.
  */
 export function assembleAttentionDigest(
   generatedAt: Date,
@@ -170,6 +201,7 @@ export function assembleAttentionDigest(
   raw: AttentionRawSources,
   reminders: OwnershipReminders = emptyOwnershipReminders(),
   dueReminders: DueReminders = emptyDueReminders(),
+  actionNeeded: ActionNeeded = emptyActionNeeded(),
 ): FindingsAttentionDigest {
   const merged = [...raw.created, ...raw.statusChanged].sort(
     (a, b) => b.at.getTime() - a.at.getTime(),
@@ -186,6 +218,7 @@ export function assembleAttentionDigest(
     truncated,
     reminders,
     dueReminders,
+    actionNeeded,
   };
 }
 
@@ -204,6 +237,15 @@ export function emptyDueReminders(): DueReminders {
   };
 }
 
+export function emptyActionNeeded(): ActionNeeded {
+  return {
+    overdueHours: REMINDER_OVERDUE_HOURS,
+    escalationQuietHours: ESCALATION_QUIET_HOURS,
+    items: [],
+    truncated: false,
+  };
+}
+
 /**
  * Caps derived ownership reminders. Oldest quiet first is the caller’s order.
  */
@@ -216,6 +258,66 @@ export function assembleOwnershipReminders(
     items: items.slice(0, REMINDER_ITEMS_MAX),
     truncated: sourceHitLimit || items.length > REMINDER_ITEMS_MAX,
   };
+}
+
+/**
+ * Caps Action needed items. Caller should pass overdue-first, then long-quiet.
+ */
+export function assembleActionNeeded(
+  items: AttentionItem[],
+  sourceHitLimit: boolean,
+): ActionNeeded {
+  return {
+    overdueHours: REMINDER_OVERDUE_HOURS,
+    escalationQuietHours: ESCALATION_QUIET_HOURS,
+    items: items.slice(0, ACTION_NEEDED_ITEMS_MAX),
+    truncated: sourceHitLimit || items.length > ACTION_NEEDED_ITEMS_MAX,
+  };
+}
+
+/**
+ * Partitions soft due reminders vs overdue escalation candidates.
+ * `at` is remind_at. Items with at <= overdueBefore escalate.
+ */
+export function partitionDueReminders(
+  dueRows: AttentionItem[],
+  overdueBefore: Date,
+): { softDue: AttentionItem[]; overdue: AttentionItem[] } {
+  const softDue: AttentionItem[] = [];
+  const overdue: AttentionItem[] = [];
+  for (const row of dueRows) {
+    if (row.at.getTime() <= overdueBefore.getTime()) {
+      overdue.push({ ...row, kind: "finding.action_needed" });
+    } else {
+      softDue.push({ ...row, kind: "finding.reminder_due" });
+    }
+  }
+  return { softDue, overdue };
+}
+
+/**
+ * Partitions soft Needs revisit vs long-quiet escalation candidates.
+ * `at` is last touch. Items with at <= escalationQuietBefore escalate.
+ * `excludeFindingIds` drops findings already escalated via overdue reminder.
+ */
+export function partitionOwnershipReminders(
+  quietRows: AttentionItem[],
+  escalationQuietBefore: Date,
+  excludeFindingIds: ReadonlySet<string> = new Set(),
+): { softQuiet: AttentionItem[]; escalatedQuiet: AttentionItem[] } {
+  const softQuiet: AttentionItem[] = [];
+  const escalatedQuiet: AttentionItem[] = [];
+  for (const row of quietRows) {
+    if (excludeFindingIds.has(row.findingId)) {
+      continue;
+    }
+    if (row.at.getTime() <= escalationQuietBefore.getTime()) {
+      escalatedQuiet.push({ ...row, kind: "finding.action_needed" });
+    } else {
+      softQuiet.push({ ...row, kind: "finding.needs_revisit" });
+    }
+  }
+  return { softQuiet, escalatedQuiet };
 }
 
 /** Quiet-before cutoff for ownership reminders at `generatedAt`. */

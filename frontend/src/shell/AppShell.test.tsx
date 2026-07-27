@@ -32,7 +32,8 @@ function stubOperatorShellFetch(opts?: {
       | "finding.created"
       | "finding.status_changed"
       | "finding.needs_revisit"
-      | "finding.reminder_due";
+      | "finding.reminder_due"
+      | "finding.action_needed";
     findingId: string;
     title: string;
     status: string;
@@ -58,6 +59,15 @@ function stubOperatorShellFetch(opts?: {
     agentId: string;
     at: string;
   }>;
+  actionNeededItems?: Array<{
+    kind: "finding.action_needed";
+    findingId: string;
+    title: string;
+    status: string;
+    ruleId: string;
+    agentId: string;
+    at: string;
+  }>;
   agents?: Array<{
     id: string;
     name: string;
@@ -70,6 +80,7 @@ function stubOperatorShellFetch(opts?: {
   const items = opts?.attentionItems ?? [];
   const reminders = opts?.reminderItems ?? [];
   const dueReminders = opts?.dueItems ?? [];
+  const actionNeeded = opts?.actionNeededItems ?? [];
   const agents = opts?.agents ?? [];
   vi.stubGlobal(
     "fetch",
@@ -92,6 +103,12 @@ function stubOperatorShellFetch(opts?: {
           dueReminders: {
             truncated: false,
             items: dueReminders,
+          },
+          actionNeeded: {
+            overdueHours: 4,
+            escalationQuietHours: 48,
+            truncated: false,
+            items: actionNeeded,
           },
         });
       }
@@ -500,6 +517,73 @@ describe("OperatorShell", () => {
     );
   });
 
+  it("opens Action needed escalation into Mine Findings context", async () => {
+    const user = userEvent.setup();
+    const USER = "22222222-2222-4222-8222-222222222222";
+    stubOperatorShellFetch({
+      actionNeededItems: [
+        {
+          kind: "finding.action_needed",
+          findingId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+          title: "Overdue revisit",
+          status: "open",
+          ruleId: "agent.lifecycle_churn",
+          agentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          at: "2026-02-27T10:00:00.000Z",
+        },
+      ],
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/agents"]}>
+        <Routes>
+          <Route
+            element={
+              <OperatorShell
+                session={{
+                  kind: "tenant",
+                  tenantId: TENANT,
+                  userId: USER,
+                }}
+                onSignOut={() => undefined}
+              />
+            }
+          >
+            <Route
+              path="findings"
+              element={
+                <>
+                  <div>Findings page</div>
+                  <LocationProbe />
+                </>
+              }
+            />
+            <Route path="agents" element={<div>Agents page</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Attention/i })).toHaveTextContent(
+        "1",
+      );
+    });
+
+    await user.click(screen.getByRole("button", { name: /Attention/i }));
+    expect(
+      screen.getByRole("heading", { name: /^Action needed$/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /Overdue revisit/i }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("link", { name: /Overdue revisit/i }));
+    expect(screen.getByTestId("location-probe")).toHaveTextContent(
+      "/findings?ownerScope=me&findingId=eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+    );
+  });
+
   it("keeps shell structure present on a narrow viewport", async () => {
     stubOperatorShellFetch();
     Object.defineProperty(window, "innerWidth", {
@@ -627,6 +711,12 @@ describe("App routing + auth gate", () => {
                   items: [],
                 },
                 dueReminders: {
+                  truncated: false,
+                  items: [],
+                },
+                actionNeeded: {
+                  overdueHours: 4,
+                  escalationQuietHours: 48,
                   truncated: false,
                   items: [],
                 },

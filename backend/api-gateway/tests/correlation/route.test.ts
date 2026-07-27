@@ -74,6 +74,12 @@ function stubCorrelation(
         items: [],
         truncated: false,
       },
+      actionNeeded: {
+        overdueHours: 4,
+        escalationQuietHours: 48,
+        items: [],
+        truncated: false,
+      },
     }),
     ...overrides,
   };
@@ -352,6 +358,12 @@ describe("GET /v1/findings/attention", () => {
                 truncated: false,
                 items: [],
               },
+              actionNeeded: {
+                overdueHours: 4,
+                escalationQuietHours: 48,
+                truncated: false,
+                items: [],
+              },
             };
           },
         }),
@@ -385,6 +397,9 @@ describe("GET /v1/findings/attention", () => {
           body.data.reminders.items[0].kind,
           "finding.needs_revisit",
         );
+        assert.equal(body.data.actionNeeded.overdueHours, 4);
+        assert.equal(body.data.actionNeeded.escalationQuietHours, 48);
+        assert.equal(body.data.actionNeeded.items.length, 0);
       },
     );
   });

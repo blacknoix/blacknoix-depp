@@ -1,12 +1,19 @@
 import { logLifecycle } from "../lib/log";
 import type { TelemetryRepository } from "../telemetry/repository";
 import {
+  ACTION_NEEDED_ITEMS_MAX,
+  assembleActionNeeded,
   assembleAttentionDigest,
   assembleOwnershipReminders,
   ATTENTION_SOURCE_FETCH_LIMIT,
-  emptyOwnershipReminders,
+  emptyActionNeeded,
   emptyDueReminders,
+  emptyOwnershipReminders,
+  ESCALATION_QUIET_HOURS,
+  partitionDueReminders,
+  partitionOwnershipReminders,
   REMINDER_ITEMS_MAX,
+  REMINDER_OVERDUE_HOURS,
   reminderQuietBefore,
   resolveAttentionSince,
   type FindingsAttentionDigest,
@@ -624,29 +631,69 @@ export function createCorrelationService(
 
       let reminders = emptyOwnershipReminders();
       let dueReminders = emptyDueReminders();
+      let actionNeeded = emptyActionNeeded();
       const ownerUserId = actor?.userId?.trim().toLowerCase();
       if (ownerUserId) {
         const quietBefore = reminderQuietBefore(generatedAt);
+        const escalationQuietBefore = reminderQuietBefore(
+          generatedAt,
+          ESCALATION_QUIET_HOURS,
+        );
+        const overdueBefore = reminderQuietBefore(
+          generatedAt,
+          REMINDER_OVERDUE_HOURS,
+        );
+        // Fetch enough for soft + escalated bands (oldest-first sources).
+        const followUpFetchLimit =
+          REMINDER_ITEMS_MAX + ACTION_NEEDED_ITEMS_MAX;
+
         const reminderRows = await findings.listOwnershipReminders(
           tenantId,
           ownerUserId,
           quietBefore,
-          REMINDER_ITEMS_MAX,
+          followUpFetchLimit,
         );
-        reminders = assembleOwnershipReminders(
-          reminderRows,
-          reminderRows.length >= REMINDER_ITEMS_MAX,
-        );
-
         const dueRows = await findings.listDueExplicitRevisitReminders(
           tenantId,
           ownerUserId,
           generatedAt,
-          REMINDER_ITEMS_MAX,
+          followUpFetchLimit,
+        );
+
+        const { softDue, overdue } = partitionDueReminders(
+          dueRows,
+          overdueBefore,
+        );
+        const overdueIds = new Set(overdue.map((item) => item.findingId));
+        const { softQuiet, escalatedQuiet } = partitionOwnershipReminders(
+          reminderRows,
+          escalationQuietBefore,
+          overdueIds,
+        );
+        const actionFindingIds = new Set([
+          ...overdueIds,
+          ...escalatedQuiet.map((item) => item.findingId),
+        ]);
+        const softDueExclusive = softDue.filter(
+          (item) => !actionFindingIds.has(item.findingId),
+        );
+
+        const followUpTruncated =
+          reminderRows.length >= followUpFetchLimit ||
+          dueRows.length >= followUpFetchLimit;
+        actionNeeded = assembleActionNeeded(
+          [...overdue, ...escalatedQuiet],
+          followUpTruncated,
+        );
+        reminders = assembleOwnershipReminders(
+          softQuiet,
+          reminderRows.length >= followUpFetchLimit,
         );
         dueReminders = {
-          items: dueRows,
-          truncated: dueRows.length >= REMINDER_ITEMS_MAX,
+          items: softDueExclusive.slice(0, REMINDER_ITEMS_MAX),
+          truncated:
+            dueRows.length >= followUpFetchLimit ||
+            softDueExclusive.length > REMINDER_ITEMS_MAX,
         };
       }
 
@@ -661,6 +708,7 @@ export function createCorrelationService(
         },
         reminders,
         dueReminders,
+        actionNeeded,
       );
     },
 

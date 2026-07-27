@@ -2,13 +2,18 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  assembleActionNeeded,
   assembleAttentionDigest,
   assembleOwnershipReminders,
   ATTENTION_ITEMS_MAX,
   ATTENTION_MAX_LOOKBACK_HOURS,
+  ESCALATION_QUIET_HOURS,
   parseAttentionSinceQuery,
+  partitionDueReminders,
+  partitionOwnershipReminders,
   reminderQuietBefore,
   REMINDER_ITEMS_MAX,
+  REMINDER_OVERDUE_HOURS,
   REMINDER_QUIET_HOURS,
   resolveAttentionSince,
   type AttentionItem,
@@ -112,6 +117,13 @@ describe("assembleAttentionDigest", () => {
     assert.equal(digest.maxLookbackHours, ATTENTION_MAX_LOOKBACK_HOURS);
     assert.equal(digest.reminders.items.length, 0);
     assert.equal(digest.reminders.quietHours, 24);
+    assert.equal(digest.dueReminders.items.length, 0);
+    assert.equal(digest.actionNeeded.items.length, 0);
+    assert.equal(digest.actionNeeded.overdueHours, REMINDER_OVERDUE_HOURS);
+    assert.equal(
+      digest.actionNeeded.escalationQuietHours,
+      ESCALATION_QUIET_HOURS,
+    );
   });
 
   it("marks truncated when over the item cap", () => {
@@ -166,5 +178,82 @@ describe("reminderQuietBefore", () => {
       reminderQuietBefore(generatedAt).toISOString(),
       "2026-02-28T12:00:00.000Z",
     );
+  });
+});
+
+describe("partitionDueReminders", () => {
+  it("splits soft due from overdue escalation without duplicates", () => {
+    const overdueBefore = new Date("2026-03-01T08:00:00.000Z");
+    const soft = item({
+      kind: "finding.reminder_due",
+      findingId: FINDING_A,
+      at: new Date("2026-03-01T10:00:00.000Z"),
+    });
+    const overdue = item({
+      kind: "finding.reminder_due",
+      findingId: FINDING_B,
+      at: new Date("2026-03-01T06:00:00.000Z"),
+    });
+
+    const partitioned = partitionDueReminders([soft, overdue], overdueBefore);
+    assert.equal(partitioned.softDue.length, 1);
+    assert.equal(partitioned.softDue[0].findingId, FINDING_A);
+    assert.equal(partitioned.softDue[0].kind, "finding.reminder_due");
+    assert.equal(partitioned.overdue.length, 1);
+    assert.equal(partitioned.overdue[0].findingId, FINDING_B);
+    assert.equal(partitioned.overdue[0].kind, "finding.action_needed");
+  });
+});
+
+describe("partitionOwnershipReminders", () => {
+  it("splits soft quiet from long-quiet escalation and respects excludes", () => {
+    const escalationBefore = new Date("2026-02-27T12:00:00.000Z");
+    const soft = item({
+      kind: "finding.needs_revisit",
+      findingId: FINDING_A,
+      at: new Date("2026-02-28T12:00:00.000Z"),
+    });
+    const escalated = item({
+      kind: "finding.needs_revisit",
+      findingId: FINDING_B,
+      at: new Date("2026-02-26T12:00:00.000Z"),
+    });
+    const alreadyOverdue = item({
+      kind: "finding.needs_revisit",
+      findingId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      at: new Date("2026-02-25T12:00:00.000Z"),
+    });
+
+    const partitioned = partitionOwnershipReminders(
+      [soft, escalated, alreadyOverdue],
+      escalationBefore,
+      new Set([alreadyOverdue.findingId]),
+    );
+    assert.equal(partitioned.softQuiet.length, 1);
+    assert.equal(partitioned.softQuiet[0].findingId, FINDING_A);
+    assert.equal(partitioned.softQuiet[0].kind, "finding.needs_revisit");
+    assert.equal(partitioned.escalatedQuiet.length, 1);
+    assert.equal(partitioned.escalatedQuiet[0].findingId, FINDING_B);
+    assert.equal(partitioned.escalatedQuiet[0].kind, "finding.action_needed");
+  });
+});
+
+describe("assembleActionNeeded", () => {
+  it("caps items and preserves escalation constants", () => {
+    const items: AttentionItem[] = [];
+    for (let i = 0; i < 21; i += 1) {
+      items.push(
+        item({
+          kind: "finding.action_needed",
+          findingId: `dddddddd-dddd-4ddd-8ddd-${String(i).padStart(12, "0")}`,
+          at: new Date(`2026-02-28T${String(10 + (i % 10)).padStart(2, "0")}:00:00.000Z`),
+        }),
+      );
+    }
+    const action = assembleActionNeeded(items, false);
+    assert.equal(action.items.length, 20);
+    assert.equal(action.truncated, true);
+    assert.equal(action.overdueHours, REMINDER_OVERDUE_HOURS);
+    assert.equal(action.escalationQuietHours, ESCALATION_QUIET_HOURS);
   });
 });

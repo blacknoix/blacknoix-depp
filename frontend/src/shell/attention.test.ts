@@ -113,4 +113,21 @@ describe("attentionItemPath", () => {
     );
     expect(attentionKindLabel("finding.reminder_due")).toBe("Reminder due");
   });
+
+  it("routes Action needed escalation into Mine with finding selection", () => {
+    const item: AttentionItem = {
+      kind: "finding.action_needed",
+      findingId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      title: "Overdue owned finding",
+      status: "open",
+      ruleId: "agent.heartbeat_silence",
+      agentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      at: "2026-02-27T12:00:00.000Z",
+    };
+
+    expect(attentionItemPath(item)).toBe(
+      "/findings?ownerScope=me&findingId=dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    );
+    expect(attentionKindLabel("finding.action_needed")).toBe("Action needed");
+  });
 });

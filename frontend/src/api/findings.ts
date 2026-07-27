@@ -174,7 +174,8 @@ export type AttentionKind =
   | "finding.created"
   | "finding.status_changed"
   | "finding.needs_revisit"
-  | "finding.reminder_due";
+  | "finding.reminder_due"
+  | "finding.action_needed";
 
 export interface AttentionItem {
   kind: AttentionKind;
@@ -197,6 +198,13 @@ export interface DueReminders {
   items: AttentionItem[];
 }
 
+export interface ActionNeeded {
+  overdueHours: number;
+  escalationQuietHours: number;
+  truncated: boolean;
+  items: AttentionItem[];
+}
+
 export interface FindingsAttentionDigest {
   generatedAt: string;
   since: string;
@@ -207,6 +215,7 @@ export interface FindingsAttentionDigest {
   items: AttentionItem[];
   reminders: OwnershipReminders;
   dueReminders: DueReminders;
+  actionNeeded: ActionNeeded;
 }
 
 export async function fetchFindingsAttention(

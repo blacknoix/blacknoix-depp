@@ -80,7 +80,7 @@ function AttentionItemRow({
 
 /**
  * Compact shell attention digest — pull on open, no live stream.
- * Includes derived ownership reminders when operator identity is present.
+ * Soft ownership / due reminders plus exclusive Action needed escalation.
  */
 export function AttentionPanel({ session }: Props) {
   const panelId = useId();
@@ -143,8 +143,11 @@ export function AttentionPanel({ session }: Props) {
   const changeCount = digest?.items.length ?? 0;
   const reminderCount = digest?.reminders.items.length ?? 0;
   const dueReminderCount = digest?.dueReminders.items.length ?? 0;
-  const count = changeCount + reminderCount + dueReminderCount;
+  const actionNeededCount = digest?.actionNeeded.items.length ?? 0;
+  const count =
+    changeCount + reminderCount + dueReminderCount + actionNeededCount;
   const badge = count === 0 ? null : count > 9 ? "9+" : String(count);
+  const badgeUrgent = actionNeededCount > 0;
 
   function onMarkCaughtUp() {
     if (!digest) {
@@ -156,7 +159,7 @@ export function AttentionPanel({ session }: Props) {
       return;
     }
     setMessage(
-      "Marked change feed caught up for this browser. Reminders stay until the finding is touched/resolved or the operator clears them.",
+      "Marked change feed caught up for this browser. Soft reminders and Action needed stay until the finding is touched/resolved or the operator clears them.",
     );
     void load();
   }
@@ -176,7 +179,18 @@ export function AttentionPanel({ session }: Props) {
       >
         Attention
         {badge ? (
-          <span className="attention-badge" aria-label={`${count} items`}>
+          <span
+            className={
+              badgeUrgent
+                ? "attention-badge is-urgent"
+                : "attention-badge"
+            }
+            aria-label={
+              badgeUrgent
+                ? `${count} items, ${actionNeededCount} need action`
+                : `${count} items`
+            }
+          >
             {badge}
           </span>
         ) : null}
@@ -193,9 +207,11 @@ export function AttentionPanel({ session }: Props) {
             <div>
               <h2>Attention</h2>
               <p className="muted tiny">
-                Recent findings changes (max {digest?.maxLookbackHours ?? 24}h)
-                and owned findings quiet for{" "}
-                {digest?.reminders.quietHours ?? 24}h. Pull-based — not live.
+                Recent changes (max {digest?.maxLookbackHours ?? 24}h), soft
+                follow-ups, and Action needed escalation (overdue reminders ≥
+                {digest?.actionNeeded.overdueHours ?? 4}h / quiet ≥{" "}
+                {digest?.actionNeeded.escalationQuietHours ?? 48}h). Pull-based
+                — not live.
               </p>
             </div>
             <div className="attention-actions">
@@ -225,7 +241,8 @@ export function AttentionPanel({ session }: Props) {
               Active snoozes: {digest.activeSuppressionCount}
               {digest.truncated ||
               digest.reminders.truncated ||
-              digest.dueReminders.truncated
+              digest.dueReminders.truncated ||
+              digest.actionNeeded.truncated
                 ? " · Showing latest only"
                 : ""}
             </p>
@@ -247,6 +264,29 @@ export function AttentionPanel({ session }: Props) {
               Loading…
             </p>
           ) : null}
+
+          <section className="attention-section" aria-label="Action needed">
+            <h3 className="attention-section-title">Action needed</h3>
+            {!hasIdentity ? (
+              <p className="muted tiny" role="status">
+                Operator identity is required for Action needed escalation.
+              </p>
+            ) : null}
+            {hasIdentity && digest && digest.actionNeeded.items.length === 0 ? (
+              <p className="muted tiny" role="status">
+                No overdue reminders or long-quiet owned findings.
+              </p>
+            ) : null}
+            {digest && digest.actionNeeded.items.length > 0 ? (
+              <ul className="attention-list">
+                {digest.actionNeeded.items.map((item) => (
+                  <li key={`${item.kind}:${item.findingId}:${item.at}`}>
+                    <AttentionItemRow item={item} onNavigate={closePanel} />
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </section>
 
           <section className="attention-section" aria-label="Recent changes">
             <h3 className="attention-section-title">Recent changes</h3>
@@ -276,8 +316,10 @@ export function AttentionPanel({ session }: Props) {
             ) : null}
             {hasIdentity && digest && digest.reminders.items.length === 0 ? (
               <p className="muted tiny" role="status">
-                No owned open or acknowledged findings have been quiet for{" "}
-                {digest.reminders.quietHours}h.
+                No soft ownership nudges (quiet{" "}
+                {digest.reminders.quietHours}–
+                {digest.actionNeeded.escalationQuietHours}h). Longer quiet
+                items move to Action needed.
               </p>
             ) : null}
             {digest && digest.reminders.items.length > 0 ? (
@@ -300,7 +342,8 @@ export function AttentionPanel({ session }: Props) {
             ) : null}
             {hasIdentity && digest && digest.dueReminders.items.length === 0 ? (
               <p className="muted tiny" role="status">
-                No explicit revisit reminders are due.
+                No soft due reminders. Reminders overdue ≥{" "}
+                {digest.actionNeeded.overdueHours}h move to Action needed.
               </p>
             ) : null}
             {digest && digest.dueReminders.items.length > 0 ? (

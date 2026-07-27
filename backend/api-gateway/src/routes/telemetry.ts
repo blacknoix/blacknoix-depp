@@ -1,116 +1,208 @@
-import { Router, Response } from 'express';
-import { authenticateAgent } from '../middleware/authenticateAgent';
-import { validateTelemetryEventContract } from '../lib/telemetryContract';
-import { ingestTelemetryBatch } from '../services/telemetryService';
+import { type NextFunction, type Request, type Response, Router } from "express";
+
+import { logLifecycle } from "../lib/log";
+import { AppError } from "../middleware/error-handler";
+import { requirePrincipal } from "../middleware/tenant-context";
 import {
-  AgentAuthenticatedRequest,
-  TelemetryEventInput,
-  VALID_SEVERITIES,
-} from '../types/telemetry';
+  parseTelemetryBatchV1,
+  parseTelemetryEventV1,
+} from "../telemetry/contract";
+import type { TelemetryService } from "../telemetry/service";
 
-export const telemetryRouter = Router();
+export interface TelemetryRouterOptions {
+  /**
+   * Ingest path. When absent, the route fails closed rather than accepting
+   * events that cannot be persisted.
+   */
+  telemetryService?: TelemetryService;
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+  /**
+   * Max events accepted by POST /events/batch. Defaults to 50 when omitted.
+   * Validated at startup when loaded from env.
+   */
+  batchMaxEvents?: number;
 }
 
-function isValidIsoDatetime(value: string): boolean {
-  const parsed = new Date(value);
-  return !Number.isNaN(parsed.getTime());
-}
-
-function validateEvents(
-  body: unknown
-): { ok: true; events: TelemetryEventInput[] } | { ok: false; details: string[] } {
-  if (!Array.isArray(body)) {
-    return { ok: false, details: ['Request body must be a JSON array'] };
-  }
-
-  if (body.length < 1 || body.length > 100) {
-    return { ok: false, details: ['Batch must contain between 1 and 100 events'] };
-  }
-
-  const details: string[] = [];
-
-  const events: TelemetryEventInput[] = body.map((item, index) => {
-    const prefix = `events[${index}]`;
-    const data = item as Record<string, unknown>;
-
-    if (typeof data.eventType !== 'string' || !data.eventType.trim()) {
-      details.push(`${prefix}.eventType is required`);
-    }
-
-    if (
-      typeof data.severity !== 'string' ||
-      !(VALID_SEVERITIES as readonly string[]).includes(data.severity)
-    ) {
-      details.push(
-        `${prefix}.severity must be one of: ${VALID_SEVERITIES.join(', ')}`
-      );
-    }
-
-    if (typeof data.occurredAt !== 'string' || !isValidIsoDatetime(data.occurredAt)) {
-      details.push(`${prefix}.occurredAt must be a valid ISO datetime string`);
-    }
-
-    if (!isPlainObject(data.payload)) {
-      details.push(`${prefix}.payload must be a JSON object`);
-    }
-
-    if (data.schemaVersion !== undefined && typeof data.schemaVersion !== 'number') {
-      details.push(`${prefix}.schemaVersion must be a number`);
-    }
-
-    const eventType = typeof data.eventType === 'string' ? data.eventType.trim() : '';
-    let payload = isPlainObject(data.payload) ? data.payload : {};
-
-    if (eventType && isPlainObject(data.payload)) {
-      const contractResult = validateTelemetryEventContract({
-        eventType,
-        payload,
-        schemaVersion: data.schemaVersion,
-      });
-      if (!contractResult.ok) {
-        for (const error of contractResult.errors) {
-          details.push(`${prefix}.${error}`);
-        }
-      } else {
-        payload = contractResult.payload;
-      }
-    }
-
-    return {
-      eventType: eventType || '',
-      severity: data.severity as TelemetryEventInput['severity'],
-      occurredAt: data.occurredAt as string,
-      payload,
-      ...(data.schemaVersion !== undefined
-        ? { schemaVersion: data.schemaVersion as number }
-        : {}),
-    };
-  });
-
-  if (details.length > 0) {
-    return { ok: false, details };
-  }
-
-  return { ok: true, events };
-}
+const DEFAULT_BATCH_MAX_EVENTS = 50;
 
 /**
- * POST /telemetry/events
- * Agent-authenticated batch telemetry ingestion.
+ * Tenant-scoped telemetry ingestion authenticated as an agent.
+ *
+ * Tenant and agent identity come from the verified principal (agent access JWT
+ * or, in development, x-tenant-id + x-agent-id). Body agentId is only a
+ * consistency check; it is never the source of truth.
+ *
+ * Batch ingest (POST /events/batch) is all-or-nothing: any invalid event
+ * rejects the whole request with no writes.
  */
-telemetryRouter.post('/events', authenticateAgent, async (req, res: Response): Promise<void> => {
-  const validated = validateEvents(req.body);
-  if (!validated.ok) {
-    res.status(400).json({ error: 'Validation failed', details: validated.details });
-    return;
+export function createTelemetryRouter(
+  options: TelemetryRouterOptions = {},
+): Router {
+  const router = Router();
+  const batchMaxEvents = options.batchMaxEvents ?? DEFAULT_BATCH_MAX_EVENTS;
+
+  router.post(
+    "/events",
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const principal = requireAgentPrincipal(req);
+
+        if (!options.telemetryService) {
+          throw new AppError(
+            "TELEMETRY_UNAVAILABLE",
+            503,
+            "Telemetry ingestion is not available",
+          );
+        }
+
+        const body = bindSingleEventBody(req.body, principal.agentId);
+        const parsed = parseTelemetryEventV1(body);
+        if (!parsed.ok) {
+          throw new AppError("TELEMETRY_INVALID", 400, parsed.message);
+        }
+
+        const outcome = await options.telemetryService.ingest(
+          principal.tenantId,
+          parsed.event,
+        );
+
+        if (!outcome.ok) {
+          logLifecycle("warn", "telemetry_ingest_rejected", {
+            requestId: req.requestId,
+            tenantId: principal.tenantId,
+            reason: outcome.reason,
+          });
+
+          throw new AppError(
+            "TELEMETRY_REJECTED",
+            400,
+            "Telemetry event cannot be accepted",
+          );
+        }
+
+        res.status(201).json({
+          ok: true,
+          data: {
+            id: outcome.event.id,
+            ingestedAt: outcome.event.ingestedAt.toISOString(),
+          },
+          requestId: req.requestId,
+        });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  router.post(
+    "/events/batch",
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const principal = requireAgentPrincipal(req);
+
+        if (!options.telemetryService) {
+          throw new AppError(
+            "TELEMETRY_UNAVAILABLE",
+            503,
+            "Telemetry ingestion is not available",
+          );
+        }
+
+        const parsed = parseTelemetryBatchV1(req.body, {
+          agentId: principal.agentId,
+          maxEvents: batchMaxEvents,
+        });
+
+        if (!parsed.ok) {
+          // Agent identity mismatch is fail-closed and non-oracular at the
+          // client: same code family as other reject paths when message is the
+          // mismatch form; validation failures stay TELEMETRY_INVALID.
+          if (parsed.message.includes("agent identity mismatch")) {
+            throw new AppError(
+              "TELEMETRY_REJECTED",
+              400,
+              "Telemetry event cannot be accepted",
+            );
+          }
+          throw new AppError("TELEMETRY_INVALID", 400, parsed.message);
+        }
+
+        const outcome = await options.telemetryService.ingestBatch(
+          principal.tenantId,
+          parsed.events,
+        );
+
+        if (!outcome.ok) {
+          logLifecycle("warn", "telemetry_batch_rejected", {
+            requestId: req.requestId,
+            tenantId: principal.tenantId,
+            reason: outcome.reason,
+            count: parsed.events.length,
+          });
+
+          throw new AppError(
+            "TELEMETRY_REJECTED",
+            400,
+            "Telemetry event cannot be accepted",
+          );
+        }
+
+        res.status(201).json({
+          ok: true,
+          data: {
+            accepted: outcome.events.length,
+            events: outcome.events.map((event) => ({
+              id: event.id,
+              ingestedAt: event.ingestedAt.toISOString(),
+            })),
+          },
+          requestId: req.requestId,
+        });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  return router;
+}
+
+function requireAgentPrincipal(req: Request) {
+  const principal = requirePrincipal(req);
+
+  if (!principal.agentId) {
+    throw new AppError(
+      "AGENT_AUTH_REQUIRED",
+      401,
+      "Agent authentication is required",
+    );
   }
 
-  const { agentId, tenantId } = (req as AgentAuthenticatedRequest).agent;
+  return principal as typeof principal & { agentId: string };
+}
 
-  await ingestTelemetryBatch(agentId, tenantId, validated.events);
+function bindSingleEventBody(body: unknown, agentId: string): unknown {
+  const copy =
+    typeof body === "object" && body !== null
+      ? { ...(body as Record<string, unknown>) }
+      : body;
 
-  res.status(202).json({ accepted: validated.events.length });
-});
+  if (
+    typeof copy === "object" &&
+    copy !== null &&
+    "agentId" in copy &&
+    copy.agentId !== agentId
+  ) {
+    throw new AppError(
+      "TELEMETRY_REJECTED",
+      400,
+      "Telemetry event cannot be accepted",
+    );
+  }
+
+  if (typeof copy === "object" && copy !== null) {
+    (copy as Record<string, unknown>).agentId = agentId;
+  }
+
+  return copy;
+}

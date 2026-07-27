@@ -1,266 +1,194 @@
-import { Router, Response } from 'express';
-import { readTenantFromRequest } from '../lib/tenantScope';
-import { requireRole } from '../middleware/requireRole';
-import {
-  createAgentEnrollment,
-  getAgentInTenant,
-  listAgentsInTenant,
-  revokeAgent,
-} from '../services/agentService';
-import { isolateAgent, restoreAgent } from '../services/agentIsolationService';
-import { listEventsForAgent } from '../services/telemetryService';
-import {
-  CreateAgentInput,
-  DEFAULT_ENROLLMENT_WINDOW_HOURS,
-  MAX_ENROLLMENT_WINDOW_HOURS,
-} from '../types/agent';
-import { AgentIsolationError } from '../types/agentIsolation';
+import { type NextFunction, type Request, type Response, Router } from "express";
 
-export const agentRouter = Router();
+import type { AgentsService } from "../agents/service";
+import { logLifecycle } from "../lib/log";
+import { AppError } from "../middleware/error-handler";
+import { requirePrincipal } from "../middleware/tenant-context";
 
-function validateCreateBody(
-  body: unknown
-): { ok: true; input: CreateAgentInput } | { ok: false; fields: string[] } {
-  const data = body as Record<string, unknown>;
-  const fields: string[] = [];
+export interface AgentsRouterOptions {
+  /**
+   * When absent, agent registration/revoke fail closed (503). Wired only when
+   * a database and JWT config are both present (credential exchange needs JWT).
+   */
+  agentsService?: AgentsService;
+}
 
-  if (typeof data.displayName !== 'string' || !data.displayName.trim()) {
-    fields.push('displayName');
+const UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function readString(body: unknown, key: string): string {
+  if (typeof body !== "object" || body === null) {
+    return "";
   }
-  if (typeof data.hostname !== 'string' || !data.hostname.trim()) {
-    fields.push('hostname');
-  }
-  if (typeof data.os !== 'string' || !data.os.trim()) {
-    fields.push('os');
-  }
-  if (typeof data.agentVersion !== 'string' || !data.agentVersion.trim()) {
-    fields.push('agentVersion');
-  }
+  const value = (body as Record<string, unknown>)[key];
+  return typeof value === "string" ? value : "";
+}
 
-  if (fields.length > 0) {
-    return { ok: false, fields };
-  }
+/**
+ * Tenant-scoped agent enrollment (register + revoke) and operator inventory.
+ *
+ * Who may call enrollment: any authenticated tenant principal (human JWT /
+ * dev-header). RBAC on enrollment is deferred. Agent machine identity is
+ * established by the returned credential, not by this route's caller type.
+ *
+ * Inventory (GET /) is operator-only — agent principals are rejected.
+ */
+export function createAgentsRouter(options: AgentsRouterOptions = {}): Router {
+  const router = Router();
 
-  const input: CreateAgentInput = {
-    displayName: (data.displayName as string).trim(),
-    hostname: (data.hostname as string).trim(),
-    os: (data.os as string).trim(),
-    agentVersion: (data.agentVersion as string).trim(),
-  };
+  /**
+   * GET /v1/agents — operator agent inventory (liveness + open findings).
+   * Agent principals rejected. Enrollment UX / remote actions deferred.
+   */
+  router.get("/", async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const principal = requirePrincipal(req);
 
-  if (typeof data.enrollmentWindowHours === 'number') {
-    input.enrollmentWindowHours = Math.min(
-      Math.max(Math.floor(data.enrollmentWindowHours), 1),
-      MAX_ENROLLMENT_WINDOW_HOURS
-    );
-  } else if (typeof data.enrollmentWindowHours === 'string') {
-    const parsed = parseInt(data.enrollmentWindowHours, 10);
-    if (!Number.isNaN(parsed)) {
-      input.enrollmentWindowHours = Math.min(
-        Math.max(parsed, 1),
-        MAX_ENROLLMENT_WINDOW_HOURS
+      if (principal.agentId) {
+        throw new AppError(
+          "AGENTS_REJECTED",
+          403,
+          "Agent inventory requires an operator principal",
+        );
+      }
+
+      if (!options.agentsService) {
+        throw new AppError(
+          "AGENTS_UNAVAILABLE",
+          503,
+          "Agent inventory is not available",
+        );
+      }
+
+      const queryKeys = Object.keys(req.query);
+      if (queryKeys.length > 0) {
+        throw new AppError(
+          "AGENT_INVALID",
+          400,
+          "agent inventory does not accept query parameters",
+        );
+      }
+
+      const agents = await options.agentsService.listInventory(
+        principal.tenantId,
       );
+
+      res.status(200).json({
+        ok: true,
+        data: {
+          agents: agents.map((agent) => ({
+            id: agent.id,
+            name: agent.name,
+            createdAt: agent.createdAt.toISOString(),
+            lastHeartbeatAt: agent.lastHeartbeatAt
+              ? agent.lastHeartbeatAt.toISOString()
+              : null,
+            openFindingsCount: agent.openFindingsCount,
+            heartbeatFreshness: agent.heartbeatFreshness,
+          })),
+        },
+        requestId: req.requestId,
+      });
+    } catch (err) {
+      next(err);
     }
-  }
-
-  if (typeof data.ipAddress === 'string' && data.ipAddress.trim()) {
-    input.ipAddress = data.ipAddress.trim();
-  }
-
-  return { ok: true, input };
-}
-
-function readActor(req: Parameters<typeof readTenantFromRequest>[0]) {
-  const { tenantId, userId, role } = readTenantFromRequest(req);
-  return { tenantId, actor: { userId, role } };
-}
-
-function enrollmentHandler(req: Parameters<typeof readTenantFromRequest>[0], res: Response): Promise<void> {
-  const validated = validateCreateBody(req.body);
-  if (!validated.ok) {
-    res.status(400).json({ error: 'Validation failed', fields: validated.fields });
-    return Promise.resolve();
-  }
-
-  const { tenantId, actor } = readActor(req);
-  return createAgentEnrollment(tenantId, validated.input, actor).then((result) => {
-    res.status(201).json(result);
   });
-}
 
-/**
- * POST /api/agents/enroll
- * Enroll a new endpoint agent. Returns a one-time enrollment token.
- */
-agentRouter.post('/enroll', requireRole('admin'), (req, res) => enrollmentHandler(req, res));
+  /**
+   * POST /v1/agents — register an agent and mint its long-lived credential.
+   * The plaintext credential is returned once and never stored.
+   */
+  router.post("/", async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const principal = requirePrincipal(req);
 
-/**
- * POST /api/agents
- * Primary enrollment endpoint (architecture alias).
- */
-agentRouter.post('/', requireRole('admin'), (req, res) => enrollmentHandler(req, res));
+      if (!options.agentsService) {
+        throw new AppError(
+          "AGENTS_UNAVAILABLE",
+          503,
+          "Agent enrollment is not available",
+        );
+      }
 
-/**
- * GET /api/agents
- * List agents in the caller's tenant.
- */
-agentRouter.get('/', requireRole('analyst'), async (req, res: Response): Promise<void> => {
-  const { tenantId } = readTenantFromRequest(req);
-  const agents = await listAgentsInTenant(tenantId);
-  res.json(agents);
-});
+      const name = readString(req.body, "name").trim();
+      if (name.length === 0 || name.length > 128) {
+        throw new AppError(
+          "AGENT_INVALID",
+          400,
+          "name must be 1..128 characters",
+        );
+      }
 
-async function revokeHandler(req: Parameters<typeof readTenantFromRequest>[0], res: Response): Promise<void> {
-  const { tenantId, actor } = readActor(req);
-  const body = req.body as Record<string, unknown>;
-  const reason = typeof body.reason === 'string' ? body.reason.trim() : undefined;
+      const registered = await options.agentsService.register(
+        principal.tenantId,
+        name,
+      );
 
-  const agent = await revokeAgent(tenantId, req.params.agentId, actor, reason);
-
-  if (!agent) {
-    res.status(404).json({ error: 'Agent not found' });
-    return;
-  }
-
-  res.json({ status: 'revoked', agent });
-}
-
-/**
- * POST /api/agents/:agentId/revoke
- * Revoke an agent credential in the caller's tenant.
- */
-agentRouter.post('/:agentId/revoke', requireRole('admin'), (req, res) => revokeHandler(req, res));
-
-/**
- * PATCH /api/agents/:agentId/revoke
- * Architecture alias for revocation.
- */
-agentRouter.patch('/:agentId/revoke', requireRole('admin'), (req, res) => revokeHandler(req, res));
-
-function readOptionalReason(body: unknown): string | undefined {
-  if (typeof body !== 'object' || body === null) {
-    return undefined;
-  }
-  const reason = (body as Record<string, unknown>).reason;
-  return typeof reason === 'string' ? reason.trim() : undefined;
-}
-
-function isValidAgentId(agentId: string): boolean {
-  return typeof agentId === 'string' && agentId.trim().length > 0;
-}
-
-async function isolateHandler(req: Parameters<typeof readTenantFromRequest>[0], res: Response): Promise<void> {
-  const { agentId } = req.params;
-  if (!isValidAgentId(agentId)) {
-    res.status(404).json({ error: 'Agent not found' });
-    return;
-  }
-
-  const { tenantId, actor } = readActor(req);
-  const reason = readOptionalReason(req.body);
-
-  try {
-    const isolation = await isolateAgent(tenantId, agentId, actor, reason);
-    if (!isolation) {
-      res.status(404).json({ error: 'Agent not found' });
-      return;
+      res.status(201).json({
+        ok: true,
+        data: {
+          agentId: registered.agentId,
+          name: registered.name,
+          credential: registered.credential,
+        },
+        requestId: req.requestId,
+      });
+    } catch (err) {
+      next(err);
     }
-    res.json(isolation);
-  } catch (error) {
-    if (error instanceof AgentIsolationError) {
-      res.status(409).json({ error: error.message });
-      return;
-    }
-    throw error;
-  }
+  });
+
+  /**
+   * POST /v1/agents/:agentId/credentials/revoke — revoke the active credential.
+   * Existing agent access JWTs remain valid until expiry (denylist deferred).
+   */
+  router.post(
+    "/:agentId/credentials/revoke",
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const principal = requirePrincipal(req);
+
+        if (!options.agentsService) {
+          throw new AppError(
+            "AGENTS_UNAVAILABLE",
+            503,
+            "Agent enrollment is not available",
+          );
+        }
+
+        const agentId = String(req.params.agentId ?? "").trim().toLowerCase();
+        if (!UUID.test(agentId)) {
+          throw new AppError("AGENT_INVALID", 400, "agentId must be a UUID");
+        }
+
+        const revoked = await options.agentsService.revokeCredential(
+          principal.tenantId,
+          agentId,
+        );
+
+        if (!revoked) {
+          logLifecycle("warn", "agent_revoke_miss", {
+            requestId: req.requestId,
+            tenantId: principal.tenantId,
+          });
+          // Non-oracular: unknown agent / already revoked / other tenant.
+          throw new AppError(
+            "AGENT_REVOKE_REJECTED",
+            400,
+            "Credential cannot be revoked",
+          );
+        }
+
+        res.status(200).json({
+          ok: true,
+          data: { agentId, revoked: true },
+          requestId: req.requestId,
+        });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  return router;
 }
-
-async function restoreHandler(req: Parameters<typeof readTenantFromRequest>[0], res: Response): Promise<void> {
-  const { agentId } = req.params;
-  if (!isValidAgentId(agentId)) {
-    res.status(404).json({ error: 'Agent not found' });
-    return;
-  }
-
-  const { tenantId, actor } = readActor(req);
-
-  try {
-    const isolation = await restoreAgent(tenantId, agentId, actor);
-    if (!isolation) {
-      res.status(404).json({ error: 'Agent not found' });
-      return;
-    }
-    res.json(isolation);
-  } catch (error) {
-    if (error instanceof AgentIsolationError) {
-      res.status(409).json({ error: error.message });
-      return;
-    }
-    throw error;
-  }
-}
-
-/**
- * POST /api/agents/:agentId/isolate
- * Record platform-side isolation intent for an endpoint agent.
- */
-agentRouter.post('/:agentId/isolate', requireRole('admin'), (req, res) => isolateHandler(req, res));
-
-/**
- * POST /api/agents/:agentId/restore
- * Lift platform-side isolation for an endpoint agent.
- */
-agentRouter.post('/:agentId/restore', requireRole('admin'), (req, res) => restoreHandler(req, res));
-
-/**
- * GET /api/agents/:agentId/events
- * List telemetry events for an agent in the caller's tenant.
- */
-agentRouter.get('/:agentId/events', requireRole('analyst'), async (req, res: Response): Promise<void> => {
-  const { tenantId } = readTenantFromRequest(req);
-  const { agentId } = req.params;
-
-  const limitRaw = req.query.limit;
-  let limit = 50;
-  if (typeof limitRaw === 'string') {
-    const parsed = parseInt(limitRaw, 10);
-    if (!Number.isNaN(parsed)) {
-      limit = Math.min(Math.max(parsed, 1), 200);
-    }
-  }
-
-  let before: Date | undefined;
-  const beforeRaw = req.query.before;
-  if (typeof beforeRaw === 'string') {
-    const parsed = new Date(beforeRaw);
-    if (!Number.isNaN(parsed.getTime())) {
-      before = parsed;
-    }
-  }
-
-  const events = await listEventsForAgent(tenantId, agentId, limit, before);
-  if (events === null) {
-    res.status(404).json({ error: 'Agent not found' });
-    return;
-  }
-
-  res.json(events);
-});
-
-/**
- * GET /api/agents/:agentId
- * Get a single agent in the caller's tenant.
- */
-agentRouter.get('/:agentId', requireRole('analyst'), async (req, res: Response): Promise<void> => {
-  const { tenantId } = readTenantFromRequest(req);
-  const agent = await getAgentInTenant(tenantId, req.params.agentId);
-
-  if (!agent) {
-    res.status(404).json({ error: 'Agent not found' });
-    return;
-  }
-
-  res.json(agent);
-});
-
-export { DEFAULT_ENROLLMENT_WINDOW_HOURS };

@@ -1,20 +1,18 @@
 {
   "compilerOptions": {
-    "target": "ES2020",
-    "module": "commonjs",
-    "lib": ["ES2020"],
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
     "outDir": "dist",
     "rootDir": "src",
     "strict": true,
+    "noImplicitAny": true,
     "esModuleInterop": true,
-    "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
-    "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true,
-    "typeRoots": ["./node_modules/@types"]
+    "types": ["node"],
+    "sourceMap": true
   },
-  "include": ["src"],
-  "exclude": ["node_modules", "dist", "src/__tests__"]
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
 }

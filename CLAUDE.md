@@ -19,9 +19,10 @@ Early. One backend service exists; everything else is still scaffolding.
 
 What actually exists:
 - CLAUDE.md
-- docs/architecture/adr/ — ADR-0001 (tenancy and data model), Accepted
+- docs/architecture/adr/ — ADR-0001–0004 (tenancy, auth seam, production auth, persistence)
+- docs/runbooks/work-findings-attention.md — Work / Findings / Attention operational invariants
 - backend/api-gateway/ — running Express service, see below
-- frontend/ — operator app shell + findings + agents inventory (Vite + React + TypeScript)
+- frontend/ — operator app shell + Work home + findings + agents inventory (Vite + React + TypeScript)
 - infra/ — empty
 
 Anything not listed above does not exist yet.
@@ -44,7 +45,7 @@ Still assumptions, not yet implemented:
 
 Frontend (confirmed in `frontend/`):
 - React 19 + TypeScript + Vite
-- React Router (authenticated operator shell; Findings at `/findings`)
+- React Router (authenticated operator shell; default home Work at `/work`; Findings at `/findings`; Agents at `/agents`)
 - Vitest + Testing Library
 - Local `/v1` proxy to api-gateway (CORS on gateway deferred)
 
@@ -65,18 +66,18 @@ Treat this as the current priority order unless explicitly changed.
 
 ## Current status
 - Repository setup: done (git, hygiene files, ADR log)
-- Product docs: ADR-0001 accepted; no product/spec docs yet
-- Backend implementation: api-gateway — middleware baseline; `/v1/tenants/me`; tenant-scoped telemetry ingest + query/summary; minimal post-ingest correlation findings; agent enrollment + hashed credentials + agent JWT exchange for authenticated ingest
-- Frontend implementation: operator app shell + findings (`/findings`) + agents (`/agents`) with URL cross-links (`agentId` / `findingId`)
+- Product docs: ADRs 0001–0004 accepted; Work/Findings/Attention runbook at `docs/runbooks/work-findings-attention.md` (operational invariants — not a full product spec)
+- Backend implementation: api-gateway — middleware baseline; `/v1/tenants/me`; tenant-scoped telemetry ingest + query/summary; minimal post-ingest correlation findings; agent enrollment + hashed credentials + agent JWT exchange for authenticated ingest; Findings triage + Attention + Work views/default
+- Frontend implementation: operator app shell (default `/work`) + findings (`/findings`) + agents (`/agents`) with URL cross-links (`agentId` / `findingId`)
 - Infra setup: not started
 - Auth / RBAC: authentication seam (ADR-0002) with `dev-header` + `jwt`; human OIDC/refresh and agent credential exchange implemented; no RBAC
-- Database: schema + RLS (tenants, agents, agent_credentials, users, sessions, refresh_tokens, telemetry_events, correlation_findings, finding_suppressions) via Kysely + migrator, plus platform-global `oidc_initiations`. NOTE: some auth narrative elsewhere may still need a docs-sync pass.
+- Database: schema + RLS (tenants, agents, agent_credentials, users, sessions, refresh_tokens, telemetry_events, correlation_findings, finding_suppressions, finding_revisit_reminders, finding_attention_dismissals, finding_shared_views, work_shared_views, work_tenant_defaults) via Kysely + migrator, plus platform-global `oidc_initiations`. NOTE: some auth narrative elsewhere may still need a docs-sync pass.
 - Enterprise hardening: not started
 
 ## backend/api-gateway
 Implemented:
 - Middleware: request ID, structured JSON request logging, tenant context, 404 handler, centralized error handler
-- Routes: `GET /`, `GET /health`, `GET /v1/tenants/me`, `GET /v1/agents` (operator inventory), `POST /v1/agents` (enroll), `POST /v1/agents/:id/credentials/revoke`, `POST /v1/auth/agent/token`, `POST /v1/telemetry/events`, `POST /v1/telemetry/events/batch`, `GET /v1/telemetry/events`, `GET /v1/findings`, `GET /v1/findings/dashboard`, `POST /v1/findings/evaluate-silence`, `PATCH /v1/findings/:id`, `GET|POST /v1/findings/suppressions`, `DELETE /v1/findings/suppressions/:id`
+- Routes: `GET /`, `GET /health`, `GET /v1/tenants/me`, `GET /v1/agents` (operator inventory), `POST /v1/agents` (enroll), `POST /v1/agents/:id/credentials/revoke`, `POST /v1/auth/agent/token`, `POST /v1/telemetry/events`, `POST /v1/telemetry/events/batch`, `GET /v1/telemetry/events`, `GET /v1/findings`, `GET /v1/findings/dashboard`, `GET /v1/findings/attention`, `POST /v1/findings/attention/dismiss`, `POST /v1/findings/evaluate-silence`, `PATCH /v1/findings/:id`, `GET|POST /v1/findings/suppressions`, `DELETE /v1/findings/suppressions/:id`, `GET|POST|DELETE /v1/findings/views`, `GET|POST|DELETE /v1/work/views`, `PUT|DELETE /v1/work/default`
 - Error envelope: `{ ok: false, error: { code, message }, requestId }`
 - Success envelope on /v1: `{ ok: true, data, requestId }`
 - Tests: `node:test` integration suite against `createApp()` (`npm test`)
@@ -109,30 +110,22 @@ Implemented:
   Operator dashboard: `GET /v1/findings/dashboard` — fixed 24h windows; counts by
   status and ruleId (zero-filled); recentCreated/recentChanged; active
   suppression count; no query params; agents rejected. Frontend console consumes
-  these surfaces (see `frontend/`).   Finding detail includes a static rule catalog
+  these surfaces (see `frontend/`). Finding detail includes a static rule catalog
   explanation, compact evidence summary (no sample ids/payloads), active rule
   snooze context, agent cross-link, triage ergonomics (prev/next, post-mutation
   advance when a status change removes the finding from the current filter, URL
   `findingId` kept coherent), plus minimal investigation intent: self-claim
-  ownership (`claimOwner` / clear) and one current plain-text operator note
-  (bounded, replace/clear) on `PATCH /v1/findings/:id`. Soft UUID audit fields;
-  operator-only; assign-to-others / threads / case entities deferred. Work
-  queues: URL-backed `ownerScope=me|none` on `GET /v1/findings` (`me` requires
-  operator identity; raw `ownerUserId` query rejected) with Findings chips for
-  **Mine** and **Unowned open**; local saved views may persist `ownerScope`;
-  shared views omit it for now. Jump bar includes the two queue shortcuts.
-  Local
-  saved views persist status/ruleId/agentId/ownerScope
-  only (never findingId) in tenant-scoped localStorage; shared tenant views use
-  operator-only `GET/POST/DELETE /v1/findings/views` (RLS; status/ruleId/agentId).
-  Apply writes the URL.
-  Jump bar lists both. Folders/favorites/rename deferred. Operator Attention
-  digest: pull-based `GET /v1/findings/attention` (created + status-changed
-  since a browser cursor, max 24h); shell popover deep-links into Findings URL
-  context; Mark caught up is localStorage-only. Not live, not email/Slack, not
-  an inbox platform. Triage/snooze actions
-  unchanged in meaning. Charts, export, scheduled digests, full case management,
-  comments/threads, assignment queues, queue balancing, SLA/escalations, push
+  ownership (`claimOwner` / clear / reassign), one current plain-text operator
+  note, and explicit `remindAt` on `PATCH /v1/findings/:id`. Soft UUID audit
+  fields; operator-only; threads / case entities deferred.
+  **Work / Findings / Attention operational invariants** (landing precedence,
+  shared vs local Work views, tenant default, `ownerScope`, Attention soft vs
+  escalation bands, dismiss-until-change, bulk action bounds, auth fail-closed
+  rules): see `docs/runbooks/work-findings-attention.md` — keep that runbook
+  current when this stack changes. Frontend Work home is `/work` (shell
+  default). Findings local/shared views + Jump bar + Attention popover remain
+  as composed in the frontend. Charts, export, scheduled digests, full case
+  management, comments/threads, queue balancing, SLA engines, push
   notifications, rule DSL, malware, and remediation deferred.
 - Agent identity (ADR-0003 §5 minimal): register agent → hashed credential once;
   exchange for short-lived agent access JWT (`tid`+`aid`); revoke blocks exchange.

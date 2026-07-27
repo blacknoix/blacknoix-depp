@@ -141,7 +141,7 @@ function stubWorkQueueFetch(opts?: {
       }
 
       if (url.includes("/v1/work/views")) {
-        return jsonOk({ views: [] });
+        return jsonOk({ views: [], defaultViewId: null });
       }
 
       if (url.includes("/v1/findings/attention")) {
@@ -354,7 +354,7 @@ describe("WorkQueuePage", () => {
         }
 
         if (url.includes("/v1/work/views")) {
-          return jsonOk({ views: [] });
+          return jsonOk({ views: [], defaultViewId: null });
         }
 
         if (url.includes("/v1/findings?")) {
@@ -465,7 +465,7 @@ describe("WorkQueuePage", () => {
         }
 
         if (url.includes("/v1/work/views")) {
-          return jsonOk({ views: [] });
+          return jsonOk({ views: [], defaultViewId: null });
         }
 
         if (url.includes("/v1/findings?")) {
@@ -539,6 +539,7 @@ describe("WorkQueuePage", () => {
                 createdByUserId: null,
               },
             ],
+            defaultViewId: null,
           });
         }
         if (url.includes("/v1/findings/attention")) {
@@ -602,6 +603,240 @@ describe("WorkQueuePage", () => {
     expect(screen.getByText(/Applied shared “Intake only”/i)).toBeInTheDocument();
   });
 
+  it("applies tenant default on bare /work and preserves explicit URL sections", async () => {
+    const VIEW_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/v1/work/views")) {
+          return jsonOk({
+            views: [
+              {
+                id: VIEW_ID,
+                name: "Intake only",
+                definition: { sections: ["unowned_open"] },
+                createdAt: "2026-03-01T12:00:00.000Z",
+                createdByUserId: null,
+              },
+            ],
+            defaultViewId: VIEW_ID,
+          });
+        }
+        if (url.includes("/v1/findings/attention")) {
+          return jsonOk(emptyAttention());
+        }
+        if (url.includes("/v1/findings?")) {
+          const parsed = new URL(url, "http://local.test");
+          if (parsed.searchParams.get("ownerScope") === "none") {
+            return jsonOk({
+              findings: [finding({ id: FINDING_UNOWNED, title: "Claim me" })],
+            });
+          }
+          return jsonOk({ findings: [] });
+        }
+        return jsonOk({});
+      }),
+    );
+
+    const { unmount } = render(
+      <MemoryRouter initialEntries={["/work"]}>
+        <Routes>
+          <Route
+            element={
+              <OutletSession
+                session={{ kind: "tenant", tenantId: TENANT, userId: USER }}
+              />
+            }
+          >
+            <Route path="work" element={<WorkQueuePage />} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Showing tenant default Work view “Intake only”/i),
+      ).toBeInTheDocument();
+    });
+    expect(
+      document.querySelector('[data-section="unowned_open"]'),
+    ).toBeTruthy();
+    expect(document.querySelector('[data-section="mine"]')).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /Intake only · default/i }),
+    ).toBeInTheDocument();
+
+    unmount();
+
+    render(
+      <MemoryRouter initialEntries={["/work?sections=mine"]}>
+        <Routes>
+          <Route
+            element={
+              <OutletSession
+                session={{ kind: "tenant", tenantId: TENANT, userId: USER }}
+              />
+            }
+          >
+            <Route path="work" element={<WorkQueuePage />} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(document.querySelector('[data-section="mine"]')).toBeTruthy();
+    });
+    expect(
+      document.querySelector('[data-section="unowned_open"]'),
+    ).toBeNull();
+    expect(
+      screen.queryByText(/Showing tenant default Work view/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("falls back to all sections when tenant default id is stale", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/v1/work/views")) {
+          return jsonOk({
+            views: [
+              {
+                id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                name: "Intake only",
+                definition: { sections: ["unowned_open"] },
+                createdAt: "2026-03-01T12:00:00.000Z",
+                createdByUserId: null,
+              },
+            ],
+            // Stale id not in list — client treats as no default.
+            defaultViewId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+          });
+        }
+        if (url.includes("/v1/findings/attention")) {
+          return jsonOk(emptyAttention());
+        }
+        if (url.includes("/v1/findings?")) {
+          return jsonOk({ findings: [] });
+        }
+        return jsonOk({});
+      }),
+    );
+
+    renderWithShell({ kind: "tenant", tenantId: TENANT, userId: USER });
+
+    await waitFor(() => {
+      expect(document.querySelector('[data-section="mine"]')).toBeTruthy();
+    });
+    expect(
+      document.querySelector('[data-section="unowned_open"]'),
+    ).toBeTruthy();
+    expect(
+      screen.queryByText(/Showing tenant default Work view/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("sets and clears tenant default via shared Work view controls", async () => {
+    const user = userEvent.setup();
+    const VIEW_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    let defaultViewId: string | null = null;
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+
+        if (url.includes("/v1/work/default") && method === "PUT") {
+          const body = JSON.parse(String(init?.body ?? "{}"));
+          defaultViewId = body.viewId;
+          return jsonOk({ defaultViewId });
+        }
+        if (url.includes("/v1/work/default") && method === "DELETE") {
+          const prior = defaultViewId;
+          defaultViewId = null;
+          return jsonOk({ defaultViewId: prior });
+        }
+        if (url.includes("/v1/work/views") && method === "GET") {
+          return jsonOk({
+            views: [
+              {
+                id: VIEW_ID,
+                name: "Intake only",
+                definition: { sections: ["unowned_open"] },
+                createdAt: "2026-03-01T12:00:00.000Z",
+                createdByUserId: null,
+              },
+            ],
+            defaultViewId,
+          });
+        }
+        if (url.includes("/v1/findings/attention")) {
+          return jsonOk(emptyAttention());
+        }
+        if (url.includes("/v1/findings?")) {
+          return jsonOk({ findings: [] });
+        }
+        return jsonOk({});
+      }),
+    );
+
+    render(
+      <MemoryRouter initialEntries={["/work?sections=all"]}>
+        <Routes>
+          <Route
+            element={
+              <OutletSession
+                session={{ kind: "tenant", tenantId: TENANT, userId: USER }}
+              />
+            }
+          >
+            <Route path="work" element={<WorkQueuePage />} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", {
+          name: /Set Intake only as tenant default Work view/i,
+        }),
+      ).toBeInTheDocument();
+    });
+
+    await user.click(
+      screen.getByRole("button", {
+        name: /Set Intake only as tenant default Work view/i,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Tenant default Work view set to “Intake only”/i),
+      ).toBeInTheDocument();
+    });
+    expect(
+      screen.getByRole("button", { name: /Intake only · default/i }),
+    ).toBeInTheDocument();
+    expect(defaultViewId).toBe(VIEW_ID);
+
+    await user.click(
+      screen.getByRole("button", { name: /Clear tenant default/i }),
+    );
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Tenant default Work view cleared/i),
+      ).toBeInTheDocument();
+    });
+    expect(defaultViewId).toBeNull();
+  });
+
   it("dismisses Action needed until condition changes and reloads", async () => {
     const user = userEvent.setup();
     const dismissed: unknown[] = [];
@@ -651,7 +886,7 @@ describe("WorkQueuePage", () => {
         }
 
         if (url.includes("/v1/work/views")) {
-          return jsonOk({ views: [] });
+          return jsonOk({ views: [], defaultViewId: null });
         }
 
         if (url.includes("/v1/findings?")) {

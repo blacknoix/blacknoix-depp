@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   canonicalizeWorkSections,
   parseCreateSharedWorkViewBody,
+  parseSetWorkDefaultBody,
 } from "../../src/work-views/contract";
 
 describe("parseCreateSharedWorkViewBody", () => {
@@ -72,5 +73,28 @@ describe("canonicalizeWorkSections", () => {
       canonicalizeWorkSections(["unowned_open", "action_needed", "mine"]),
       ["action_needed", "mine", "unowned_open"],
     );
+  });
+});
+
+describe("parseSetWorkDefaultBody", () => {
+  it("accepts a UUID viewId and rejects tenant/unknown fields", () => {
+    const ok = parseSetWorkDefaultBody({
+      viewId: "BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB",
+    });
+    assert.equal(ok.ok, true);
+    if (!ok.ok) {
+      return;
+    }
+    assert.equal(ok.viewId, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+
+    assert.equal(
+      parseSetWorkDefaultBody({
+        viewId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        tenantId: "11111111-1111-4111-8111-111111111111",
+      }).ok,
+      false,
+    );
+    assert.equal(parseSetWorkDefaultBody({ viewId: "not-a-uuid" }).ok, false);
+    assert.equal(parseSetWorkDefaultBody({}).ok, false);
   });
 });

@@ -1,10 +1,9 @@
 /**
- * Create-body contract for POST /v1/work/views.
+ * Create-body contract for POST /v1/work/views and PUT /v1/work/default.
  *
  * Work views store a non-empty section allowlist only.
- * findingId / ownerScope / ownerUserId / selection are rejected.
- * ownerScope is intentionally excluded: Mine / Action needed / Reminders due
- * are the owner-relative Work sections; Unowned open is intake.
+ * Tenant default references an existing shared view id — it does not duplicate
+ * section payloads. findingId / ownerScope / ownerUserId / selection rejected.
  */
 
 export const WORK_SHARED_VIEW_NAME_MAX = 40;
@@ -32,6 +31,13 @@ export type ParseCreateSharedWorkViewResult =
   | { ok: true; input: CreateSharedWorkViewInput }
   | { ok: false; message: string };
 
+export type ParseSetWorkDefaultResult =
+  | { ok: true; viewId: string }
+  | { ok: false; message: string };
+
+const UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export function isWorkViewSectionId(value: string): value is WorkViewSectionId {
   return (WORK_VIEW_SECTION_IDS as readonly string[]).includes(value);
 }
@@ -57,7 +63,7 @@ function normalizeName(raw: unknown): string | null {
 
 /**
  * Parses POST body: `{ name, definition: { sections: string[] } }`.
- * Also accepts `{ name, sections }` as a shorthand — rejected if both diverge.
+ * Also accepts `{ name, sections }` as a shorthand.
  */
 export function parseCreateSharedWorkViewBody(
   body: unknown,
@@ -142,4 +148,32 @@ export function parseCreateSharedWorkViewBody(
     ok: true,
     input: { name, definition: { sections } },
   };
+}
+
+/** Parses PUT /v1/work/default body: `{ viewId }`. */
+export function parseSetWorkDefaultBody(
+  body: unknown,
+): ParseSetWorkDefaultResult {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return { ok: false, message: "body must be a JSON object" };
+  }
+  const record = body as Record<string, unknown>;
+
+  for (const key of Object.keys(record)) {
+    if (key === "tenantId" || key === "tenant_id" || key === "tid") {
+      return {
+        ok: false,
+        message: "tenant identity must not be supplied in the body",
+      };
+    }
+    if (key !== "viewId" && key !== "view_id") {
+      return { ok: false, message: `unknown field: ${key}` };
+    }
+  }
+
+  const raw = record.viewId ?? record.view_id;
+  if (typeof raw !== "string" || !UUID.test(raw.trim())) {
+    return { ok: false, message: "viewId must be a UUID" };
+  }
+  return { ok: true, viewId: raw.trim().toLowerCase() };
 }

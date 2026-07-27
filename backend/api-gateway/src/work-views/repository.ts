@@ -29,6 +29,10 @@ export type InsertSharedWorkViewResult =
   | { ok: true; view: WorkSharedViewRow }
   | { ok: false; reason: "conflict" | "limit" };
 
+export type SetDefaultWorkViewResult =
+  | { ok: true; defaultViewId: string }
+  | { ok: false; reason: "not_found" };
+
 export interface WorkSharedViewsRepository {
   list(tenantId: string): Promise<WorkSharedViewRow[]>;
   insert(
@@ -39,6 +43,13 @@ export interface WorkSharedViewsRepository {
     tenantId: string,
     id: string,
   ): Promise<WorkSharedViewRow | undefined>;
+  getDefaultViewId(tenantId: string): Promise<string | null>;
+  setDefaultViewId(
+    tenantId: string,
+    viewId: string,
+    setByUserId: string | null,
+  ): Promise<SetDefaultWorkViewResult>;
+  clearDefaultViewId(tenantId: string): Promise<string | null>;
 }
 
 function asDate(value: unknown): Date {
@@ -91,6 +102,15 @@ function isUniqueViolation(err: unknown): boolean {
   );
 }
 
+function isForeignKeyViolation(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    (err as { code?: string }).code === "23503"
+  );
+}
+
 export function createWorkSharedViewsRepository(
   db: Kysely<Database>,
 ): WorkSharedViewsRepository {
@@ -102,7 +122,9 @@ export function createWorkSharedViewsRepository(
           .selectAll()
           .orderBy("created_at", "desc")
           .execute();
-        return rows.map(mapRow).filter((row) => row.definition.sections.length > 0);
+        return rows
+          .map(mapRow)
+          .filter((row) => row.definition.sections.length > 0);
       });
     },
 
@@ -151,6 +173,63 @@ export function createWorkSharedViewsRepository(
           .returningAll()
           .executeTakeFirst();
         return row ? mapRow(row) : undefined;
+      });
+    },
+
+    async getDefaultViewId(tenantId) {
+      return withTenantTransaction(db, tenantId, async (trx) => {
+        const row = await trx
+          .selectFrom("work_tenant_defaults")
+          .select("default_view_id")
+          .executeTakeFirst();
+        return row?.default_view_id ?? null;
+      });
+    },
+
+    async setDefaultViewId(tenantId, viewId, setByUserId) {
+      return withTenantTransaction(db, tenantId, async (trx) => {
+        const existing = await trx
+          .selectFrom("work_shared_views")
+          .select("id")
+          .where("id", "=", viewId)
+          .executeTakeFirst();
+        if (!existing) {
+          return { ok: false, reason: "not_found" };
+        }
+
+        try {
+          await trx
+            .insertInto("work_tenant_defaults")
+            .values({
+              tenant_id: tenantId,
+              default_view_id: viewId,
+              set_by_user_id: setByUserId,
+            })
+            .onConflict((oc) =>
+              oc.column("tenant_id").doUpdateSet({
+                default_view_id: viewId,
+                set_by_user_id: setByUserId,
+                set_at: new Date(),
+              }),
+            )
+            .execute();
+          return { ok: true, defaultViewId: viewId };
+        } catch (err) {
+          if (isForeignKeyViolation(err)) {
+            return { ok: false, reason: "not_found" };
+          }
+          throw err;
+        }
+      });
+    },
+
+    async clearDefaultViewId(tenantId) {
+      return withTenantTransaction(db, tenantId, async (trx) => {
+        const row = await trx
+          .deleteFrom("work_tenant_defaults")
+          .returning("default_view_id")
+          .executeTakeFirst();
+        return row?.default_view_id ?? null;
       });
     },
   };

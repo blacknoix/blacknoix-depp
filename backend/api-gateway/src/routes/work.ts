@@ -4,6 +4,7 @@ import { AppError } from "../middleware/error-handler";
 import { requirePrincipal } from "../middleware/tenant-context";
 import {
   parseCreateSharedWorkViewBody,
+  parseSetWorkDefaultBody,
   WORK_SHARED_VIEWS_MAX_PER_TENANT,
 } from "../work-views/contract";
 import type {
@@ -52,13 +53,13 @@ function requireSharedWorkViews(
 
 /**
  * Operator Work product routes.
- * Views only — not a dashboard or collaboration platform.
+ * Views + tenant default pointer only — not a preferences or admin platform.
  */
 export function createWorkRouter(options: WorkRouterOptions = {}): Router {
   const router = Router();
 
   /**
-   * GET /v1/work/views — list tenant shared Work views (operator).
+   * GET /v1/work/views — list tenant shared Work views + defaultViewId.
    */
   router.get(
     "/views",
@@ -66,10 +67,22 @@ export function createWorkRouter(options: WorkRouterOptions = {}): Router {
       try {
         const principal = requireOperatorPrincipal(req);
         const repo = requireSharedWorkViews(options);
-        const views = await repo.list(principal.tenantId);
+        const [views, defaultViewId] = await Promise.all([
+          repo.list(principal.tenantId),
+          repo.getDefaultViewId(principal.tenantId),
+        ]);
+        // Fail closed: ignore a stale default id that is not in the list
+        // (should be rare with ON DELETE CASCADE; still safe).
+        const known = new Set(views.map((v) => v.id));
+        const resolvedDefault =
+          defaultViewId && known.has(defaultViewId) ? defaultViewId : null;
+
         res.status(200).json({
           ok: true,
-          data: { views: views.map(serializeSharedWorkView) },
+          data: {
+            views: views.map(serializeSharedWorkView),
+            defaultViewId: resolvedDefault,
+          },
           requestId: req.requestId,
         });
       } catch (err) {
@@ -126,6 +139,7 @@ export function createWorkRouter(options: WorkRouterOptions = {}): Router {
 
   /**
    * DELETE /v1/work/views/:id — delete a shared Work view (operator).
+   * Cascades clear of tenant default when that view was the default.
    */
   router.delete(
     "/views/:id",
@@ -154,6 +168,65 @@ export function createWorkRouter(options: WorkRouterOptions = {}): Router {
         res.status(200).json({
           ok: true,
           data: { view: serializeSharedWorkView(deleted) },
+          requestId: req.requestId,
+        });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  /**
+   * PUT /v1/work/default — set tenant default to an existing shared view.
+   */
+  router.put(
+    "/default",
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const principal = requireOperatorPrincipal(req);
+        const repo = requireSharedWorkViews(options);
+        const parsed = parseSetWorkDefaultBody(req.body);
+        if (!parsed.ok) {
+          throw new AppError("WORK_INVALID", 400, parsed.message);
+        }
+
+        const outcome = await repo.setDefaultViewId(
+          principal.tenantId,
+          parsed.viewId,
+          principal.userId ?? null,
+        );
+        if (!outcome.ok) {
+          throw new AppError(
+            "WORK_NOT_FOUND",
+            404,
+            "Shared Work view not found",
+          );
+        }
+
+        res.status(200).json({
+          ok: true,
+          data: { defaultViewId: outcome.defaultViewId },
+          requestId: req.requestId,
+        });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  /**
+   * DELETE /v1/work/default — clear the tenant default Work view.
+   */
+  router.delete(
+    "/default",
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const principal = requireOperatorPrincipal(req);
+        const repo = requireSharedWorkViews(options);
+        const cleared = await repo.clearDefaultViewId(principal.tenantId);
+        res.status(200).json({
+          ok: true,
+          data: { defaultViewId: cleared },
           requestId: req.requestId,
         });
       } catch (err) {

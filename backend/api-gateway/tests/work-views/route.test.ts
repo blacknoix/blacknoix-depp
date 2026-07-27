@@ -45,6 +45,9 @@ function stubSharedWorkViews(
       },
     }),
     deleteById: async () => undefined,
+    getDefaultViewId: async () => null,
+    setDefaultViewId: async () => ({ ok: false, reason: "not_found" }),
+    clearDefaultViewId: async () => null,
     ...overrides,
   };
 }
@@ -105,6 +108,7 @@ describe("GET/POST/DELETE /v1/work/views", () => {
         assert.equal(list.status, 200);
         const listBody = await list.json();
         assert.equal(listBody.data.views.length, 1);
+        assert.equal(listBody.data.defaultViewId, null);
         assert.deepEqual(listBody.data.views[0].definition.sections, [
           "unowned_open",
         ]);
@@ -177,6 +181,134 @@ describe("GET/POST/DELETE /v1/work/views", () => {
         assert.equal(deleted.status, 200);
         const body = await deleted.json();
         assert.equal(body.data.view.id, VIEW_ID);
+      },
+    );
+  });
+});
+
+describe("PUT/DELETE /v1/work/default", () => {
+  it("rejects agent principals", async () => {
+    await withServer(
+      { sharedWorkViews: stubSharedWorkViews() },
+      async (server) => {
+        const res = await fetch(`${server.url}/v1/work/default`, {
+          method: "PUT",
+          headers: {
+            ...tenantHeaders({ "x-agent-id": AGENT_ID }),
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ viewId: VIEW_ID }),
+        });
+        assert.equal(res.status, 403);
+        const body = await res.json();
+        assert.equal(body.error.code, "WORK_REJECTED");
+      },
+    );
+  });
+
+  it("sets and clears a tenant default; fails closed on unknown view", async () => {
+    let defaultId: string | null = null;
+    await withServer(
+      {
+        sharedWorkViews: stubSharedWorkViews({
+          list: async () => [
+            {
+              id: VIEW_ID,
+              tenantId: TENANT_ID,
+              name: "Intake",
+              definition: { sections: ["unowned_open"] },
+              createdAt: new Date("2026-03-01T12:00:00.000Z"),
+              createdByUserId: null,
+            },
+          ],
+          getDefaultViewId: async () => defaultId,
+          setDefaultViewId: async (_tenantId, viewId) => {
+            if (viewId !== VIEW_ID) {
+              return { ok: false, reason: "not_found" };
+            }
+            defaultId = viewId;
+            return { ok: true, defaultViewId: viewId };
+          },
+          clearDefaultViewId: async () => {
+            const prior = defaultId;
+            defaultId = null;
+            return prior;
+          },
+        }),
+      },
+      async (server) => {
+        const missing = await fetch(`${server.url}/v1/work/default`, {
+          method: "PUT",
+          headers: {
+            ...tenantHeaders(),
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            viewId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+          }),
+        });
+        assert.equal(missing.status, 404);
+
+        const set = await fetch(`${server.url}/v1/work/default`, {
+          method: "PUT",
+          headers: {
+            ...tenantHeaders(),
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ viewId: VIEW_ID }),
+        });
+        assert.equal(set.status, 200);
+        const setBody = await set.json();
+        assert.equal(setBody.data.defaultViewId, VIEW_ID);
+
+        const list = await fetch(`${server.url}/v1/work/views`, {
+          headers: tenantHeaders(),
+        });
+        const listBody = await list.json();
+        assert.equal(listBody.data.defaultViewId, VIEW_ID);
+
+        const cleared = await fetch(`${server.url}/v1/work/default`, {
+          method: "DELETE",
+          headers: tenantHeaders(),
+        });
+        assert.equal(cleared.status, 200);
+        const clearedBody = await cleared.json();
+        assert.equal(clearedBody.data.defaultViewId, VIEW_ID);
+
+        const listAfter = await fetch(`${server.url}/v1/work/views`, {
+          headers: tenantHeaders(),
+        });
+        const listAfterBody = await listAfter.json();
+        assert.equal(listAfterBody.data.defaultViewId, null);
+      },
+    );
+  });
+
+  it("ignores a stale default id not present in the shared views list", async () => {
+    const STALE = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    await withServer(
+      {
+        sharedWorkViews: stubSharedWorkViews({
+          list: async () => [
+            {
+              id: VIEW_ID,
+              tenantId: TENANT_ID,
+              name: "Intake",
+              definition: { sections: ["unowned_open"] },
+              createdAt: new Date("2026-03-01T12:00:00.000Z"),
+              createdByUserId: null,
+            },
+          ],
+          getDefaultViewId: async () => STALE,
+        }),
+      },
+      async (server) => {
+        const list = await fetch(`${server.url}/v1/work/views`, {
+          headers: tenantHeaders(),
+        });
+        assert.equal(list.status, 200);
+        const body = await list.json();
+        assert.equal(body.data.defaultViewId, null);
       },
     );
   });

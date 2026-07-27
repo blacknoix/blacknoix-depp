@@ -1,10 +1,14 @@
 /**
  * URL-backed Work section visibility.
  *
- * /work?sections=action_needed,mine,unowned_open
+ * /work?sections=mine,unowned_open
+ * /work?sections=all
  *
- * Missing / empty / fully-invalid → all default sections (fail closed to the
- * known Work home, not to an empty page).
+ * Precedence for effective sections (see resolveWorkLandingSections):
+ * 1. Explicit URL sections (including sections=all)
+ * 2. Tenant default shared view (bare /work only — kind=unset)
+ * 3. Product fallback = all sections
+ *
  * Selection / findingId never ride this URL.
  */
 
@@ -13,11 +17,20 @@ import {
   type WorkQueueSectionId,
 } from "../work/workQueue";
 
-export type WorkSectionsState = {
-  sections: readonly WorkQueueSectionId[];
-  /** True when the URL had a sections param that contributed zero valid ids. */
-  invalidSections: boolean;
-};
+export type WorkSectionsState =
+  | {
+      kind: "unset";
+      /** Provisional product sections while tenant default may still apply. */
+      sections: readonly WorkQueueSectionId[];
+      invalidSections: false;
+    }
+  | {
+      kind: "explicit";
+      sections: readonly WorkQueueSectionId[];
+      invalidSections: boolean;
+    };
+
+export type WorkLandingSource = "url" | "tenant_default" | "product";
 
 const ALL_SECTION_IDS: readonly WorkQueueSectionId[] =
   WORK_QUEUE_SECTIONS.map((s) => s.id);
@@ -40,12 +53,25 @@ export function canonicalizeWorkSections(
 export function parseWorkSearchParams(
   params: URLSearchParams,
 ): WorkSectionsState {
-  const raw = params.get("sections");
-  if (raw === null || raw.trim() === "") {
-    return { sections: ALL_SECTION_IDS, invalidSections: false };
+  if (!params.has("sections")) {
+    return {
+      kind: "unset",
+      sections: ALL_SECTION_IDS,
+      invalidSections: false,
+    };
   }
 
-  const tokens = raw
+  const raw = params.get("sections") ?? "";
+  const trimmed = raw.trim();
+  if (trimmed === "" || trimmed === "all") {
+    return {
+      kind: "explicit",
+      sections: ALL_SECTION_IDS,
+      invalidSections: trimmed === "",
+    };
+  }
+
+  const tokens = trimmed
     .split(",")
     .map((part) => part.trim())
     .filter((part) => part.length > 0);
@@ -62,10 +88,14 @@ export function parseWorkSearchParams(
 
   const sections = canonicalizeWorkSections(valid);
   if (sections.length === 0) {
-    return { sections: ALL_SECTION_IDS, invalidSections: true };
+    return {
+      kind: "explicit",
+      sections: ALL_SECTION_IDS,
+      invalidSections: true,
+    };
   }
 
-  return { sections, invalidSections: sawInvalid };
+  return { kind: "explicit", sections, invalidSections: sawInvalid };
 }
 
 export function serializeWorkSearchParams(input: {
@@ -73,12 +103,12 @@ export function serializeWorkSearchParams(input: {
 }): URLSearchParams {
   const params = new URLSearchParams();
   const sections = canonicalizeWorkSections(input.sections);
-  const isDefault =
+  const isAll =
     sections.length === ALL_SECTION_IDS.length &&
     ALL_SECTION_IDS.every((id, i) => sections[i] === id);
-  if (!isDefault && sections.length > 0) {
-    params.set("sections", sections.join(","));
-  }
+  // Always write sections so bare /work stays reserved for "unset"
+  // (tenant-default eligible). Product all uses the compact sentinel.
+  params.set("sections", isAll ? "all" : sections.join(","));
   return params;
 }
 
@@ -122,4 +152,48 @@ export function toggleWorkSection(
   const next = canonicalizeWorkSections([...set]);
   // Fail closed: never leave the page with zero sections.
   return next.length > 0 ? next : [...ALL_SECTION_IDS];
+}
+
+/**
+ * Resolve landing sections for a Work URL against an optional tenant default.
+ * Does not mutate URL — caller writes when source is tenant_default or product
+ * on an unset URL.
+ */
+export function resolveWorkLandingSections(input: {
+  url: WorkSectionsState;
+  tenantDefault: {
+    viewId: string;
+    name: string;
+    sections: readonly WorkQueueSectionId[];
+  } | null;
+}): {
+  sections: WorkQueueSectionId[];
+  source: WorkLandingSource;
+  tenantDefaultName: string | null;
+  shouldWriteUrl: boolean;
+} {
+  if (input.url.kind === "explicit") {
+    return {
+      sections: [...input.url.sections],
+      source: "url",
+      tenantDefaultName: null,
+      shouldWriteUrl: false,
+    };
+  }
+
+  if (input.tenantDefault && input.tenantDefault.sections.length > 0) {
+    return {
+      sections: canonicalizeWorkSections(input.tenantDefault.sections),
+      source: "tenant_default",
+      tenantDefaultName: input.tenantDefault.name,
+      shouldWriteUrl: true,
+    };
+  }
+
+  return {
+    sections: [...ALL_SECTION_IDS],
+    source: "product",
+    tenantDefaultName: null,
+    shouldWriteUrl: true,
+  };
 }

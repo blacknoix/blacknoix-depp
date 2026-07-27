@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Link,
   useOutletContext,
@@ -12,6 +12,7 @@ import type { Finding } from "../findings/types";
 import {
   allWorkSections,
   parseWorkSearchParams,
+  resolveWorkLandingSections,
   sectionsEqual,
   serializeWorkSearchParams,
   toggleWorkSection,
@@ -31,7 +32,10 @@ import {
   WORK_QUEUE_SECTIONS,
   type WorkQueueSectionId,
 } from "./workQueue";
-import { WorkViewsBar } from "./WorkViewsBar";
+import {
+  WorkViewsBar,
+  type TenantDefaultWorkView,
+} from "./WorkViewsBar";
 
 export interface WorkOutletContext {
   session: OperatorSession;
@@ -162,6 +166,13 @@ export function WorkQueuePage() {
     () => new Set(activeSections),
     [activeSections],
   );
+  /** undefined = shared views not resolved yet; null = no valid tenant default. */
+  const [tenantDefault, setTenantDefault] = useState<
+    TenantDefaultWorkView | null | undefined
+  >(undefined);
+  const [tenantDefaultBanner, setTenantDefaultBanner] = useState<string | null>(
+    null,
+  );
 
   const {
     phase,
@@ -184,10 +195,43 @@ export function WorkQueuePage() {
   const selectedCount = selectedIds.size;
   const canBulk = hasIdentity && selectedCount > 0 && !bulkPending;
 
-  function writeSections(next: readonly WorkQueueSectionId[]) {
+  function writeSections(
+    next: readonly WorkQueueSectionId[],
+    opts?: { tenantDefaultName?: string | null },
+  ) {
+    if (opts && "tenantDefaultName" in opts) {
+      setTenantDefaultBanner(opts.tenantDefaultName ?? null);
+    } else {
+      setTenantDefaultBanner(null);
+    }
     const params = serializeWorkSearchParams({ sections: next });
     setSearchParams(params, { replace: true });
   }
+
+  // Bare /work (sections unset): apply tenant default, else product all.
+  // Explicit URL (including sections=all) always wins.
+  useEffect(() => {
+    if (urlState.kind !== "unset") {
+      return;
+    }
+    if (tenantDefault === undefined) {
+      return;
+    }
+    const resolved = resolveWorkLandingSections({
+      url: urlState,
+      tenantDefault,
+    });
+    if (!resolved.shouldWriteUrl) {
+      return;
+    }
+    writeSections(resolved.sections, {
+      tenantDefaultName:
+        resolved.source === "tenant_default"
+          ? resolved.tenantDefaultName
+          : null,
+    });
+    // Intentionally omit writeSections: land once per unset URL + resolved default.
+  }, [urlState, tenantDefault, setSearchParams]);
 
   function onToggleSection(id: WorkQueueSectionId) {
     writeSections(toggleWorkSection(activeSections, id));
@@ -222,8 +266,8 @@ export function WorkQueuePage() {
         <h1>Work</h1>
         <p className="muted">
           What to look at first — queue health, section focus, local or shared
-          Work views, then claim / clear / resolve. Detail triage stays on
-          Findings.
+          Work views, optional tenant default, then claim / clear / resolve.
+          Detail triage stays on Findings.
         </p>
       </header>
 
@@ -274,6 +318,7 @@ export function WorkQueuePage() {
         sections={activeSections}
         disabled={loading || bulkPending || dismissPending}
         onApply={onApplyView}
+        onTenantDefaultResolved={setTenantDefault}
       />
 
       <div className="work-queue-toolbar">
@@ -339,6 +384,13 @@ export function WorkQueuePage() {
         <p className="banner" role="status">
           Invalid sections in the URL were ignored — showing the default Work
           home.
+        </p>
+      ) : null}
+
+      {tenantDefaultBanner ? (
+        <p className="banner" role="status">
+          Showing tenant default Work view “{tenantDefaultBanner}”. Toggle
+          sections or apply another view to override for this session.
         </p>
       ) : null}
 

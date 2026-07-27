@@ -14,14 +14,23 @@ export interface SharedWorkView {
   createdByUserId: string | null;
 }
 
+export interface SharedWorkViewsPayload {
+  views: SharedWorkView[];
+  /** Present when a valid tenant default shared view is configured. */
+  defaultViewId: string | null;
+}
+
 export async function fetchSharedWorkViews(
   session: OperatorSession,
-): Promise<SharedWorkView[]> {
-  const data = await apiRequest<{ views: SharedWorkView[] }>(
+): Promise<SharedWorkViewsPayload> {
+  const data = await apiRequest<SharedWorkViewsPayload>(
     session,
     "/v1/work/views",
   );
-  return data.views;
+  return {
+    views: data.views,
+    defaultViewId: data.defaultViewId ?? null,
+  };
 }
 
 export async function createSharedWorkView(
@@ -52,4 +61,30 @@ export async function deleteSharedWorkView(
     { method: "DELETE" },
   );
   return data.view;
+}
+
+export async function setTenantWorkDefault(
+  session: OperatorSession,
+  viewId: string,
+): Promise<string> {
+  const data = await apiRequest<{ defaultViewId: string }>(
+    session,
+    "/v1/work/default",
+    {
+      method: "PUT",
+      body: JSON.stringify({ viewId }),
+    },
+  );
+  return data.defaultViewId;
+}
+
+export async function clearTenantWorkDefault(
+  session: OperatorSession,
+): Promise<string | null> {
+  const data = await apiRequest<{ defaultViewId: string | null }>(
+    session,
+    "/v1/work/default",
+    { method: "DELETE" },
+  );
+  return data.defaultViewId ?? null;
 }

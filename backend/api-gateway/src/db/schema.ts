@@ -225,6 +225,17 @@ export interface WorkSharedViewsTable {
   created_by_user_id: string | null;
 }
 
+/**
+ * Tenant-owned pointer to the default shared Work view.
+ * One row per tenant; deleted when the referenced view is deleted.
+ */
+export interface WorkTenantDefaultsTable {
+  tenant_id: string;
+  default_view_id: string;
+  set_at: Generated<Timestamp>;
+  set_by_user_id: string | null;
+}
+
 export interface Database {
   tenants: TenantsTable;
   agents: AgentsTable;
@@ -240,4 +251,5 @@ export interface Database {
   finding_attention_dismissals: FindingAttentionDismissalsTable;
   finding_shared_views: FindingSharedViewsTable;
   work_shared_views: WorkSharedViewsTable;
+  work_tenant_defaults: WorkTenantDefaultsTable;
 }

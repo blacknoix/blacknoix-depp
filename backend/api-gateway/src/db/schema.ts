@@ -122,8 +122,6 @@ export interface TelemetryEventsTable {
   payload: Record<string, unknown>;
 }
 
-<<<<<<< HEAD
-=======
 /**
  * Tenant-owned correlation output (ADR-0001 alerts, minimal).
  * Mutable operator fields: status, ownership, current operator note.
@@ -149,6 +147,8 @@ export interface CorrelationFindingsTable {
   operator_note: string | null;
   operator_note_updated_at: NullableTimestamp;
   operator_note_updated_by_user_id: string | null;
+  /** ADR-0005: bridge_correlation | agent_signed | legacy_unspecified */
+  detection_source: string;
 }
 
 /**
@@ -167,9 +167,6 @@ export interface FindingSuppressionsTable {
   cleared_by_user_id: string | null;
 }
 
-<<<<<<< HEAD
->>>>>>> dec9ffc (feat(api-gateway): add findings snooze and operator dashboard summary)
-=======
 /**
  * Tenant-owned shared Findings filter view. Operator product only.
  * Filter columns are nullable; findingId is never stored.
@@ -185,7 +182,50 @@ export interface FindingSharedViewsTable {
   created_by_user_id: string | null;
 }
 
->>>>>>> 12b026d (feat: deepen Findings operator workflow with views, jump bar, and attention)
+/**
+ * Tenant-owned Ed25519 device identity bound to an agent (TRD bridge).
+ * NODEENROLL cert issuance deferred; active status required for THREATEVENT.
+ */
+export interface DeviceIdentitiesTable {
+  id: Generated<string>;
+  tenant_id: string;
+  agent_id: string;
+  public_key_ed25519: string;
+  device_cert_pem: string | null;
+  status: string;
+  created_at: Generated<Timestamp>;
+  revoked_at: NullableTimestamp;
+}
+
+/**
+ * Tenant-owned signed THREATEVENT persistence (TRD bridge).
+ * Findings materialize only after finality_state becomes finalized.
+ * detection_source scopes path dedup (bridge vs agent_signed) per window.
+ */
+export interface ThreatEventsTable {
+  id: Generated<string>;
+  tenant_id: string;
+  agent_id: string;
+  device_identity_id: string;
+  detection_rule_id: string;
+  title: string;
+  severity: string;
+  evidence: Record<string, unknown>;
+  window_start: Timestamp;
+  window_end: Timestamp;
+  window_bucket: Timestamp;
+  occurred_at: Timestamp;
+  signature: string;
+  signed_at: Timestamp;
+  finality_state: string;
+  finality_reason: string | null;
+  finalized_at: NullableTimestamp;
+  finding_id: string | null;
+  created_at: Generated<Timestamp>;
+  /** ADR-0005: bridge_correlation | agent_signed | legacy_unspecified */
+  detection_source: string;
+}
+
 export interface Database {
   tenants: TenantsTable;
   agents: AgentsTable;
@@ -195,13 +235,9 @@ export interface Database {
   refresh_tokens: RefreshTokensTable;
   oidc_initiations: OidcInitiationsTable;
   telemetry_events: TelemetryEventsTable;
-<<<<<<< HEAD
-=======
   correlation_findings: CorrelationFindingsTable;
   finding_suppressions: FindingSuppressionsTable;
-<<<<<<< HEAD
->>>>>>> dec9ffc (feat(api-gateway): add findings snooze and operator dashboard summary)
-=======
   finding_shared_views: FindingSharedViewsTable;
->>>>>>> 12b026d (feat: deepen Findings operator workflow with views, jump bar, and attention)
+  device_identities: DeviceIdentitiesTable;
+  threat_events: ThreatEventsTable;
 }

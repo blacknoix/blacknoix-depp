@@ -15,17 +15,17 @@ import { createSessionsRepository } from "./sessions/repository";
 import { createTenantsRepository } from "./tenants/repository";
 import { createTelemetryRepository } from "./telemetry/repository";
 import { createTelemetryService } from "./telemetry/service";
-<<<<<<< HEAD
-=======
 import { createCorrelationFindingsRepository } from "./correlation/repository";
 import { createFindingSuppressionsRepository } from "./correlation/suppression-repository";
 import { createCorrelationService } from "./correlation/service";
-<<<<<<< HEAD
->>>>>>> dec9ffc (feat(api-gateway): add findings snooze and operator dashboard summary)
-=======
 import { createFindingSharedViewsRepository } from "./findings-views/repository";
->>>>>>> 12b026d (feat: deepen Findings operator workflow with views, jump bar, and attention)
 import { createUsersRepository } from "./users/repository";
+import { createDeviceIdentityRepository } from "./threat-events/device-identity-repository";
+import { createDeviceIdentityService } from "./threat-events/device-identity";
+import { createThreatEventsRepository } from "./threat-events/repository";
+import { createDevSingleNodeFinalizer } from "./threat-events/finality";
+import { createInMemoryGossip } from "./threat-events/gossip";
+import { createThreatEventService } from "./threat-events/service";
 
 /**
  * How long to wait for in-flight requests to finish before forcing exit.
@@ -52,18 +52,40 @@ const users = db ? createUsersRepository(db) : undefined;
 const sessions = db ? createSessionsRepository(db) : undefined;
 const agents = db ? createAgentsRepository(db) : undefined;
 const telemetry = db ? createTelemetryRepository(db) : undefined;
-<<<<<<< HEAD
-=======
 const findings = db ? createCorrelationFindingsRepository(db) : undefined;
 const suppressions = db ? createFindingSuppressionsRepository(db) : undefined;
 const sharedViews = db ? createFindingSharedViewsRepository(db) : undefined;
-const correlationService =
-  telemetry && findings && suppressions
-    ? createCorrelationService({ telemetry, findings, suppressions })
+const deviceIdentities = db ? createDeviceIdentityRepository(db) : undefined;
+const deviceIdentityService = deviceIdentities
+  ? createDeviceIdentityService({ deviceIdentities })
+  : undefined;
+const threatEventsRepo = db ? createThreatEventsRepository(db) : undefined;
+const threatEventService =
+  deviceIdentities && threatEventsRepo && findings
+    ? createThreatEventService({
+        deviceIdentities,
+        threatEvents: threatEventsRepo,
+        findings,
+        finality: createDevSingleNodeFinalizer(),
+        gossip: createInMemoryGossip(),
+        correlationBridgeEnabled: env.correlationBridgeEnabled,
+        correlationBridgeDisabledTenants: env.correlationBridgeDisabledTenants,
+      })
     : undefined;
->>>>>>> dec9ffc (feat(api-gateway): add findings snooze and operator dashboard summary)
+const correlationService =
+  telemetry && findings && suppressions && threatEventService
+    ? createCorrelationService({
+        telemetry,
+        findings,
+        suppressions,
+        threatEvents: threatEventService,
+      })
+    : undefined;
 const telemetryService = telemetry
-  ? createTelemetryService({ telemetry })
+  ? createTelemetryService({
+      telemetry,
+      ...(correlationService ? { correlation: correlationService } : {}),
+    })
   : undefined;
 
 // Resolved at startup so AUTH_MODE=jwt with invalid/missing JWT config fails to
@@ -116,11 +138,10 @@ const app = createApp({
   telemetryService,
   telemetryBatchMaxEvents: env.telemetryBatchMaxEvents,
   agentsService,
-<<<<<<< HEAD
-=======
+  deviceIdentities: deviceIdentityService,
+  threatEventService,
   correlationService,
   sharedViews,
->>>>>>> 12b026d (feat: deepen Findings operator workflow with views, jump bar, and attention)
 });
 
 const server = app.listen(env.port, () => {

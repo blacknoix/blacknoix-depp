@@ -14,7 +14,9 @@
     "migrate:latest": "tsx src/db/migrate.ts latest",
     "migrate:down": "tsx src/db/migrate.ts down",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "typecheck:test": "tsc --noEmit -p tsconfig.test.json"
+    "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
+    "check:merge-markers": "node ../../scripts/check-merge-markers.cjs",
+    "verify:fresh-migrate": "node ../../scripts/verify-fresh-migrate.cjs"
   },
   "keywords": [],
   "author": "",

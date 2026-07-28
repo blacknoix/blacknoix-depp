@@ -77,6 +77,83 @@ export function resolveTelemetryBatchMaxEvents(raw: string | undefined): number 
   return value;
 }
 
+/**
+ * CORRELATION_BRIDGE_ENABLED — global gate for submitFromDetection (ADR-0005).
+ * Unset / empty → true (bridge on). When false, bridge is off for all tenants.
+ */
+export function resolveCorrelationBridgeEnabled(
+  raw: string | undefined,
+): boolean {
+  if (raw === undefined || raw.trim() === "") {
+    return true;
+  }
+  const normalized = raw.trim().toLowerCase();
+  if (
+    normalized === "0" ||
+    normalized === "false" ||
+    normalized === "off" ||
+    normalized === "no"
+  ) {
+    return false;
+  }
+  if (
+    normalized === "1" ||
+    normalized === "true" ||
+    normalized === "on" ||
+    normalized === "yes"
+  ) {
+    return true;
+  }
+  throw new Error(
+    "Invalid CORRELATION_BRIDGE_ENABLED: use true/false (or 1/0, on/off).",
+  );
+}
+
+const TENANT_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * CORRELATION_BRIDGE_DISABLED_TENANTS — comma-separated tenant UUIDs for which
+ * the bridge fallback is disabled while signed correlation remains available.
+ * Only applies when CORRELATION_BRIDGE_ENABLED is true. Unset / empty → none.
+ */
+export function resolveCorrelationBridgeDisabledTenants(
+  raw: string | undefined,
+): ReadonlySet<string> {
+  if (raw === undefined || raw.trim() === "") {
+    return new Set();
+  }
+
+  const ids = raw
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+
+  for (const id of ids) {
+    if (!TENANT_UUID_RE.test(id)) {
+      throw new Error(
+        `Invalid CORRELATION_BRIDGE_DISABLED_TENANTS: "${id}" is not a UUID.`,
+      );
+    }
+  }
+
+  return new Set(ids);
+}
+
+/**
+ * Effective bridge enablement for one tenant (global ∧ ¬tenant-disabled).
+ */
+export function isCorrelationBridgeEnabledForTenant(
+  globalEnabled: boolean,
+  disabledTenants: ReadonlySet<string>,
+  tenantId: string,
+): boolean {
+  if (!globalEnabled) {
+    return false;
+  }
+  return !disabledTenants.has(tenantId);
+}
+
 export const env = {
   nodeEnv,
   port,
@@ -94,5 +171,13 @@ export const env = {
 
   telemetryBatchMaxEvents: resolveTelemetryBatchMaxEvents(
     process.env.TELEMETRY_BATCH_MAX_EVENTS,
+  ),
+
+  correlationBridgeEnabled: resolveCorrelationBridgeEnabled(
+    process.env.CORRELATION_BRIDGE_ENABLED,
+  ),
+
+  correlationBridgeDisabledTenants: resolveCorrelationBridgeDisabledTenants(
+    process.env.CORRELATION_BRIDGE_DISABLED_TENANTS,
   ),
 };

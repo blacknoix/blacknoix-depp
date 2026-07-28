@@ -1,0 +1,8 @@
+#!/bin/sh
+# Blocks commits that introduce unresolved git merge-conflict markers.
+# Install: git config core.hooksPath .githooks
+# See docs/contributing.md
+
+set -e
+ROOT="$(git rev-parse --show-toplevel)"
+node "$ROOT/scripts/check-merge-markers.cjs" --staged

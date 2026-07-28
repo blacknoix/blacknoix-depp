@@ -12,20 +12,21 @@ import { requireTenant } from "./middleware/tenant-context";
 import type { OidcLoginService } from "./auth/oidc/login";
 import type { AuthService } from "./auth/service";
 import type { AgentsService } from "./agents/service";
+import type { CorrelationService } from "./correlation/service";
 import type { DatabaseHealthCheck } from "./db/pool";
+import type { FindingSharedViewsRepository } from "./findings-views/repository";
 import { createAgentsRouter } from "./routes/agents";
 import { createAuthRouter } from "./routes/auth";
+import { createFindingsRouter } from "./routes/findings";
 import { createHealthRouter } from "./routes/health";
 import rootRouter from "./routes/root";
 import { createTenantsRouter } from "./routes/tenants";
 import { createTelemetryRouter } from "./routes/telemetry";
+import { createThreatEventsRouter } from "./routes/threat-events";
 import type { TenantLookup } from "./tenants/repository";
 import type { TelemetryService } from "./telemetry/service";
-<<<<<<< HEAD
-=======
-import type { CorrelationService } from "./correlation/service";
-import type { FindingSharedViewsRepository } from "./findings-views/repository";
->>>>>>> 12b026d (feat: deepen Findings operator workflow with views, jump bar, and attention)
+import type { DeviceIdentityService } from "./threat-events/device-identity";
+import type { ThreatEventService } from "./threat-events/service";
 
 /**
  * Maximum accepted JSON request body.
@@ -40,7 +41,7 @@ import type { FindingSharedViewsRepository } from "./findings-views/repository";
 const DEFAULT_JSON_BODY_LIMIT = "100kb";
 
 export interface AppOptions {
-  /** Accepts a `bytes` string such as "100kb" or "1mb", or a raw byte count. */
+  /** Accepts a `bytes` string such as "100kb" or a raw byte count. */
   jsonBodyLimit?: string | number;
 
   /**
@@ -96,12 +97,19 @@ export interface AppOptions {
    * routes fail closed; index.ts wires it when database + JWT config are present.
    */
   agentsService?: AgentsService;
-<<<<<<< HEAD
-=======
+
+  /** Device identity bind/revoke (Windows-first agent key binding). */
+  deviceIdentities?: DeviceIdentityService;
 
   /**
-   * Backs GET /v1/findings. Omitted means the route fails closed; index.ts
-   * wires it when a database (and correlation) is configured.
+   * Agent-signed THREATEVENT submit. Omitted means the route fails closed.
+   */
+  threatEventService?: ThreatEventService;
+
+  /**
+   * Backs GET /v1/findings (and snooze/dashboard/attention). Omitted means the
+   * route fails closed; index.ts wires it when a database (and correlation) is
+   * configured.
    */
   correlationService?: CorrelationService;
 
@@ -110,7 +118,6 @@ export interface AppOptions {
    * means those routes fail closed.
    */
   sharedViews?: FindingSharedViewsRepository;
->>>>>>> 12b026d (feat: deepen Findings operator workflow with views, jump bar, and attention)
 }
 
 export function createApp(options: AppOptions = {}) {
@@ -163,11 +170,15 @@ export function createApp(options: AppOptions = {}) {
     createTenantsRouter({ lookupTenant: options.lookupTenant }),
   );
 
-  // Agent enrollment (register + revoke). Credential exchange is under /v1/auth.
+  // Agent enrollment (register + revoke + device identity). Credential exchange
+  // is under /v1/auth.
   app.use(
     "/v1/agents",
     requireTenant,
-    createAgentsRouter({ agentsService: options.agentsService }),
+    createAgentsRouter({
+      agentsService: options.agentsService,
+      deviceIdentities: options.deviceIdentities,
+    }),
   );
 
   // Telemetry ingest: requires an agent principal (agent JWT / x-agent-id).
@@ -180,9 +191,17 @@ export function createApp(options: AppOptions = {}) {
     }),
   );
 
-<<<<<<< HEAD
-=======
+  // Agent-signed THREATEVENT submit (Ed25519 verify → finality → finding).
+  app.use(
+    "/v1/threat-events",
+    requireTenant,
+    createThreatEventsRouter({
+      threatEvents: options.threatEventService,
+    }),
+  );
+
   // Correlation findings: narrow operator read surface (not an alert console).
+  // Mounts snooze/dashboard (dec9ffc) and shared views/attention (12b026d).
   app.use(
     "/v1/findings",
     requireTenant,
@@ -192,7 +211,6 @@ export function createApp(options: AppOptions = {}) {
     }),
   );
 
->>>>>>> 12b026d (feat: deepen Findings operator workflow with views, jump bar, and attention)
   // Terminal handlers, in order.
   app.use(notFound);
   app.use(errorHandler);

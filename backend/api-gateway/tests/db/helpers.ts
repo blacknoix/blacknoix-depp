@@ -18,6 +18,39 @@ export interface DbHandles {
   close: () => Promise<void>;
 }
 
+/**
+ * Tenant-owned + registry tables declared in src/db/schema.ts Database.
+ * Must exist after migrate:latest on this branch.
+ */
+export const SCHEMA_RESET_TABLES = [
+  "threat_events",
+  "device_identities",
+  "finding_shared_views",
+  "finding_suppressions",
+  "correlation_findings",
+  "telemetry_events",
+  "agent_credentials",
+  "oidc_initiations",
+  "refresh_tokens",
+  "sessions",
+  "users",
+  "agents",
+  "tenants",
+] as const;
+
+/**
+ * Extra tenant-owned tables that may exist on a developer database that once
+ * ran newer migrations from another branch. Included in TRUNCATE when present
+ * so reset does not leave orphan fixture rows. Not part of this branch's
+ * schema.ts until those migrations land here.
+ */
+export const OPTIONAL_TENANT_RESET_TABLES = [
+  "work_tenant_defaults",
+  "work_shared_views",
+  "finding_attention_dismissals",
+  "finding_revisit_reminders",
+] as const;
+
 function requireEnv(name: string): string {
   const value = process.env[name];
 
@@ -73,14 +106,35 @@ export async function connectDb(): Promise<DbHandles> {
  * will pull fixtures out from under another's inserts (FK violations, duplicate
  * slugs). This is enforced by `--test-concurrency=1` in the `test:db` script; do
  * not remove it without giving each file its own isolated data.
+ *
+ * Contract:
+ * - SCHEMA_RESET_TABLES must all exist (fail closed if a migration is missing).
+ * - OPTIONAL_TENANT_RESET_TABLES are truncated when present.
+ * - CASCADE also clears any other tables that FK into the truncated set
+ *   (defense in depth for unexpected local relations).
  */
 export async function resetSchema(migrator: Pool): Promise<void> {
+  const { rows } = await migrator.query<{ tablename: string }>(
+    `select tablename from pg_tables where schemaname = 'public'`,
+  );
+  const present = new Set(rows.map((row) => row.tablename));
+
+  for (const table of SCHEMA_RESET_TABLES) {
+    if (!present.has(table)) {
+      throw new Error(
+        `resetSchema: required table "${table}" is missing. ` +
+          "Run migrations to latest so schema.ts and the database agree.",
+      );
+    }
+  }
+
+  const tables = [
+    ...OPTIONAL_TENANT_RESET_TABLES.filter((table) => present.has(table)),
+    ...SCHEMA_RESET_TABLES,
+  ];
+
   await migrator.query(
-<<<<<<< HEAD
-    "truncate table telemetry_events, agent_credentials, oidc_initiations, refresh_tokens, sessions, users, agents, tenants restart identity cascade",
-=======
-    "truncate table finding_suppressions, correlation_findings, telemetry_events, agent_credentials, oidc_initiations, refresh_tokens, sessions, users, agents, tenants restart identity cascade",
->>>>>>> dec9ffc (feat(api-gateway): add findings snooze and operator dashboard summary)
+    `truncate table ${tables.join(", ")} restart identity cascade`,
   );
 }
 
@@ -92,4 +146,38 @@ export async function seedTenant(migrator: Pool, slug: string): Promise<string> 
   );
 
   return result.rows[0].id;
+}
+
+/**
+ * Seeds an active Ed25519 device identity for THREATEVENT submit (dev/test).
+ * public_key is a unique base64url placeholder (crypto verify deferred).
+ */
+export async function seedDeviceIdentity(
+  migrator: Pool,
+  tenantId: string,
+  agentId: string,
+  publicKeyEd25519?: string,
+): Promise<string> {
+  const key =
+    publicKeyEd25519 ??
+    Buffer.from(`dev-pk-${tenantId}-${agentId}`).toString("base64url");
+
+  await migrator.query("begin");
+  try {
+    await migrator.query(`select set_config('app.current_tenant', $1, true)`, [
+      tenantId,
+    ]);
+    const result = await migrator.query<{ id: string }>(
+      `insert into device_identities
+         (tenant_id, agent_id, public_key_ed25519, status)
+       values ($1, $2, $3, 'active')
+       returning id`,
+      [tenantId, agentId, key],
+    );
+    await migrator.query("commit");
+    return result.rows[0].id;
+  } catch (err) {
+    await migrator.query("rollback");
+    throw err;
+  }
 }

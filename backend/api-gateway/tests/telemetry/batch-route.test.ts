@@ -60,6 +60,7 @@ function stubService(
         ingestedAt: new Date("2026-01-01T00:00:00.000Z"),
       })),
     }),
+    query: async () => ({ ok: false, reason: "agent_not_found" }),
     ...overrides,
   };
 }

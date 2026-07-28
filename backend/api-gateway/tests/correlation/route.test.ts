@@ -78,6 +78,7 @@ function emptyIntentFields() {
     operatorNote: null as string | null,
     operatorNoteUpdatedAt: null as Date | null,
     operatorNoteUpdatedByUserId: null as string | null,
+    detectionSource: "legacy_unspecified",
   };
 }
 

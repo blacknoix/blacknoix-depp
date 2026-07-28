@@ -8,7 +8,18 @@ import { createFindingSuppressionsRepository } from "../../src/correlation/suppr
 import { withTenantTransaction } from "../../src/db/tenant-context";
 import { createTelemetryRepository } from "../../src/telemetry/repository";
 import { createTelemetryService } from "../../src/telemetry/service";
-import { connectDb, resetSchema, seedTenant, type DbHandles } from "../db/helpers";
+import { createDeviceIdentityRepository } from "../../src/threat-events/device-identity-repository";
+import { createDevSingleNodeFinalizer } from "../../src/threat-events/finality";
+import { createInMemoryGossip } from "../../src/threat-events/gossip";
+import { createThreatEventsRepository } from "../../src/threat-events/repository";
+import { createThreatEventService } from "../../src/threat-events/service";
+import {
+  connectDb,
+  resetSchema,
+  seedDeviceIdentity,
+  seedTenant,
+  type DbHandles,
+} from "./helpers";
 
 let db: DbHandles;
 let tenantA: string;
@@ -19,10 +30,20 @@ let agentB: string;
 function correlationFor(
   now?: () => Date,
 ): ReturnType<typeof createCorrelationService> {
+  const findings = createCorrelationFindingsRepository(db.app);
+  const threatEvents = createThreatEventService({
+    deviceIdentities: createDeviceIdentityRepository(db.app),
+    threatEvents: createThreatEventsRepository(db.app),
+    findings,
+    finality: createDevSingleNodeFinalizer(),
+    gossip: createInMemoryGossip(),
+    ...(now ? { now } : {}),
+  });
   return createCorrelationService({
     telemetry: createTelemetryRepository(db.app),
-    findings: createCorrelationFindingsRepository(db.app),
+    findings,
     suppressions: createFindingSuppressionsRepository(db.app),
+    threatEvents,
     ...(now ? { now } : {}),
   });
 }
@@ -59,6 +80,9 @@ beforeEach(async () => {
 
   agentA = insertedA.id;
   agentB = insertedB.id;
+
+  await seedDeviceIdentity(db.migrator, tenantA, agentA);
+  await seedDeviceIdentity(db.migrator, tenantB, agentB);
 });
 
 function fixedNow(iso: string): () => Date {
@@ -78,6 +102,7 @@ describe("correlation findings persistence and isolation", () => {
       windowStart: new Date("2026-03-01T12:00:00.000Z"),
       windowEnd: new Date("2026-03-01T12:10:00.000Z"),
       windowBucket: new Date("2026-03-01T12:00:00.000Z"),
+    detectionSource: "legacy_unspecified",
     });
 
     const seenByA = await findings.listFindings(tenantA, {
@@ -105,6 +130,7 @@ describe("correlation findings persistence and isolation", () => {
       windowStart: bucket,
       windowEnd: new Date("2026-03-01T12:10:00.000Z"),
       windowBucket: bucket,
+    detectionSource: "legacy_unspecified",
     };
 
     const first = await findings.insertFindingIgnoreDup(tenantA, payload);
@@ -423,6 +449,7 @@ describe("findings lifecycle triage", () => {
       windowStart: new Date("2026-03-01T12:00:00.000Z"),
       windowEnd: new Date("2026-03-01T12:10:00.000Z"),
       windowBucket: new Date("2026-03-01T12:00:00.000Z"),
+    detectionSource: "legacy_unspecified",
     });
     assert.ok(id);
     return id!;
@@ -548,6 +575,7 @@ describe("findings lifecycle triage", () => {
       windowStart: new Date("2026-03-01T12:00:00.000Z"),
       windowEnd: new Date("2026-03-01T12:01:00.000Z"),
       windowBucket: new Date("2026-03-01T12:00:00.000Z"),
+    detectionSource: "legacy_unspecified",
     });
     assert.ok(id);
 
@@ -714,6 +742,7 @@ describe("findings dashboard read-model", () => {
       windowStart: new Date("2026-03-01T11:50:00.000Z"),
       windowEnd: new Date("2026-03-01T12:00:00.000Z"),
       windowBucket: new Date("2026-03-01T11:50:00.000Z"),
+    detectionSource: "legacy_unspecified",
     });
     await findings.insertFindingIgnoreDup(tenantA, {
       agentId: agentA,
@@ -724,6 +753,7 @@ describe("findings dashboard read-model", () => {
       windowStart: new Date("2026-03-01T11:59:00.000Z"),
       windowEnd: new Date("2026-03-01T12:00:00.000Z"),
       windowBucket: new Date("2026-03-01T11:59:00.000Z"),
+    detectionSource: "legacy_unspecified",
     });
     await findings.insertFindingIgnoreDup(tenantB, {
       agentId: agentB,
@@ -734,6 +764,7 @@ describe("findings dashboard read-model", () => {
       windowStart: new Date("2026-03-01T11:50:00.000Z"),
       windowEnd: new Date("2026-03-01T12:00:00.000Z"),
       windowBucket: new Date("2026-03-01T11:50:00.000Z"),
+    detectionSource: "legacy_unspecified",
     });
 
     const listed = await findings.listFindings(tenantA, {
@@ -790,6 +821,7 @@ describe("findings dashboard read-model", () => {
       windowStart: new Date("2026-03-01T11:55:00.000Z"),
       windowEnd: new Date("2026-03-01T12:00:00.000Z"),
       windowBucket: new Date("2026-03-01T11:55:00.000Z"),
+    detectionSource: "legacy_unspecified",
     });
 
     // Age created_at under tenant scope (FORCE RLS applies even to the owner).
@@ -821,6 +853,7 @@ describe("findings attention digest (real database)", () => {
       windowStart: new Date("2026-03-01T11:50:00.000Z"),
       windowEnd: new Date("2026-03-01T12:00:00.000Z"),
       windowBucket: new Date("2026-03-01T11:50:00.000Z"),
+    detectionSource: "legacy_unspecified",
     });
     await findings.insertFindingIgnoreDup(tenantB, {
       agentId: agentB,
@@ -831,6 +864,7 @@ describe("findings attention digest (real database)", () => {
       windowStart: new Date("2026-03-01T11:50:00.000Z"),
       windowEnd: new Date("2026-03-01T12:00:00.000Z"),
       windowBucket: new Date("2026-03-01T11:50:00.000Z"),
+    detectionSource: "legacy_unspecified",
     });
 
     const listed = await findings.listFindings(tenantA, {

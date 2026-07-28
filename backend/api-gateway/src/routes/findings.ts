@@ -60,6 +60,7 @@ function serializeFinding(finding: CorrelationFindingRow) {
       ? finding.operatorNoteUpdatedAt.toISOString()
       : null,
     operatorNoteUpdatedByUserId: finding.operatorNoteUpdatedByUserId,
+    detectionSource: finding.detectionSource,
     evidence: finding.evidence,
     windowStart: finding.windowStart.toISOString(),
     windowEnd: finding.windowEnd.toISOString(),

@@ -34,6 +34,7 @@ import type {
   FindingSuppressionRow,
   FindingSuppressionsRepository,
 } from "./suppression-repository";
+import type { ThreatEventService } from "../threat-events/service";
 
 export interface SilenceEvaluateOptions {
   /** When set, evaluate only this agent. */
@@ -129,6 +130,8 @@ export interface CorrelationServiceDeps {
   telemetry: TelemetryRepository;
   findings: CorrelationFindingsRepository;
   suppressions: FindingSuppressionsRepository;
+  /** Required: findings materialize only after threat-event finality. */
+  threatEvents: ThreatEventService;
   /** Injectable clock for deterministic tests. Defaults to Date.now. */
   now?: () => Date;
 }
@@ -147,7 +150,7 @@ function isUniqueViolation(err: unknown): boolean {
 export function createCorrelationService(
   deps: CorrelationServiceDeps,
 ): CorrelationService {
-  const { telemetry, findings, suppressions } = deps;
+  const { telemetry, findings, suppressions, threatEvents } = deps;
   const now = deps.now ?? (() => new Date());
 
   async function persistCandidate(
@@ -178,26 +181,37 @@ export function createCorrelationService(
       return "snoozed";
     }
 
-    const inserted = await findings.insertFindingIgnoreDup(tenantId, {
+    const outcome = await threatEvents.submitFromDetection(
+      tenantId,
       agentId,
-      ruleId: candidate.ruleId,
-      title: candidate.title,
-      severity: candidate.severity,
-      evidence: candidate.evidence,
-      windowStart: candidate.windowStart,
-      windowEnd: candidate.windowEnd,
-      windowBucket: candidate.windowBucket,
-    });
+      candidate,
+      at,
+    );
 
-    if (inserted) {
+    if (outcome.ok && outcome.status === "created") {
       logLifecycle("info", "correlation_finding_created", {
         tenantId,
         agentId,
         ruleId: candidate.ruleId,
-        findingId: inserted,
+        findingId: outcome.findingId,
+        threatEventId: outcome.threatEventId,
       });
       return "created";
     }
+
+    if (outcome.ok && outcome.status === "deduped") {
+      return "deduped";
+    }
+
+    logLifecycle("warn", "correlation_finding_finality_blocked", {
+      tenantId,
+      agentId,
+      ruleId: candidate.ruleId,
+      status: outcome.status,
+      reason: outcome.reason,
+    });
+    // Fail closed: no finding without finality. Treat as deduped/suppressed
+    // for silence counts (no new operator row).
     return "deduped";
   }
 

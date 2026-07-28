@@ -163,6 +163,7 @@ describe("agent inventory (real database)", () => {
           window_end: new Date("2026-03-01T12:00:00.000Z"),
           window_bucket: new Date("2026-03-01T11:50:00.000Z"),
           status: "open",
+          detection_source: "legacy_unspecified",
         })
         .execute(),
     );

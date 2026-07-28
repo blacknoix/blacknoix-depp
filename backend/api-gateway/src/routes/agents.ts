@@ -4,6 +4,7 @@ import type { AgentsService } from "../agents/service";
 import { logLifecycle } from "../lib/log";
 import { AppError } from "../middleware/error-handler";
 import { requirePrincipal } from "../middleware/tenant-context";
+import type { DeviceIdentityService } from "../threat-events/device-identity";
 
 export interface AgentsRouterOptions {
   /**
@@ -11,6 +12,9 @@ export interface AgentsRouterOptions {
    * a database and JWT config are both present (credential exchange needs JWT).
    */
   agentsService?: AgentsService;
+
+  /** Device identity bind/revoke. Omitted → those routes fail closed (503). */
+  deviceIdentities?: DeviceIdentityService;
 }
 
 const UUID =
@@ -25,11 +29,15 @@ function readString(body: unknown, key: string): string {
 }
 
 /**
- * Tenant-scoped agent enrollment (register + revoke) and operator inventory.
+ * Tenant-scoped agent enrollment (register + revoke), operator inventory,
+ * and Windows-first device identity bind/revoke.
  *
  * Who may call enrollment: any authenticated tenant principal (human JWT /
  * dev-header). RBAC on enrollment is deferred. Agent machine identity is
  * established by the returned credential, not by this route's caller type.
+ *
+ * Device identity bind: agent principal only; path agentId must match.
+ * Device identity revoke: operator principal only.
  *
  * Inventory (GET /) is operator-only — agent principals are rejected.
  */
@@ -137,6 +145,174 @@ export function createAgentsRouter(options: AgentsRouterOptions = {}): Router {
       next(err);
     }
   });
+
+  /**
+   * POST /v1/agents/:agentId/device-identity — agent self-binds Ed25519 pubkey.
+   */
+  router.post(
+    "/:agentId/device-identity",
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const principal = requirePrincipal(req);
+
+        if (!principal.agentId) {
+          throw new AppError(
+            "AGENT_AUTH_REQUIRED",
+            401,
+            "Agent authentication is required",
+          );
+        }
+
+        if (!options.deviceIdentities) {
+          throw new AppError(
+            "DEVICE_IDENTITY_UNAVAILABLE",
+            503,
+            "Device identity binding is not available",
+          );
+        }
+
+        const agentId = String(req.params.agentId ?? "").trim().toLowerCase();
+        if (!UUID.test(agentId)) {
+          throw new AppError("AGENT_INVALID", 400, "agentId must be a UUID");
+        }
+
+        if (agentId !== principal.agentId.toLowerCase()) {
+          throw new AppError(
+            "DEVICE_IDENTITY_REJECTED",
+            403,
+            "Agent may only bind its own device identity",
+          );
+        }
+
+        const publicKeyEd25519 = readString(req.body, "publicKeyEd25519").trim();
+        if (publicKeyEd25519.length === 0) {
+          throw new AppError(
+            "DEVICE_IDENTITY_INVALID",
+            400,
+            "publicKeyEd25519 is required",
+          );
+        }
+
+        const bodyKeys = Object.keys(
+          typeof req.body === "object" && req.body !== null
+            ? (req.body as Record<string, unknown>)
+            : {},
+        );
+        if (bodyKeys.some((k) => k !== "publicKeyEd25519")) {
+          throw new AppError(
+            "DEVICE_IDENTITY_INVALID",
+            400,
+            "only publicKeyEd25519 is accepted",
+          );
+        }
+
+        const outcome = await options.deviceIdentities.bindForAgent(
+          principal.tenantId,
+          principal.agentId,
+          publicKeyEd25519,
+        );
+
+        if (!outcome.ok) {
+          if (outcome.reason === "malformed_key") {
+            throw new AppError(
+              "DEVICE_IDENTITY_INVALID",
+              400,
+              outcome.message,
+            );
+          }
+          if (outcome.reason === "revoked") {
+            throw new AppError(
+              "DEVICE_IDENTITY_REVOKED",
+              400,
+              "Device identity is revoked",
+            );
+          }
+          throw new AppError(
+            "DEVICE_IDENTITY_REJECTED",
+            400,
+            "Device identity cannot be bound",
+          );
+        }
+
+        const status = outcome.status === "created" ? 201 : 200;
+        res.status(status).json({
+          ok: true,
+          data: {
+            deviceIdentityId: outcome.identity.id,
+            agentId: outcome.identity.agentId,
+            status: outcome.identity.status,
+            publicKeyEd25519: outcome.identity.publicKeyEd25519,
+            createdAt: outcome.identity.createdAt.toISOString(),
+          },
+          requestId: req.requestId,
+        });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  /**
+   * POST /v1/agents/:agentId/device-identity/revoke — operator revoke.
+   */
+  router.post(
+    "/:agentId/device-identity/revoke",
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const principal = requirePrincipal(req);
+
+        if (principal.agentId) {
+          throw new AppError(
+            "AGENTS_REJECTED",
+            403,
+            "Device identity revoke requires an operator principal",
+          );
+        }
+
+        if (!options.deviceIdentities) {
+          throw new AppError(
+            "DEVICE_IDENTITY_UNAVAILABLE",
+            503,
+            "Device identity binding is not available",
+          );
+        }
+
+        const agentId = String(req.params.agentId ?? "").trim().toLowerCase();
+        if (!UUID.test(agentId)) {
+          throw new AppError("AGENT_INVALID", 400, "agentId must be a UUID");
+        }
+
+        const outcome = await options.deviceIdentities.revokeForAgent(
+          principal.tenantId,
+          agentId,
+        );
+
+        if (!outcome.ok) {
+          logLifecycle("warn", "device_identity_revoke_miss", {
+            requestId: req.requestId,
+            tenantId: principal.tenantId,
+          });
+          throw new AppError(
+            "DEVICE_IDENTITY_REVOKE_REJECTED",
+            400,
+            "Device identity cannot be revoked",
+          );
+        }
+
+        res.status(200).json({
+          ok: true,
+          data: {
+            agentId,
+            deviceIdentityId: outcome.identity.id,
+            revoked: true,
+          },
+          requestId: req.requestId,
+        });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
 
   /**
    * POST /v1/agents/:agentId/credentials/revoke — revoke the active credential.

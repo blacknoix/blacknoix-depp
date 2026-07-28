@@ -147,6 +147,8 @@ export interface CorrelationFindingsTable {
   operator_note: string | null;
   operator_note_updated_at: NullableTimestamp;
   operator_note_updated_by_user_id: string | null;
+  /** ADR-0005: bridge_correlation | agent_signed | legacy_unspecified */
+  detection_source: string;
 }
 
 /**
@@ -180,6 +182,47 @@ export interface FindingSharedViewsTable {
   created_by_user_id: string | null;
 }
 
+/**
+ * Tenant-owned Ed25519 device identity bound to an agent (TRD bridge).
+ * NODEENROLL cert issuance deferred; active status required for THREATEVENT.
+ */
+export interface DeviceIdentitiesTable {
+  id: Generated<string>;
+  tenant_id: string;
+  agent_id: string;
+  public_key_ed25519: string;
+  device_cert_pem: string | null;
+  status: string;
+  created_at: Generated<Timestamp>;
+  revoked_at: NullableTimestamp;
+}
+
+/**
+ * Tenant-owned signed THREATEVENT persistence (TRD bridge).
+ * Findings materialize only after finality_state becomes finalized.
+ */
+export interface ThreatEventsTable {
+  id: Generated<string>;
+  tenant_id: string;
+  agent_id: string;
+  device_identity_id: string;
+  detection_rule_id: string;
+  title: string;
+  severity: string;
+  evidence: Record<string, unknown>;
+  window_start: Timestamp;
+  window_end: Timestamp;
+  window_bucket: Timestamp;
+  occurred_at: Timestamp;
+  signature: string;
+  signed_at: Timestamp;
+  finality_state: string;
+  finality_reason: string | null;
+  finalized_at: NullableTimestamp;
+  finding_id: string | null;
+  created_at: Generated<Timestamp>;
+}
+
 export interface Database {
   tenants: TenantsTable;
   agents: AgentsTable;
@@ -192,4 +235,6 @@ export interface Database {
   correlation_findings: CorrelationFindingsTable;
   finding_suppressions: FindingSuppressionsTable;
   finding_shared_views: FindingSharedViewsTable;
+  device_identities: DeviceIdentitiesTable;
+  threat_events: ThreatEventsTable;
 }

@@ -29,7 +29,15 @@ agent-signed detection (Windows agent path)
 5. Missing / revoked / mismatched identity or bad signature fails closed before finality.
 6. Correlation `submitFromDetection` still uses a non-crypto bridge signature
    (gateway never holds agent private keys); it still requires an active identity
-   and finality before findings.
+   and finality before findings. Bridge findings are labeled
+   `detection_source = "bridge_correlation"` (ADR-0005). Signed findings use
+   `detection_source = "agent_signed"` and must never use the bridge label.
+7. Detection findings are inserted only by the single finality-gated materializer
+   (`materializeFindingAfterFinality`), which requires an intrinsic finality
+   proof from a successful `finalize()`. See ADR-0005.
+8. Deduped findings retain first-writer `detection_source`: a later signed
+   detection for the same `(tenant, agent, rule, window_bucket)` does not upgrade
+   a pre-existing bridge finding's provenance (and vice versa).
 
 ## Canonical signing bytes (normative — v0)
 
@@ -127,9 +135,16 @@ For agent-signed submit (`ThreatEventService.submitSigned`):
 ## Deferred
 
 - `canonicalVersion: 1` (explicit version field inside the signed JSON)
+- Removal of the correlation bridge (ADR-0005 removal slice)
 - NODEENROLL / device cert issuance
 - Re-bind after revoke (new enrollment cycle)
 - CometBFT / libp2p gossipsub
 - Agent-signed correlation detections (replace bridge placeholder)
 - Full Rust Windows agent
 - Findings UI changes
+
+## Related
+
+- [ADR-0005](adr/0005-correlation-bridge-provenance-and-finality.md) — bridge
+  provenance + single finality materializer
+- [Bridge narrowing checklist](correlation-bridge-narrowing-checklist.md)

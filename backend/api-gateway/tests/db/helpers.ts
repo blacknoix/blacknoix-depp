@@ -23,6 +23,8 @@ export interface DbHandles {
  * Must exist after migrate:latest on this branch.
  */
 export const SCHEMA_RESET_TABLES = [
+  "threat_events",
+  "device_identities",
   "finding_shared_views",
   "finding_suppressions",
   "correlation_findings",
@@ -144,4 +146,38 @@ export async function seedTenant(migrator: Pool, slug: string): Promise<string> 
   );
 
   return result.rows[0].id;
+}
+
+/**
+ * Seeds an active Ed25519 device identity for THREATEVENT submit (dev/test).
+ * public_key is a unique base64url placeholder (crypto verify deferred).
+ */
+export async function seedDeviceIdentity(
+  migrator: Pool,
+  tenantId: string,
+  agentId: string,
+  publicKeyEd25519?: string,
+): Promise<string> {
+  const key =
+    publicKeyEd25519 ??
+    Buffer.from(`dev-pk-${tenantId}-${agentId}`).toString("base64url");
+
+  await migrator.query("begin");
+  try {
+    await migrator.query(`select set_config('app.current_tenant', $1, true)`, [
+      tenantId,
+    ]);
+    const result = await migrator.query<{ id: string }>(
+      `insert into device_identities
+         (tenant_id, agent_id, public_key_ed25519, status)
+       values ($1, $2, $3, 'active')
+       returning id`,
+      [tenantId, agentId, key],
+    );
+    await migrator.query("commit");
+    return result.rows[0].id;
+  } catch (err) {
+    await migrator.query("rollback");
+    throw err;
+  }
 }

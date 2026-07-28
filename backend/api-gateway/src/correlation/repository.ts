@@ -17,6 +17,8 @@ export interface CorrelationFindingInsert {
   windowStart: Date;
   windowEnd: Date;
   windowBucket: Date;
+  /** ADR-0005 mandatory provenance for new detection writes. */
+  detectionSource: string;
 }
 
 export interface CorrelationFindingRow {
@@ -40,6 +42,7 @@ export interface CorrelationFindingRow {
   operatorNote: string | null;
   operatorNoteUpdatedAt: Date | null;
   operatorNoteUpdatedByUserId: string | null;
+  detectionSource: string;
 }
 
 export interface ListFindingsQuery {
@@ -179,6 +182,7 @@ function mapRow(row: {
   operator_note: string | null;
   operator_note_updated_at: unknown;
   operator_note_updated_by_user_id: string | null;
+  detection_source: string;
 }): CorrelationFindingRow {
   return {
     id: row.id,
@@ -207,6 +211,7 @@ function mapRow(row: {
       ? asDate(row.operator_note_updated_at)
       : null,
     operatorNoteUpdatedByUserId: row.operator_note_updated_by_user_id,
+    detectionSource: row.detection_source,
   };
 }
 
@@ -229,6 +234,7 @@ export function createCorrelationFindingsRepository(
             window_end: finding.windowEnd,
             window_bucket: finding.windowBucket,
             status: "open",
+            detection_source: finding.detectionSource,
           })
           .onConflict((oc) =>
             oc

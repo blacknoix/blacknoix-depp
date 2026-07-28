@@ -22,8 +22,11 @@ import { createHealthRouter } from "./routes/health";
 import rootRouter from "./routes/root";
 import { createTenantsRouter } from "./routes/tenants";
 import { createTelemetryRouter } from "./routes/telemetry";
+import { createThreatEventsRouter } from "./routes/threat-events";
 import type { TenantLookup } from "./tenants/repository";
 import type { TelemetryService } from "./telemetry/service";
+import type { DeviceIdentityService } from "./threat-events/device-identity";
+import type { ThreatEventService } from "./threat-events/service";
 
 /**
  * Maximum accepted JSON request body.
@@ -95,6 +98,14 @@ export interface AppOptions {
    */
   agentsService?: AgentsService;
 
+  /** Device identity bind/revoke (Windows-first agent key binding). */
+  deviceIdentities?: DeviceIdentityService;
+
+  /**
+   * Agent-signed THREATEVENT submit. Omitted means the route fails closed.
+   */
+  threatEventService?: ThreatEventService;
+
   /**
    * Backs GET /v1/findings (and snooze/dashboard/attention). Omitted means the
    * route fails closed; index.ts wires it when a database (and correlation) is
@@ -159,11 +170,15 @@ export function createApp(options: AppOptions = {}) {
     createTenantsRouter({ lookupTenant: options.lookupTenant }),
   );
 
-  // Agent enrollment (register + revoke). Credential exchange is under /v1/auth.
+  // Agent enrollment (register + revoke + device identity). Credential exchange
+  // is under /v1/auth.
   app.use(
     "/v1/agents",
     requireTenant,
-    createAgentsRouter({ agentsService: options.agentsService }),
+    createAgentsRouter({
+      agentsService: options.agentsService,
+      deviceIdentities: options.deviceIdentities,
+    }),
   );
 
   // Telemetry ingest: requires an agent principal (agent JWT / x-agent-id).
@@ -173,6 +188,15 @@ export function createApp(options: AppOptions = {}) {
     createTelemetryRouter({
       telemetryService: options.telemetryService,
       batchMaxEvents: options.telemetryBatchMaxEvents,
+    }),
+  );
+
+  // Agent-signed THREATEVENT submit (Ed25519 verify → finality → finding).
+  app.use(
+    "/v1/threat-events",
+    requireTenant,
+    createThreatEventsRouter({
+      threatEvents: options.threatEventService,
     }),
   );
 

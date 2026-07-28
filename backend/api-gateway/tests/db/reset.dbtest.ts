@@ -83,10 +83,10 @@ describe("db resetSchema clears tenant-owned fixtures", () => {
       const findingInsert = await db.migrator.query<{ id: string }>(
         `insert into correlation_findings (
            tenant_id, agent_id, rule_id, title, severity, evidence,
-           window_start, window_end, window_bucket, status
+           window_start, window_end, window_bucket, status, detection_source
          ) values (
            $1, $2, 'agent.heartbeat_burst', 'reset finding', 'medium', '{}'::jsonb,
-           now(), now(), now(), 'open'
+           now(), now(), now(), 'open', 'legacy_unspecified'
          ) returning id`,
         [tenantId, agentId],
       );

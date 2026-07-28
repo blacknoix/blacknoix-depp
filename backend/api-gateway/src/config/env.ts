@@ -77,6 +77,38 @@ export function resolveTelemetryBatchMaxEvents(raw: string | undefined): number 
   return value;
 }
 
+/**
+ * CORRELATION_BRIDGE_ENABLED — when false, submitFromDetection skips all
+ * materialization (ADR-0005). Unset / empty → true (bridge on).
+ */
+export function resolveCorrelationBridgeEnabled(
+  raw: string | undefined,
+): boolean {
+  if (raw === undefined || raw.trim() === "") {
+    return true;
+  }
+  const normalized = raw.trim().toLowerCase();
+  if (
+    normalized === "0" ||
+    normalized === "false" ||
+    normalized === "off" ||
+    normalized === "no"
+  ) {
+    return false;
+  }
+  if (
+    normalized === "1" ||
+    normalized === "true" ||
+    normalized === "on" ||
+    normalized === "yes"
+  ) {
+    return true;
+  }
+  throw new Error(
+    "Invalid CORRELATION_BRIDGE_ENABLED: use true/false (or 1/0, on/off).",
+  );
+}
+
 export const env = {
   nodeEnv,
   port,
@@ -94,5 +126,9 @@ export const env = {
 
   telemetryBatchMaxEvents: resolveTelemetryBatchMaxEvents(
     process.env.TELEMETRY_BATCH_MAX_EVENTS,
+  ),
+
+  correlationBridgeEnabled: resolveCorrelationBridgeEnabled(
+    process.env.CORRELATION_BRIDGE_ENABLED,
   ),
 };

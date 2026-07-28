@@ -3,7 +3,7 @@
  * Fresh-database migration verification.
  *
  * Creates an empty database, grants local-dev roles, runs migrate:latest, and
- * asserts the public tables match the branch schema contract (001–012).
+ * asserts the public tables match the branch schema contract (001–015).
  *
  * Requires a superuser URL (default: postgres local-dev from docker-compose).
  *
@@ -23,6 +23,7 @@ const EXPECTED_TABLES = [
   "agent_credentials",
   "agents",
   "correlation_findings",
+  "device_identities",
   "finding_shared_views",
   "finding_suppressions",
   "oidc_initiations",
@@ -30,6 +31,7 @@ const EXPECTED_TABLES = [
   "sessions",
   "telemetry_events",
   "tenants",
+  "threat_events",
   "users",
 ];
 
@@ -46,6 +48,9 @@ const EXPECTED_MIGRATIONS = [
   "010_finding_suppressions",
   "011_finding_shared_views",
   "012_finding_investigation_intent",
+  "013_device_identities",
+  "014_threat_events",
+  "015_finding_detection_source",
 ];
 
 function superuserUrl() {
@@ -140,11 +145,16 @@ async function main() {
   const { rows: cols } = await check.query(
     `select column_name from information_schema.columns
      where table_schema = 'public' and table_name = 'correlation_findings'
-       and column_name in ('owner_user_id', 'operator_note', 'status')
+       and column_name in ('owner_user_id', 'operator_note', 'status', 'detection_source')
      order by column_name`,
   );
   const colNames = cols.map((r) => r.column_name);
-  for (const required of ["owner_user_id", "operator_note", "status"]) {
+  for (const required of [
+    "owner_user_id",
+    "operator_note",
+    "status",
+    "detection_source",
+  ]) {
     if (!colNames.includes(required)) {
       console.error(`missing correlation_findings.${required}`);
       process.exit(1);

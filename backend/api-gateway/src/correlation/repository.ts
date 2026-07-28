@@ -3,6 +3,10 @@ import { sql } from "kysely";
 
 import type { Database } from "../db/schema";
 import { withTenantTransaction } from "../db/tenant-context";
+import {
+  DETECTION_SOURCE_AGENT_SIGNED,
+  DETECTION_SOURCE_BRIDGE,
+} from "../threat-events/provenance";
 import type { AttentionItem } from "./attention";
 import type { FindingsDashboardRawCounts } from "./dashboard";
 import type { FindingStatus } from "./lifecycle";
@@ -71,6 +75,18 @@ export interface UpdateFindingIntentInput {
   operatorNoteUpdatedByUserId?: string | null;
 }
 
+export interface FindingDedupKey {
+  agentId: string;
+  ruleId: CorrelationRuleId | string;
+  windowBucket: Date;
+}
+
+export interface DetectionSourceUpgradeInput extends FindingDedupKey {
+  /** Only bridge_correlation → agent_signed is allowed. */
+  from: string;
+  to: string;
+}
+
 export interface CorrelationFindingsRepository {
   /**
    * Inserts a finding; same-bucket duplicates are ignored (dedup).
@@ -80,6 +96,24 @@ export interface CorrelationFindingsRepository {
   insertFindingIgnoreDup(
     tenantId: string,
     finding: CorrelationFindingInsert,
+  ): Promise<string | undefined>;
+
+  /**
+   * Lookup by findings unique key (tenant, agent, rule, window_bucket).
+   */
+  findFindingByDedupKey(
+    tenantId: string,
+    key: FindingDedupKey,
+  ): Promise<CorrelationFindingRow | undefined>;
+
+  /**
+   * Monotonic provenance upgrade: updates only when current detection_source
+   * equals `from`. Returns the finding id when upgraded; undefined when no
+   * matching row (missing, already upgraded, or wrong source).
+   */
+  upgradeDetectionSourceMonotonic(
+    tenantId: string,
+    input: DetectionSourceUpgradeInput,
   ): Promise<string | undefined>;
 
   listFindings(
@@ -244,6 +278,42 @@ export function createCorrelationFindingsRepository(
           .returning("id")
           .executeTakeFirst();
 
+        return row?.id;
+      });
+    },
+
+    async findFindingByDedupKey(tenantId, key) {
+      return withTenantTransaction(db, tenantId, async (trx) => {
+        const row = await trx
+          .selectFrom("correlation_findings")
+          .selectAll()
+          .where("agent_id", "=", key.agentId)
+          .where("rule_id", "=", key.ruleId)
+          .where("window_bucket", "=", key.windowBucket)
+          .executeTakeFirst();
+        return row ? mapRow(row) : undefined;
+      });
+    },
+
+    async upgradeDetectionSourceMonotonic(tenantId, input) {
+      // Fail closed: only the documented monotonic step is allowed.
+      if (
+        input.from !== DETECTION_SOURCE_BRIDGE ||
+        input.to !== DETECTION_SOURCE_AGENT_SIGNED
+      ) {
+        return undefined;
+      }
+
+      return withTenantTransaction(db, tenantId, async (trx) => {
+        const row = await trx
+          .updateTable("correlation_findings")
+          .set({ detection_source: input.to })
+          .where("agent_id", "=", input.agentId)
+          .where("rule_id", "=", input.ruleId)
+          .where("window_bucket", "=", input.windowBucket)
+          .where("detection_source", "=", input.from)
+          .returning("id")
+          .executeTakeFirst();
         return row?.id;
       });
     },

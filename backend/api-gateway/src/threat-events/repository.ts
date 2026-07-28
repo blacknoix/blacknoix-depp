@@ -28,6 +28,7 @@ export interface ThreatEventRow {
   finalizedAt: Date | null;
   findingId: string | null;
   createdAt: Date;
+  detectionSource: string;
 }
 
 export interface ThreatEventInsert {
@@ -43,6 +44,8 @@ export interface ThreatEventInsert {
   occurredAt: Date;
   signature: string;
   signedAt: Date;
+  /** Path provenance: scopes threat_events unique key with window_bucket. */
+  detectionSource: string;
 }
 
 export type InsertThreatEventResult =
@@ -114,6 +117,7 @@ function mapRow(row: {
   finalized_at: unknown;
   finding_id: string | null;
   created_at: unknown;
+  detection_source: string;
 }): ThreatEventRow {
   return {
     id: row.id,
@@ -135,6 +139,7 @@ function mapRow(row: {
     finalizedAt: row.finalized_at ? asDate(row.finalized_at) : null,
     findingId: row.finding_id,
     createdAt: asDate(row.created_at),
+    detectionSource: row.detection_source,
   };
 }
 
@@ -171,6 +176,7 @@ export function createThreatEventsRepository(
               signature: input.signature,
               signed_at: input.signedAt,
               finality_state: "pending",
+              detection_source: input.detectionSource,
             })
             .returningAll()
             .executeTakeFirstOrThrow();

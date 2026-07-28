@@ -69,6 +69,7 @@ const threatEventService =
         finality: createDevSingleNodeFinalizer(),
         gossip: createInMemoryGossip(),
         correlationBridgeEnabled: env.correlationBridgeEnabled,
+        correlationBridgeDisabledTenants: env.correlationBridgeDisabledTenants,
       })
     : undefined;
 const correlationService =

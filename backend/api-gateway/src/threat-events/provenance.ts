@@ -2,8 +2,12 @@
  * ADR-0005 detection provenance.
  *
  * Property name on findings: detection_source.
- * Bridge path MUST use bridge_correlation exclusively.
- * Signed path MUST use agent_signed and MUST NEVER use bridge_correlation.
+ * Bridge fallback path MUST use bridge_correlation exclusively.
+ * Signed path (primary) MUST use agent_signed and MUST NEVER write
+ * bridge_correlation on insert.
+ *
+ * Monotonicity: bridge_correlation may upgrade to agent_signed for the same
+ * finding key; agent_signed is terminal and never downgrades.
  */
 
 export const DETECTION_SOURCE_BRIDGE = "bridge_correlation" as const;
@@ -31,6 +35,16 @@ export const SIGNED_DETECTION_EVIDENCE_MARKERS = [
 export type ProvenanceCheckResult =
   | { ok: true }
   | { ok: false; reason: string };
+
+/**
+ * True when `from` → `to` is the only allowed provenance upgrade.
+ */
+export function isMonotonicDetectionSourceUpgrade(
+  from: string,
+  to: string,
+): boolean {
+  return from === DETECTION_SOURCE_BRIDGE && to === DETECTION_SOURCE_AGENT_SIGNED;
+}
 
 /**
  * Bridge evidence must not carry signed-detection markers or a conflicting

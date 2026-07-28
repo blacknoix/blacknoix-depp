@@ -8,15 +8,19 @@ Status: Draft bridge toward TRD. Not yet CometBFT / libp2p / Rust agent.
 agent credential → JWT
   → POST /v1/agents/:agentId/device-identity (Ed25519 pubkey self-bind)
 
-detection candidate (gateway correlation bridge)
-  → ThreatEventService.submitFromDetection
-  → persist threat_events (pending) → gossip → finality → finding
-
-agent-signed detection (Windows agent path)
+agent-signed correlation / detection (PRIMARY)
   → POST /v1/threat-events
   → parse envelope → Ed25519 verify vs device_identities.public_key_ed25519
   → ThreatEventService.submitSigned
-  → persist pending → gossip → finality → finding
+  → persist pending (detection_source=agent_signed) → gossip → finality
+  → materializeFindingAfterFinality → finding agent_signed
+     (or upgrade existing bridge_correlation → agent_signed)
+
+gateway correlation bridge (FALLBACK only)
+  → ThreatEventService.submitFromDetection
+  → persist threat_events (detection_source=bridge_correlation)
+  → gossip → finality → finding bridge_correlation
+  (skipped when global/tenant bridge disabled, or agent_signed already covers key)
 ```
 
 ## Invariants
@@ -27,17 +31,25 @@ agent-signed detection (Windows agent path)
 4. Agent-signed submit requires an **active** device identity and a valid Ed25519
    signature over canonical bytes (signature field excluded).
 5. Missing / revoked / mismatched identity or bad signature fails closed before finality.
-6. Correlation `submitFromDetection` still uses a non-crypto bridge signature
-   (gateway never holds agent private keys); it still requires an active identity
-   and finality before findings. Bridge findings are labeled
-   `detection_source = "bridge_correlation"` (ADR-0005). Signed findings use
-   `detection_source = "agent_signed"` and must never use the bridge label.
-7. Detection findings are inserted only by the single finality-gated materializer
-   (`materializeFindingAfterFinality`), which requires an intrinsic finality
-   proof from a successful `finalize()`. See ADR-0005.
-8. Deduped findings retain first-writer `detection_source`: a later signed
-   detection for the same `(tenant, agent, rule, window_bucket)` does not upgrade
-   a pre-existing bridge finding's provenance (and vice versa).
+6. Correlation `submitFromDetection` is **fallback only**: non-crypto bridge
+   signature (gateway never holds agent private keys); still requires an active
+   identity and finality before findings. Bridge findings are labeled
+   `detection_source = "bridge_correlation"` (ADR-0005). Signed findings —
+   including signed correlation — use `detection_source = "agent_signed"` and
+   must never insert the bridge label.
+7. Detection findings are inserted or provenance-upgraded only by the single
+   finality-gated materializer (`materializeFindingAfterFinality`), which
+   requires an intrinsic finality proof from a successful `finalize()`. See
+   ADR-0005.
+8. Provenance is **monotonic** for the finding key
+   `(tenant, agent, rule, window_bucket)`:
+   - `bridge_correlation` may upgrade to `agent_signed` when a later signed
+     path succeeds (audited via `finding_detection_source_upgraded`).
+   - `agent_signed` never downgrades.
+   - Same-source repeats dedupe without a second finding.
+9. `threat_events` dedup is path-scoped:
+   `(tenant, agent, detection_rule_id, window_bucket, detection_source)` so
+   bridge and signed may both finalize for the same correlation window.
 
 ## Canonical signing bytes (normative — v0)
 
@@ -139,12 +151,11 @@ For agent-signed submit (`ThreatEventService.submitSigned`):
 - NODEENROLL / device cert issuance
 - Re-bind after revoke (new enrollment cycle)
 - CometBFT / libp2p gossipsub
-- Agent-signed correlation detections (replace bridge placeholder)
 - Full Rust Windows agent
 - Findings UI changes
 
 ## Related
 
 - [ADR-0005](adr/0005-correlation-bridge-provenance-and-finality.md) — bridge
-  provenance + single finality materializer
+  provenance, monotonic upgrade, single finality materializer
 - [Bridge narrowing checklist](correlation-bridge-narrowing-checklist.md)

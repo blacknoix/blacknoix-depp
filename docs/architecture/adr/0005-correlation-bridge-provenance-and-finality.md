@@ -1,6 +1,6 @@
 # ADR-0005: Correlation Bridge Provenance and Single Finality Materializer
 
-- Status: Accepted
+- Status: Accepted (amended 2026-07-29 — bridge-replacement slice)
 - Date: 2026-07-28
 - Depends on: ADR-0001 (tenancy), ADR-0004 (persistence), THREATEVENT contract
   (`docs/architecture/threat-event-contract.md`)
@@ -9,180 +9,168 @@
 
 The gateway has two paths that can produce operator-visible findings:
 
-1. **Agent-signed path** — `ThreatEventService.submitSigned`  
+1. **Agent-signed path (primary)** — `ThreatEventService.submitSigned`  
    Ed25519-verifies a THREATEVENT over v0 canonical bytes, then
-   gossip → `FinalitySeam.finalize()` → insert finding.
+   gossip → `FinalitySeam.finalize()` → insert or monotonically upgrade finding
+   with `detection_source = "agent_signed"`. This is the intended steady-state
+   path for correlation-based detections once agents emit signed events.
 
-2. **Correlation bridge path** — `ThreatEventService.submitFromDetection`  
+2. **Correlation bridge path (fallback)** — `ThreatEventService.submitFromDetection`  
    Server-side post-ingest / silence correlation builds a THREATEVENT-shaped
    envelope with a non-crypto bridge placeholder signature (gateway never holds
    agent private keys), then uses the same finality → finding flow when an
-   **active** `device_identities` row exists.
+   **active** `device_identities` row exists. Materializes as
+   `detection_source = "bridge_correlation"`.
 
-Both paths already share finality gating in the happy path. The remaining gap is
-**trust labeling and hard isolation of materialization**:
-
-- Bridge-created findings can look like signed detections if provenance is absent
-  or ambiguous.
-- A future refactor could reintroduce a direct `insertFindingIgnoreDup` call that
-  bypasses finality.
-- Bridge and signed markers must not be interchangeable.
-
-**Settled product decision:** keep the bridge for **one more implementation
-slice**, but narrow it now so it cannot masquerade as a signed detection or
-bypass finality. Remove or replace the bridge only after agent-signed detections
-cover the same correlation rules.
+Both paths share finality gating and the single materializer. Bridge remains
+**transitional** and **tenant-flaggable**; it is not removed in the
+bridge-replacement slice.
 
 ## Decision
 
 ### 1. Single finality-gated materializer (non-negotiable)
 
-There is exactly one sanctioned function that may insert a row into
-`correlation_findings` as a result of THREATEVENT / correlation evaluation.
+There is exactly one sanctioned function that may insert **or upgrade provenance
+on** a row in `correlation_findings` as a result of THREATEVENT / correlation
+evaluation: `materializeFindingAfterFinality`.
 
-- Name (implementation target): a single private or package-local helper used by
-  both `submitSigned` and `submitFromDetection` (today: the body of
-  `persistThroughFinality` after `finality.finalize()` returns success).
-- **Invariant:** `insertFindingIgnoreDup` (or any successor insert) for this
-  flow MUST NOT be called except from that helper, and ONLY when the helper
-  holds a `FinalizedEventProof` issued from a successful
+- **Invariant:** `insertFindingIgnoreDup` / `upgradeDetectionSourceMonotonic`
+  for this flow MUST NOT be called except from that helper, and ONLY when the
+  helper holds a `FinalizedEventProof` issued from a successful
   `FinalitySeam.finalize()` for the same `threatEventId` (intrinsic gate — not
   caller ordering alone).
 - Correlation service, telemetry post-ingest hooks, silence evaluate, and routes
   MUST NOT insert findings directly.
 - Fail closed: if finality rejects or errors, or the proof is missing/mismatched,
-  no finding row is created.
+  no finding row is created and no provenance upgrade occurs.
 
 ### 2. Mandatory provenance label (non-negotiable)
 
-Every finding materialized through this helper MUST carry an explicit detection
-provenance value persisted with the finding (column or evidence-adjacent field —
-implementation chooses storage; the **value** is normative).
-
-| Path | Required `detection_source` value |
-|------|-----------------------------------|
-| Correlation bridge (`submitFromDetection`) | `"bridge_correlation"` |
-| Agent-signed (`submitSigned`) | a signed-path value that is **not** `"bridge_correlation"` (e.g. `"agent_signed"`; exact signed enum fixed in the implementation slice) |
+| Path | Required `detection_source` value | Role |
+|------|-----------------------------------|------|
+| Agent-signed (`submitSigned`) | `"agent_signed"` | **Primary** |
+| Correlation bridge (`submitFromDetection`) | `"bridge_correlation"` | **Fallback only** |
 
 **Hard rules:**
 
-1. **Signed findings must never show bridge provenance.**  
-   `submitSigned` MUST never write `detection_source = "bridge_correlation"`.
+1. **Signed findings must never be written as bridge provenance.**  
+   `submitSigned` MUST never insert `detection_source = "bridge_correlation"`.
 
 2. **Bridge findings must never carry signed-detection markers.**  
-   Bridge materialization MUST NOT set signed-path provenance, MUST NOT claim
-   Ed25519 verification succeeded, and MUST NOT store a “verified signature”
-   marker for the bridge placeholder.
+   Bridge materialization MUST NOT set signed-path provenance on insert, MUST NOT
+   claim Ed25519 verification succeeded, and MUST NOT store a “verified
+   signature” marker for the bridge placeholder.
 
 3. **`detection_source = "bridge_correlation"`** is the **only** allowed
-   provenance string for the bridge path. No aliases, no empty/default that
-   could be read as signed.
+   provenance string for bridge inserts. No aliases.
 
-### 3. Bridge remains temporary and gated
+4. **Do not invent a third write-path provenance label** unless forced by schema
+   constraints. Historical `legacy_unspecified` remains read-only for old rows.
+
+### 3. Monotonic provenance upgrade (bridge-replacement)
+
+Finding uniqueness remains `(tenant_id, agent_id, rule_id, window_bucket)` —
+one operator-visible finding per key.
+
+Provenance is **monotonic**:
+
+| Existing | Incoming path | Result |
+|----------|---------------|--------|
+| none | bridge | insert `bridge_correlation` |
+| none | signed | insert `agent_signed` |
+| `bridge_correlation` | signed | **upgrade** row to `agent_signed`; emit structured audit event `finding_detection_source_upgraded` |
+| `agent_signed` | bridge | no-op (dedupe); **never downgrade** |
+| same source | same source | no-op (dedupe) |
+
+Threat events are path-scoped: unique on
+`(tenant, agent, detection_rule_id, window_bucket, detection_source)` so a signed
+event can finalize after a bridge event for the same correlation window.
+
+### 4. Bridge remains temporary and tenant-gated
 
 Until removal:
 
-- Bridge still requires an **active** device identity for the agent (existing
-  fail-closed behavior).
-- Bridge still uses the non-crypto placeholder signature; it is **not**
-  Ed25519-attested detection.
-- Optional feature flag (recommended in the narrowing slice): when off, bridge
-  skips materialization entirely (no finding, no pretending success as signed).
-  Flag name is an implementation detail; behavior when off is tested (see
-  checklist).
+- Bridge still requires an **active** device identity for the agent.
+- Bridge still uses the non-crypto placeholder signature.
+- **Global** flag `CORRELATION_BRIDGE_ENABLED` (default on): when false, bridge
+  is off for all tenants.
+- **Per-tenant** denylist `CORRELATION_BRIDGE_DISABLED_TENANTS` (comma-separated
+  UUIDs): when global is on, listed tenants skip bridge while signed correlation
+  continues. Re-enabling bridge for a tenant must not rewrite existing
+  `agent_signed` rows.
+- When an `agent_signed` finding already covers the dedup key, bridge evaluation
+  skips creating a weaker row (signed is primary).
 
-### 4. Caller restriction
+### 5. Caller restriction
 
 Only the correlation evaluation paths that already call `submitFromDetection`
 may invoke the bridge. No new HTTP route may accept “bridge” submissions from
 agents or operators. Agents submit only via `submitSigned` / `POST /v1/threat-events`.
 
-### 5. Tenant isolation and idempotency unchanged in meaning
+### 6. Tenant isolation and audit
 
 - All reads/writes remain under `withTenantTransaction` / RLS (ADR-0001 / 0004).
-- Dedup remains `(tenant_id, agent_id, rule_id|detection_rule_id, window_bucket)`
-  for threat_events and findings; duplicate submits must not create duplicate
-  findings.
-- **First-writer provenance:** when a finding already exists for that dedup key,
-  a later submit (bridge or signed) does not insert a second row and does **not**
-  upgrade or rewrite `detection_source` — the first writer's label is retained.
-
-### 6. Audit presence
-
-Bridge and signed materialization MUST leave distinguishable audit/log signals
-(structured lifecycle logs and/or persisted provenance) so an operator or auditor
-can tell which path created a finding. Provenance on the finding row is the
-primary durable signal; logs are secondary.
+- Provenance on the finding row is the primary durable signal.
+- Provenance upgrades MUST emit an explicit structured lifecycle log
+  (`finding_detection_source_upgraded` with `from` / `to` / `findingId` /
+  `threatEventId`) so upgrades are queryable in log pipelines.
 
 ## Non-goals
 
 - CometBFT / ledger consensus
 - libp2p / gossipsub production networking
-- Findings UI changes (beyond what API fields already expose)
+- Findings UI changes
 - Response actions / remediation
-- Replacing correlation rules with agent-side detection in this slice
-- Ed25519-signing the bridge placeholder (explicitly rejected: gateway must not
-  hold agent private keys)
+- Deleting bridge code in this slice
+- Ed25519-signing the bridge placeholder (gateway must not hold agent private keys)
 - Introducing `canonicalVersion: 1` (separate contract bump)
 
 ## Consequences
 
 ### Positive
 
-- Bridge cannot silently look like agent-attested detection if provenance is
-  enforced and tested.
-- Finality bypass becomes a concrete, reviewable invariant (single materializer).
-- Removal of the bridge later is a delete of one labeled path, not an archaeology
-  exercise.
+- Operators can distinguish bridge fallback from agent-attested detections.
+- Signed coverage can take over a window without duplicate findings.
+- Bridge can be disabled per tenant and re-enabled without schema rewrites of
+  historical rows.
 
 ### Negative / costs
 
-- Schema or evidence shape must carry `detection_source` (small migration or
-  evidence key — implementation chooses).
-- Existing bridge-created findings (if any) may lack provenance until backfill
-  or “unknown” handling is defined; prefer fail-closed for **new** writes only
-  in the narrowing slice unless a one-shot backfill is explicitly added.
-- Feature flag (if used) adds a config surface.
-
-### Risks if ignored
-
-- Operators and future TRD consumers treat bridge findings as cryptographic
-  attestations.
-- A second insert path reappears and skips finality.
+- Path-scoped `threat_events` uniqueness adds a small schema surface.
+- Dual-path windows temporarily hold two threat_event rows (one per provenance).
 
 ## Migration / removal plan
 
-### Narrowing slice (immediate next implementation)
+### Narrowing slice (done)
 
-1. Enforce single materializer (refactor if needed; no second insert site).
-2. Persist `detection_source`:
-   - bridge → `"bridge_correlation"`
-   - signed → non-bridge signed value
-3. Reject / assert in code that the two labels cannot cross.
-4. Add tests from the companion checklist.
-5. Document bridge as temporary in `threat-event-contract.md` with a pointer to
-   this ADR.
+Single materializer, `detection_source` on findings, cross-label rejection,
+checklists.
+
+### Bridge-replacement slice (this amendment)
+
+1. Agent-signed correlation is primary; bridge is fallback.
+2. Monotonic upgrade bridge → agent_signed with audit.
+3. Tenant-aware bridge disablement + global flag preserved.
+4. Path-scoped threat_event dedup so signed can finalize after bridge.
 
 ### Removal slice (later)
 
-Preconditions:
-
-- Agent-signed (or other attested) detections cover churn / burst / silence (or
-  product accepts dropping bridge coverage).
-- No remaining caller of `submitFromDetection` except a deprecated stub.
+Preconditions: signed coverage for churn / burst / silence (or product accepts
+dropping bridge coverage); no remaining production need for
+`submitFromDetection`.
 
 Steps:
 
-1. Feature-flag bridge off in all environments; verify no finding regressions
-   that product still requires.
+1. Disable bridge globally and per remaining tenants; verify.
 2. Delete or hard-error `submitFromDetection` and correlation wiring into it.
 3. Stop writing `"bridge_correlation"` for new rows.
-4. Optionally retain historical rows with `detection_source = "bridge_correlation"`
-   for audit; do not rewrite them to signed provenance.
-5. Supersede or amend this ADR’s “keep bridge” clause via a new ADR when removal
-   completes.
+4. Retain historical `bridge_correlation` rows for audit; do not rewrite them
+   wholesale to signed.
+5. Supersede this ADR’s “keep bridge” clause when removal completes.
 
 ## Companion checklist
 
 Executable test titles:
 `docs/architecture/correlation-bridge-narrowing-checklist.md`
+(plus bridge-replacement coverage in
+`backend/api-gateway/tests/threat-events/bridge-replacement.test.ts`)

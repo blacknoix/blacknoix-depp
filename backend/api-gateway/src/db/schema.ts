@@ -200,6 +200,7 @@ export interface DeviceIdentitiesTable {
 /**
  * Tenant-owned signed THREATEVENT persistence (TRD bridge).
  * Findings materialize only after finality_state becomes finalized.
+ * detection_source scopes path dedup (bridge vs agent_signed) per window.
  */
 export interface ThreatEventsTable {
   id: Generated<string>;
@@ -221,6 +222,8 @@ export interface ThreatEventsTable {
   finalized_at: NullableTimestamp;
   finding_id: string | null;
   created_at: Generated<Timestamp>;
+  /** ADR-0005: bridge_correlation | agent_signed | legacy_unspecified */
+  detection_source: string;
 }
 
 export interface Database {

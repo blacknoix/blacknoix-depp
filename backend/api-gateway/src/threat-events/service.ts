@@ -36,6 +36,12 @@ export interface ThreatDetectionCandidate {
 
 export type SubmitThreatEventOutcome =
   | { ok: true; status: "created"; threatEventId: string; findingId: string }
+  | {
+      ok: true;
+      status: "upgraded";
+      threatEventId: string;
+      findingId: string;
+    }
   | { ok: true; status: "deduped" }
   | {
       ok: false;
@@ -57,9 +63,9 @@ export type SubmitThreatEventOutcome =
 
 export interface ThreatEventService {
   /**
-   * Internal correlation bridge only (ADR-0005). Active identity required;
-   * placeholder signature. Finality-gated materializer with
-   * detection_source=bridge_correlation.
+   * Transitional correlation bridge fallback (ADR-0005). Active identity
+   * required; placeholder signature. Finality-gated materializer with
+   * detection_source=bridge_correlation. Disabled globally or per tenant.
    */
   submitFromDetection(
     tenantId: string,
@@ -69,8 +75,9 @@ export interface ThreatEventService {
   ): Promise<SubmitThreatEventOutcome>;
 
   /**
-   * Agent-signed THREATEVENT path: Ed25519 verify, then finality-gated
-   * materializer with detection_source=agent_signed.
+   * Primary agent-signed THREATEVENT path: Ed25519 verify, then finality-gated
+   * materializer with detection_source=agent_signed. May upgrade an existing
+   * bridge_correlation finding for the same dedup key.
    */
   submitSigned(
     tenantId: string,
@@ -88,10 +95,19 @@ export interface ThreatEventServiceDeps {
   gossip: GossipSeam;
   now?: () => Date;
   /**
-   * When false, submitFromDetection is a no-op (no threat_events, no findings).
-   * Defaults to true. Env: CORRELATION_BRIDGE_ENABLED.
+   * Global bridge gate. When false, submitFromDetection is a no-op for all
+   * tenants. Defaults to true. Env: CORRELATION_BRIDGE_ENABLED.
    */
   correlationBridgeEnabled?: boolean;
+  /**
+   * Tenants for which bridge fallback is disabled while signed remains on.
+   * Env: CORRELATION_BRIDGE_DISABLED_TENANTS. Ignored when global is false.
+   */
+  correlationBridgeDisabledTenants?: ReadonlySet<string>;
+  /**
+   * Optional override for tests. When set, replaces global+tenant resolution.
+   */
+  isCorrelationBridgeEnabledForTenant?: (tenantId: string) => boolean;
 }
 
 /**
@@ -123,6 +139,18 @@ export function createThreatEventService(
   } = deps;
   const now = deps.now ?? (() => new Date());
   const correlationBridgeEnabled = deps.correlationBridgeEnabled ?? true;
+  const correlationBridgeDisabledTenants =
+    deps.correlationBridgeDisabledTenants ?? new Set<string>();
+
+  function bridgeEnabledForTenant(tenantId: string): boolean {
+    if (deps.isCorrelationBridgeEnabledForTenant) {
+      return deps.isCorrelationBridgeEnabledForTenant(tenantId);
+    }
+    if (!correlationBridgeEnabled) {
+      return false;
+    }
+    return !correlationBridgeDisabledTenants.has(tenantId);
+  }
 
   async function persistThroughFinality(
     tenantId: string,
@@ -150,6 +178,7 @@ export function createThreatEventService(
       occurredAt: envelope.occurredAt,
       signature: envelope.signature,
       signedAt: envelope.signedAt,
+      detectionSource,
     });
 
     if (!inserted.ok) {
@@ -200,7 +229,7 @@ export function createThreatEventService(
       };
     }
 
-    // Sole detection finding insert site (ADR-0005).
+    // Sole detection finding insert/upgrade site (ADR-0005).
     const materialized = await materializeFindingAfterFinality(findings, {
       tenantId,
       agentId,
@@ -243,6 +272,25 @@ export function createThreatEventService(
       findingId,
     });
 
+    if (materialized.upgraded === true) {
+      logLifecycle("info", "threat_event_finalized_finding_upgraded", {
+        tenantId,
+        agentId,
+        threatEventId: event.id,
+        findingId,
+        ruleId: envelope.detectionRuleId,
+        detection_source: detectionSource,
+        from: DETECTION_SOURCE_BRIDGE,
+        to: DETECTION_SOURCE_AGENT_SIGNED,
+      });
+      return {
+        ok: true,
+        status: "upgraded",
+        threatEventId: event.id,
+        findingId,
+      };
+    }
+
     logLifecycle("info", "threat_event_finalized_finding_created", {
       tenantId,
       agentId,
@@ -269,7 +317,7 @@ export function createThreatEventService(
         throw new Error("submitFromDetection requires a non-empty agentId");
       }
 
-      if (!correlationBridgeEnabled) {
+      if (!bridgeEnabledForTenant(tenantId)) {
         logLifecycle("info", "correlation_bridge_disabled_skip", {
           tenantId,
           agentId,
@@ -280,6 +328,24 @@ export function createThreatEventService(
           status: "bridge_disabled",
           reason: "correlation bridge is disabled",
         };
+      }
+
+      // Signed correlation is primary: do not invent a weaker bridge row when
+      // an agent_signed finding already covers this key.
+      const existing = await findings.findFindingByDedupKey(tenantId, {
+        agentId,
+        ruleId: candidate.ruleId,
+        windowBucket: candidate.windowBucket,
+      });
+      if (existing?.detectionSource === DETECTION_SOURCE_AGENT_SIGNED) {
+        logLifecycle("info", "correlation_bridge_skipped_signed_primary", {
+          tenantId,
+          agentId,
+          ruleId: candidate.ruleId,
+          findingId: existing.id,
+          detection_source: existing.detectionSource,
+        });
+        return { ok: true, status: "deduped" };
       }
 
       const evidenceCheck = assertBridgeEvidenceClean(candidate.evidence);

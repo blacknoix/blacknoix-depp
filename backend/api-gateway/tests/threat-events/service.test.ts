@@ -22,6 +22,41 @@ const agentId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const deviceId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const bucket = new Date("2026-03-01T12:00:00.000Z");
 
+function findingsStub(
+  overrides: Partial<CorrelationFindingsRepository> = {},
+): CorrelationFindingsRepository {
+  return {
+    async insertFindingIgnoreDup() {
+      return "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+    },
+    async findFindingByDedupKey() {
+      return undefined;
+    },
+    async upgradeDetectionSourceMonotonic() {
+      return undefined;
+    },
+    async listFindings() {
+      return [];
+    },
+    async getFindingById() {
+      return undefined;
+    },
+    async updateFindingStatus() {
+      return undefined;
+    },
+    async updateFindingIntent() {
+      return undefined;
+    },
+    async getDashboardRawCounts() {
+      throw new Error("not used");
+    },
+    async getAttentionRawSources() {
+      throw new Error("not used");
+    },
+    ...overrides,
+  };
+}
+
 function candidate() {
   return {
     ruleId: "agent.heartbeat_burst" as const,
@@ -59,6 +94,7 @@ function rowFromInsert(
     finalizedAt: null,
     findingId: null,
     createdAt: new Date("2026-03-01T12:01:00.000Z"),
+    detectionSource: input.detectionSource,
   };
 }
 
@@ -118,20 +154,17 @@ describe("ThreatEventService finality gate", () => {
       },
     };
 
-    const findings: Pick<
-      CorrelationFindingsRepository,
-      "insertFindingIgnoreDup"
-    > = {
+    const findings = findingsStub({
       async insertFindingIgnoreDup() {
         findingsCalled += 1;
         return "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
       },
-    };
+    });
 
     const service = createThreatEventService({
       deviceIdentities,
       threatEvents,
-      findings: findings as unknown as CorrelationFindingsRepository,
+      findings,
       finality: {
         async finalize() {
           return {
@@ -214,20 +247,17 @@ describe("ThreatEventService finality gate", () => {
       },
     };
 
-    const findings: Pick<
-      CorrelationFindingsRepository,
-      "insertFindingIgnoreDup"
-    > = {
+    const findings = findingsStub({
       async insertFindingIgnoreDup() {
         findingsCalled += 1;
         return "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
       },
-    };
+    });
 
     const service = createThreatEventService({
       deviceIdentities,
       threatEvents,
-      findings: findings as unknown as CorrelationFindingsRepository,
+      findings,
       finality: createDevSingleNodeFinalizer(),
       gossip: createInMemoryGossip(),
       now: () => new Date("2026-03-01T12:01:00.000Z"),
@@ -278,12 +308,12 @@ describe("ThreatEventService finality gate", () => {
           throw new Error("should not transition");
         },
       },
-      findings: {
+      findings: findingsStub({
         async insertFindingIgnoreDup() {
           findingsCalled += 1;
           return "x";
         },
-      } as unknown as CorrelationFindingsRepository,
+      }),
       finality: createDevSingleNodeFinalizer(),
       gossip: createInMemoryGossip(),
     });
@@ -377,12 +407,12 @@ describe("ThreatEventService submitSigned Ed25519 gate", () => {
           return { ok: true, event: next };
         },
       },
-      findings: {
+      findings: findingsStub({
         async insertFindingIgnoreDup() {
           findingsCalled += 1;
           return "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
         },
-      } as unknown as CorrelationFindingsRepository,
+      }),
       finality: createDevSingleNodeFinalizer(),
       gossip: createInMemoryGossip(),
     });
@@ -458,12 +488,12 @@ describe("ThreatEventService submitSigned Ed25519 gate", () => {
           throw new Error("should not transition");
         },
       },
-      findings: {
+      findings: findingsStub({
         async insertFindingIgnoreDup() {
           findingsCalled += 1;
           return "x";
         },
-      } as unknown as CorrelationFindingsRepository,
+      }),
       finality: createDevSingleNodeFinalizer(),
       gossip: createInMemoryGossip(),
     });
@@ -514,12 +544,12 @@ describe("ThreatEventService submitSigned Ed25519 gate", () => {
           throw new Error("should not transition");
         },
       },
-      findings: {
+      findings: findingsStub({
         async insertFindingIgnoreDup() {
           findingsCalled += 1;
           return "x";
         },
-      } as unknown as CorrelationFindingsRepository,
+      }),
       finality: createDevSingleNodeFinalizer(),
       gossip: createInMemoryGossip(),
     });

@@ -70,6 +70,7 @@ function rowFromInsert(
     finalizedAt: null,
     findingId: null,
     createdAt: new Date("2026-03-01T12:01:00.000Z"),
+    detectionSource: input.detectionSource,
   };
 }
 
@@ -116,6 +117,42 @@ function finalityProof(threatEventId: string): FinalizedEventProof {
   };
 }
 
+/** Minimal findings stubs for tests that only care about insert / skip. */
+function findingsStub(
+  overrides: Partial<CorrelationFindingsRepository> = {},
+): CorrelationFindingsRepository {
+  return {
+    async insertFindingIgnoreDup() {
+      return "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+    },
+    async findFindingByDedupKey() {
+      return undefined;
+    },
+    async upgradeDetectionSourceMonotonic() {
+      return undefined;
+    },
+    async listFindings() {
+      return [];
+    },
+    async getFindingById() {
+      return undefined;
+    },
+    async updateFindingStatus() {
+      return undefined;
+    },
+    async updateFindingIntent() {
+      return undefined;
+    },
+    async getDashboardRawCounts() {
+      throw new Error("not used");
+    },
+    async getAttentionRawSources() {
+      throw new Error("not used");
+    },
+    ...overrides,
+  };
+}
+
 describe("ADR-0005 provenance integrity", () => {
   it("bridge-created finding persists detection_source equal to bridge_correlation", async () => {
     let storedSource: string | undefined;
@@ -149,13 +186,14 @@ describe("ADR-0005 provenance integrity", () => {
                 occurredAt: bucket,
                 signature: "s",
                 signedAt: bucket,
+              detectionSource: DETECTION_SOURCE_BRIDGE,
               },
               "finalized",
             ),
           };
         },
       },
-      findings: {
+      findings: findingsStub({
         async insertFindingIgnoreDup(
           _t: string,
           finding: { detectionSource: string },
@@ -163,7 +201,7 @@ describe("ADR-0005 provenance integrity", () => {
           storedSource = finding.detectionSource;
           return "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
         },
-      } as unknown as CorrelationFindingsRepository,
+      }),
       finality: createDevSingleNodeFinalizer(),
       gossip: createInMemoryGossip(),
     });
@@ -252,13 +290,14 @@ describe("ADR-0005 provenance integrity", () => {
                 occurredAt: bucket,
                 signature: "s",
                 signedAt: bucket,
+              detectionSource: DETECTION_SOURCE_BRIDGE,
               },
               "finalized",
             ),
           };
         },
       },
-      findings: {
+      findings: findingsStub({
         async insertFindingIgnoreDup(
           _t: string,
           finding: { detectionSource: string },
@@ -266,7 +305,7 @@ describe("ADR-0005 provenance integrity", () => {
           storedSource = finding.detectionSource;
           return "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
         },
-      } as unknown as CorrelationFindingsRepository,
+      }),
       finality: createDevSingleNodeFinalizer(),
       gossip: createInMemoryGossip(),
     });
@@ -296,11 +335,11 @@ describe("ADR-0005 provenance integrity", () => {
   it("attempting to materialize bridge path with a signed provenance label fails closed", async () => {
     const threatEventId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
     const result = await materializeFindingAfterFinality(
-      {
+      findingsStub({
         async insertFindingIgnoreDup() {
           throw new Error("must not insert");
         },
-      } as unknown as CorrelationFindingsRepository,
+      }),
       {
         tenantId,
         agentId,
@@ -323,11 +362,11 @@ describe("ADR-0005 provenance integrity", () => {
   it("attempting to materialize signed path with detection_source bridge_correlation fails closed", async () => {
     const threatEventId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
     const result = await materializeFindingAfterFinality(
-      {
+      findingsStub({
         async insertFindingIgnoreDup() {
           throw new Error("must not insert");
         },
-      } as unknown as CorrelationFindingsRepository,
+      }),
       {
         tenantId,
         agentId,
@@ -351,12 +390,12 @@ describe("ADR-0005 provenance integrity", () => {
     let inserted = 0;
     const threatEventId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
     const result = await materializeFindingAfterFinality(
-      {
+      findingsStub({
         async insertFindingIgnoreDup() {
           inserted += 1;
           return "x";
         },
-      } as unknown as CorrelationFindingsRepository,
+      }),
       {
         tenantId,
         agentId,
@@ -391,11 +430,11 @@ describe("ADR-0005 provenance integrity", () => {
           throw new Error("must not transition");
         },
       },
-      findings: {
+      findings: findingsStub({
         async insertFindingIgnoreDup() {
           throw new Error("must not insert finding");
         },
-      } as unknown as CorrelationFindingsRepository,
+      }),
       finality: createDevSingleNodeFinalizer(),
       gossip: createInMemoryGossip(),
     });
@@ -445,12 +484,12 @@ describe("ADR-0005 finality gate", () => {
           return { ok: true, event: next };
         },
       },
-      findings: {
+      findings: findingsStub({
         async insertFindingIgnoreDup() {
           findingsCalled += 1;
           return "x";
         },
-      } as unknown as CorrelationFindingsRepository,
+      }),
       finality: {
         async finalize() {
           return { ok: false, state: "rejected", reason: "no" };
@@ -506,18 +545,19 @@ describe("ADR-0005 finality gate", () => {
                 occurredAt: bucket,
                 signature: "s",
                 signedAt: bucket,
+              detectionSource: DETECTION_SOURCE_BRIDGE,
               },
               "finalized",
             ),
           };
         },
       },
-      findings: {
+      findings: findingsStub({
         async insertFindingIgnoreDup() {
           order.push("insert");
           return "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
         },
-      } as unknown as CorrelationFindingsRepository,
+      }),
       finality: {
         async finalize() {
           order.push("finalize");
@@ -560,11 +600,11 @@ describe("ADR-0005 agent-identity gate", () => {
           throw new Error("must not");
         },
       },
-      findings: {
+      findings: findingsStub({
         async insertFindingIgnoreDup() {
           throw new Error("must not");
         },
-      } as unknown as CorrelationFindingsRepository,
+      }),
       finality: createDevSingleNodeFinalizer(),
       gossip: createInMemoryGossip(),
     });
@@ -615,11 +655,11 @@ describe("ADR-0005 agent-identity gate", () => {
           throw new Error("must not");
         },
       },
-      findings: {
+      findings: findingsStub({
         async insertFindingIgnoreDup() {
           throw new Error("must not");
         },
-      } as unknown as CorrelationFindingsRepository,
+      }),
       finality: createDevSingleNodeFinalizer(),
       gossip: createInMemoryGossip(),
     });
@@ -654,12 +694,12 @@ describe("ADR-0005 flag off behavior", () => {
           throw new Error("must not");
         },
       },
-      findings: {
+      findings: findingsStub({
         async insertFindingIgnoreDup() {
           findings += 1;
           return "x";
         },
-      } as unknown as CorrelationFindingsRepository,
+      }),
       finality: createDevSingleNodeFinalizer(),
       gossip: createInMemoryGossip(),
     });

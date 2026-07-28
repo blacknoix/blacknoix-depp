@@ -118,6 +118,7 @@ describe("threat_events persistence and finality", () => {
       occurredAt: new Date("2026-03-01T12:10:00.000Z"),
       signature: "sig",
       signedAt: new Date("2026-03-01T12:10:00.000Z"),
+      detectionSource: "bridge_correlation",
     });
     assert.equal(inserted.ok, true);
     if (!inserted.ok) {
@@ -165,6 +166,7 @@ describe("threat_events persistence and finality", () => {
       occurredAt: new Date("2026-03-01T12:01:00.000Z"),
       signature: "sig",
       signedAt: new Date("2026-03-01T12:01:00.000Z"),
+      detectionSource: "bridge_correlation",
     });
     assert.equal(inserted.ok, true);
     if (!inserted.ok) {

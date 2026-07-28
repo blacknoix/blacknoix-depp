@@ -1,7 +1,10 @@
 /**
- * ADR-0005: the sole sanctioned insert of correlation_findings for detection
- * materialization. Finality is enforced intrinsically via FinalizedEventProof —
- * not solely by caller ordering.
+ * ADR-0005: the sole sanctioned insert/upgrade of correlation_findings for
+ * detection materialization. Finality is enforced intrinsically via
+ * FinalizedEventProof — not solely by caller ordering.
+ *
+ * Provenance is monotonic: bridge_correlation may upgrade to agent_signed for
+ * the same dedup key; agent_signed never downgrades.
  */
 
 import type { CorrelationFindingsRepository } from "../correlation/repository";
@@ -10,6 +13,8 @@ import { logLifecycle } from "../lib/log";
 import type { FinalityOutcome } from "./finality";
 import {
   assertMaterializerProvenance,
+  DETECTION_SOURCE_AGENT_SIGNED,
+  DETECTION_SOURCE_BRIDGE,
   type DetectionSourceWrite,
 } from "./provenance";
 import type { ThreatSeverity } from "./envelope";
@@ -83,13 +88,15 @@ export interface MaterializeFindingInput {
 }
 
 export type MaterializeFindingResult =
-  | { ok: true; findingId: string }
+  | { ok: true; findingId: string; upgraded?: false }
+  | { ok: true; findingId: string; upgraded: true }
   | { ok: true; deduped: true }
   | { ok: false; reason: string };
 
 /**
  * Single finality-gated materializer. Do not call from correlation/telemetry
  * routes. Inserts only when finalityProof attests finalize() succeeded.
+ * On same-key conflict, signed path may upgrade bridge_correlation → agent_signed.
  */
 export async function materializeFindingAfterFinality(
   findings: CorrelationFindingsRepository,
@@ -139,19 +146,51 @@ export async function materializeFindingAfterFinality(
     detectionSource: input.detectionSource,
   });
 
-  if (!findingId) {
-    return { ok: true, deduped: true };
+  if (findingId) {
+    logLifecycle("info", "finding_materialized_after_finality", {
+      tenantId: input.tenantId,
+      agentId: input.agentId,
+      findingId,
+      threatEventId: input.threatEventId,
+      ruleId: input.ruleId,
+      detection_source: input.detectionSource,
+      path: input.path,
+    });
+    return { ok: true, findingId };
   }
 
-  logLifecycle("info", "finding_materialized_after_finality", {
-    tenantId: input.tenantId,
-    agentId: input.agentId,
-    findingId,
-    threatEventId: input.threatEventId,
-    ruleId: input.ruleId,
-    detection_source: input.detectionSource,
-    path: input.path,
-  });
+  // Same-key conflict: signed may upgrade bridge → agent_signed (monotonic).
+  if (
+    input.path === "signed" &&
+    input.detectionSource === DETECTION_SOURCE_AGENT_SIGNED
+  ) {
+    const upgradedId = await findings.upgradeDetectionSourceMonotonic(
+      input.tenantId,
+      {
+        agentId: input.agentId,
+        ruleId: input.ruleId,
+        windowBucket: input.windowBucket,
+        from: DETECTION_SOURCE_BRIDGE,
+        to: DETECTION_SOURCE_AGENT_SIGNED,
+      },
+    );
 
-  return { ok: true, findingId };
+    if (upgradedId) {
+      logLifecycle("info", "finding_detection_source_upgraded", {
+        tenantId: input.tenantId,
+        agentId: input.agentId,
+        findingId: upgradedId,
+        threatEventId: input.threatEventId,
+        ruleId: input.ruleId,
+        windowBucket: input.windowBucket.toISOString(),
+        from: DETECTION_SOURCE_BRIDGE,
+        to: DETECTION_SOURCE_AGENT_SIGNED,
+        detection_source: DETECTION_SOURCE_AGENT_SIGNED,
+        path: input.path,
+      });
+      return { ok: true, findingId: upgradedId, upgraded: true };
+    }
+  }
+
+  return { ok: true, deduped: true };
 }

@@ -3,7 +3,7 @@
  * Fresh-database migration verification.
  *
  * Creates an empty database, grants local-dev roles, runs migrate:latest, and
- * asserts the public tables match the branch schema contract (001–015).
+ * asserts the public tables match the branch schema contract (001–016).
  *
  * Requires a superuser URL (default: postgres local-dev from docker-compose).
  *
@@ -51,6 +51,7 @@ const EXPECTED_MIGRATIONS = [
   "013_device_identities",
   "014_threat_events",
   "015_finding_detection_source",
+  "016_threat_event_detection_source",
 ];
 
 function superuserUrl() {
@@ -159,6 +160,16 @@ async function main() {
       console.error(`missing correlation_findings.${required}`);
       process.exit(1);
     }
+  }
+
+  const { rows: threatCols } = await check.query(
+    `select column_name from information_schema.columns
+     where table_schema = 'public' and table_name = 'threat_events'
+       and column_name = 'detection_source'`,
+  );
+  if (threatCols.length !== 1) {
+    console.error("missing threat_events.detection_source");
+    process.exit(1);
   }
 
   await check.end();

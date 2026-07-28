@@ -51,7 +51,8 @@ case (unit and/or dbtest as appropriate).
 
 22. `duplicate bridge submit for same tenant agent rule window_bucket does not create a second finding`
 23. `duplicate signed submit for same tenant agent rule window_bucket does not create a second finding`
-24. `bridge dedupe and signed dedupe share the same unique key semantics without cross-labeling provenance on the existing row`
+24. `bridge then signed on same key upgrades detection_source to agent_signed without a second finding`
+24b. `signed then bridge on same key retains agent_signed (no downgrade)`
 
 ## Caller restriction
 
@@ -71,6 +72,16 @@ case (unit and/or dbtest as appropriate).
 32. `bridge successful materialization emits a structured log or audit field identifying detection_source bridge_correlation`
 33. `signed successful materialization emits a structured log or audit field identifying non-bridge signed provenance`
 34. `persisted finding detection_source is sufficient to distinguish bridge vs signed without inspecting signature bytes`
+
+## Bridge-replacement (additive)
+
+See `backend/api-gateway/tests/threat-events/bridge-replacement.test.ts`:
+
+- signed correlation inserts `agent_signed` through the materializer
+- bridge fallback still inserts `bridge_correlation`
+- provenance upgrade is audited (`finding_detection_source_upgraded`)
+- tenant-aware bridge disablement does not affect signed correlation
+- re-enabling bridge does not damage existing `agent_signed` findings
 
 ---
 

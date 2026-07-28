@@ -199,6 +199,17 @@ export function createCorrelationService(
       return "created";
     }
 
+    if (outcome.ok && outcome.status === "upgraded") {
+      logLifecycle("info", "correlation_finding_provenance_upgraded", {
+        tenantId,
+        agentId,
+        ruleId: candidate.ruleId,
+        findingId: outcome.findingId,
+        threatEventId: outcome.threatEventId,
+      });
+      return "deduped";
+    }
+
     if (outcome.ok && outcome.status === "deduped") {
       return "deduped";
     }

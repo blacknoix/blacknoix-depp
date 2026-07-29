@@ -83,6 +83,17 @@ See `backend/api-gateway/tests/threat-events/bridge-replacement.test.ts`:
 - tenant-aware bridge disablement does not affect signed correlation
 - re-enabling bridge does not damage existing `agent_signed` findings
 
+## Bridge-removal coverage gate (additive)
+
+See `backend/api-gateway/tests/threat-events/bridge-removal.test.ts`:
+
+- coverage from persisted signed-vs-bridge findings
+- soak + threshold eligibility
+- bridge disabled only when eligible and auto-disable on
+- signed unaffected; historical bridge rows readable
+- force-enable / auto-disable off reverses disablement
+- global bridge control still works
+
 ---
 
 ## Implementation notes (for the executing agent)

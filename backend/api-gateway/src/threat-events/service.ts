@@ -7,6 +7,11 @@ import {
   type CorrelationRuleId,
 } from "../correlation/rules";
 import {
+  coverageAuditFields,
+  evaluateBridgeCoverageEligibility,
+  type BridgeCoveragePolicy,
+} from "./bridge-coverage";
+import {
   THREAT_EVENT_KIND,
   type ThreatEventEnvelope,
   type ThreatSeverity,
@@ -105,7 +110,21 @@ export interface ThreatEventServiceDeps {
    */
   correlationBridgeDisabledTenants?: ReadonlySet<string>;
   /**
-   * Optional override for tests. When set, replaces global+tenant resolution.
+   * Tenants that keep bridge on despite coverage auto-disable (rollback).
+   * Env: CORRELATION_BRIDGE_FORCE_ENABLED_TENANTS.
+   */
+  correlationBridgeForceEnabledTenants?: ReadonlySet<string>;
+  /**
+   * When true, coverage-eligible tenants skip bridge materialization.
+   * Defaults to false (fail closed for auto-disable).
+   */
+  correlationBridgeCoverageAutoDisable?: boolean;
+  /** Coverage threshold / soak / min-findings policy. */
+  correlationBridgeCoveragePolicy?: BridgeCoveragePolicy;
+  /**
+   * Optional override for tests. When set, replaces global+tenant+coverage
+   * resolution (sync). Prefer injecting coverage policy + findings for
+   * coverage-path tests.
    */
   isCorrelationBridgeEnabledForTenant?: (tenantId: string) => boolean;
 }
@@ -141,15 +160,91 @@ export function createThreatEventService(
   const correlationBridgeEnabled = deps.correlationBridgeEnabled ?? true;
   const correlationBridgeDisabledTenants =
     deps.correlationBridgeDisabledTenants ?? new Set<string>();
+  const correlationBridgeForceEnabledTenants =
+    deps.correlationBridgeForceEnabledTenants ?? new Set<string>();
+  const coverageAutoDisable = deps.correlationBridgeCoverageAutoDisable ?? false;
+  const coveragePolicy: BridgeCoveragePolicy =
+    deps.correlationBridgeCoveragePolicy ?? {
+      threshold: 0.95,
+      soakMs: 24 * 60 * 60 * 1000,
+      minFindings: 5,
+    };
 
-  function bridgeEnabledForTenant(tenantId: string): boolean {
+  /**
+   * Bridge enablement: global ∧ ¬operator-denylist ∧ ¬(auto∧eligible),
+   * with force-enable override. Coverage query failures fail closed for
+   * *disablement* (bridge stays on).
+   */
+  async function bridgeEnabledForTenant(
+    tenantId: string,
+    at: Date,
+  ): Promise<boolean> {
     if (deps.isCorrelationBridgeEnabledForTenant) {
       return deps.isCorrelationBridgeEnabledForTenant(tenantId);
     }
+
     if (!correlationBridgeEnabled) {
+      logLifecycle("info", "correlation_bridge_globally_disabled", {
+        tenantId,
+      });
       return false;
     }
-    return !correlationBridgeDisabledTenants.has(tenantId);
+
+    if (correlationBridgeForceEnabledTenants.has(tenantId)) {
+      logLifecycle("info", "correlation_bridge_force_enabled", {
+        tenantId,
+      });
+      return true;
+    }
+
+    if (correlationBridgeDisabledTenants.has(tenantId)) {
+      logLifecycle("info", "correlation_bridge_operator_disabled", {
+        tenantId,
+      });
+      return false;
+    }
+
+    if (!coverageAutoDisable) {
+      return true;
+    }
+
+    try {
+      const windowStart = new Date(at.getTime() - coveragePolicy.soakMs);
+      const counts = await findings.getBridgeCoverageCounts(
+        tenantId,
+        windowStart,
+        at,
+      );
+      const evaluation = evaluateBridgeCoverageEligibility(
+        tenantId,
+        counts,
+        coveragePolicy,
+        at,
+      );
+
+      if (evaluation.eligible) {
+        logLifecycle(
+          "info",
+          "correlation_bridge_coverage_disabled",
+          coverageAuditFields(evaluation),
+        );
+        return false;
+      }
+
+      logLifecycle(
+        "info",
+        "correlation_bridge_coverage_not_eligible",
+        coverageAuditFields(evaluation),
+      );
+      return true;
+    } catch (err) {
+      // Fail closed for disablement: keep bridge on if coverage is unreadable.
+      logLifecycle("warn", "correlation_bridge_coverage_eval_failed", {
+        tenantId,
+        error: err instanceof Error ? err.message : "unknown",
+      });
+      return true;
+    }
   }
 
   async function persistThroughFinality(
@@ -317,7 +412,7 @@ export function createThreatEventService(
         throw new Error("submitFromDetection requires a non-empty agentId");
       }
 
-      if (!bridgeEnabledForTenant(tenantId)) {
+      if (!(await bridgeEnabledForTenant(tenantId, at))) {
         logLifecycle("info", "correlation_bridge_disabled_skip", {
           tenantId,
           agentId,

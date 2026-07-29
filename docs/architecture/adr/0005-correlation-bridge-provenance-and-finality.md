@@ -1,6 +1,6 @@
 # ADR-0005: Correlation Bridge Provenance and Single Finality Materializer
 
-- Status: Accepted (amended 2026-07-29 — bridge-replacement slice)
+- Status: Accepted (amended 2026-07-29 — bridge-removal coverage gate)
 - Date: 2026-07-28
 - Depends on: ADR-0001 (tenancy), ADR-0004 (persistence), THREATEVENT contract
   (`docs/architecture/threat-event-contract.md`)
@@ -15,16 +15,15 @@ The gateway has two paths that can produce operator-visible findings:
    with `detection_source = "agent_signed"`. This is the intended steady-state
    path for correlation-based detections once agents emit signed events.
 
-2. **Correlation bridge path (fallback)** — `ThreatEventService.submitFromDetection`  
+2. **Correlation bridge path (coverage-gated fallback)** — `ThreatEventService.submitFromDetection`  
    Server-side post-ingest / silence correlation builds a THREATEVENT-shaped
    envelope with a non-crypto bridge placeholder signature (gateway never holds
    agent private keys), then uses the same finality → finding flow when an
    **active** `device_identities` row exists. Materializes as
-   `detection_source = "bridge_correlation"`.
+   `detection_source = "bridge_correlation"`. Bridge remains in code until the
+   final deletion slice; disablement is reversible and coverage-gated.
 
-Both paths share finality gating and the single materializer. Bridge remains
-**transitional** and **tenant-flaggable**; it is not removed in the
-bridge-replacement slice.
+Both paths share finality gating and the single materializer.
 
 ## Decision
 
@@ -49,7 +48,7 @@ evaluation: `materializeFindingAfterFinality`.
 | Path | Required `detection_source` value | Role |
 |------|-----------------------------------|------|
 | Agent-signed (`submitSigned`) | `"agent_signed"` | **Primary** |
-| Correlation bridge (`submitFromDetection`) | `"bridge_correlation"` | **Fallback only** |
+| Correlation bridge (`submitFromDetection`) | `"bridge_correlation"` | **Coverage-gated fallback** |
 
 **Hard rules:**
 
@@ -66,6 +65,10 @@ evaluation: `materializeFindingAfterFinality`.
 
 4. **Do not invent a third write-path provenance label** unless forced by schema
    constraints. Historical `legacy_unspecified` remains read-only for old rows.
+
+5. **Historical `bridge_correlation` rows remain valid and readable** after
+   disablement. Disablement stops new bridge materialization only; it never
+   rewrites or deletes history, and never downgrades `agent_signed`.
 
 ### 3. Monotonic provenance upgrade (bridge-replacement)
 
@@ -86,20 +89,48 @@ Threat events are path-scoped: unique on
 `(tenant, agent, detection_rule_id, window_bucket, detection_source)` so a signed
 event can finalize after a bridge event for the same correlation window.
 
-### 4. Bridge remains temporary and tenant-gated
+### 4. Coverage-gated bridge disablement (bridge-removal slice)
 
-Until removal:
+Bridge remains temporary until the final deletion slice. Disablement is
+**controlled deprecation**, not a hard cut:
 
-- Bridge still requires an **active** device identity for the agent.
-- Bridge still uses the non-crypto placeholder signature.
-- **Global** flag `CORRELATION_BRIDGE_ENABLED` (default on): when false, bridge
-  is off for all tenants.
-- **Per-tenant** denylist `CORRELATION_BRIDGE_DISABLED_TENANTS` (comma-separated
-  UUIDs): when global is on, listed tenants skip bridge while signed correlation
-  continues. Re-enabling bridge for a tenant must not rewrite existing
-  `agent_signed` rows.
-- When an `agent_signed` finding already covers the dedup key, bridge evaluation
-  skips creating a weaker row (signed is primary).
+**Coverage signal** (narrow, queryable from persisted findings):
+
+- Lookback window = soak duration.
+- Count findings with `detection_source ∈ {agent_signed, bridge_correlation}`
+  created in that window.
+- `signedRatio = signedCount / (signedCount + bridgeCount)`.
+- `firstSignedAt = min(created_at)` among `agent_signed` findings for the tenant.
+
+**Eligibility** (all required):
+
+1. `signedCount + bridgeCount >= CORRELATION_BRIDGE_COVERAGE_MIN_FINDINGS`
+2. `signedRatio >= CORRELATION_BRIDGE_COVERAGE_THRESHOLD`
+3. `firstSignedAt` exists and `now - firstSignedAt >= soak`
+
+**Controls** (reversible without code deletion):
+
+| Control | Role |
+|---------|------|
+| `CORRELATION_BRIDGE_ENABLED` | Global off switch |
+| `CORRELATION_BRIDGE_DISABLED_TENANTS` | Operator force-disable denylist |
+| `CORRELATION_BRIDGE_COVERAGE_AUTO_DISABLE` | When true, eligible tenants skip bridge (default **false** — fail closed for auto-disable) |
+| `CORRELATION_BRIDGE_FORCE_ENABLED_TENANTS` | Per-tenant rollback: keep bridge on despite eligibility |
+| Threshold / soak hours / min findings | Env-tuned policy |
+
+**Fail closed for disabling:** if coverage evaluation errors, bridge stays
+**enabled**. Stale or missing data must not auto-disable.
+
+**Audit:** emit structured lifecycle events
+`correlation_bridge_coverage_disabled`,
+`correlation_bridge_coverage_not_eligible`,
+`correlation_bridge_force_enabled`,
+`correlation_bridge_operator_disabled`,
+`correlation_bridge_globally_disabled`,
+`correlation_bridge_coverage_eval_failed` with coverage fields (ratio, counts,
+threshold, soak, reasons).
+
+Signed correlation is unchanged and remains available when bridge is disabled.
 
 ### 5. Caller restriction
 
@@ -121,9 +152,10 @@ agents or operators. Agents submit only via `submitSigned` / `POST /v1/threat-ev
 - libp2p / gossipsub production networking
 - Findings UI changes
 - Response actions / remediation
-- Deleting bridge code in this slice
+- Deleting bridge code or historical `bridge_correlation` rows in this slice
 - Ed25519-signing the bridge placeholder (gateway must not hold agent private keys)
 - Introducing `canonicalVersion: 1` (separate contract bump)
+- Broad analytics / metrics platform
 
 ## Consequences
 
@@ -131,13 +163,14 @@ agents or operators. Agents submit only via `submitSigned` / `POST /v1/threat-ev
 
 - Operators can distinguish bridge fallback from agent-attested detections.
 - Signed coverage can take over a window without duplicate findings.
-- Bridge can be disabled per tenant and re-enabled without schema rewrites of
-  historical rows.
+- Bridge can be disabled per tenant (operator or coverage) and re-enabled
+  without schema rewrites of historical rows.
 
 ### Negative / costs
 
 - Path-scoped `threat_events` uniqueness adds a small schema surface.
 - Dual-path windows temporarily hold two threat_event rows (one per provenance).
+- Coverage auto-disable adds a findings read on bridge submit when enabled.
 
 ## Migration / removal plan
 
@@ -146,22 +179,28 @@ agents or operators. Agents submit only via `submitSigned` / `POST /v1/threat-ev
 Single materializer, `detection_source` on findings, cross-label rejection,
 checklists.
 
-### Bridge-replacement slice (this amendment)
+### Bridge-replacement slice (done)
 
 1. Agent-signed correlation is primary; bridge is fallback.
 2. Monotonic upgrade bridge → agent_signed with audit.
 3. Tenant-aware bridge disablement + global flag preserved.
 4. Path-scoped threat_event dedup so signed can finalize after bridge.
 
-### Removal slice (later)
+### Bridge-removal slice (this amendment)
 
-Preconditions: signed coverage for churn / burst / silence (or product accepts
-dropping bridge coverage); no remaining production need for
-`submitFromDetection`.
+1. Coverage signal from persisted signed-vs-bridge findings.
+2. Threshold + soak + min-findings eligibility.
+3. Opt-in auto-disable with force-enable rollback; historical rows untouched.
+4. Bridge code path retained for ineligible / force-enabled tenants.
+
+### Final deletion slice (later)
+
+Preconditions: coverage auto-disable proven in production soak; product accepts
+dropping bridge for remaining tenants.
 
 Steps:
 
-1. Disable bridge globally and per remaining tenants; verify.
+1. Disable bridge globally; verify signed-only operation.
 2. Delete or hard-error `submitFromDetection` and correlation wiring into it.
 3. Stop writing `"bridge_correlation"` for new rows.
 4. Retain historical `bridge_correlation` rows for audit; do not rewrite them
@@ -172,5 +211,7 @@ Steps:
 
 Executable test titles:
 `docs/architecture/correlation-bridge-narrowing-checklist.md`
-(plus bridge-replacement coverage in
-`backend/api-gateway/tests/threat-events/bridge-replacement.test.ts`)
+
+Coverage suites:
+- `backend/api-gateway/tests/threat-events/bridge-replacement.test.ts`
+- `backend/api-gateway/tests/threat-events/bridge-removal.test.ts`

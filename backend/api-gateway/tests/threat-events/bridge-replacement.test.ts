@@ -271,6 +271,14 @@ function memoryFindings(): {
     async getAttentionRawSources() {
       throw new Error("not used");
     },
+    async getBridgeCoverageCounts() {
+      return {
+        signedCount: 0,
+        bridgeCount: 0,
+        firstSignedAt: null,
+        oldestInWindowAt: null,
+      };
+    },
   };
 
   return { repo, rows, upgrades };

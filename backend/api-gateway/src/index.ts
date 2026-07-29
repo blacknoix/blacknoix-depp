@@ -68,26 +68,14 @@ const threatEventService =
         findings,
         finality: createDevSingleNodeFinalizer(),
         gossip: createInMemoryGossip(),
-        correlationBridgeEnabled: env.correlationBridgeEnabled,
-        correlationBridgeDisabledTenants: env.correlationBridgeDisabledTenants,
-        correlationBridgeForceEnabledTenants:
-          env.correlationBridgeForceEnabledTenants,
-        correlationBridgeCoverageAutoDisable:
-          env.correlationBridgeCoverageAutoDisable,
-        correlationBridgeCoveragePolicy: {
-          threshold: env.correlationBridgeCoverageThreshold,
-          soakMs: env.correlationBridgeCoverageSoakHours * 60 * 60 * 1000,
-          minFindings: env.correlationBridgeCoverageMinFindings,
-        },
       })
     : undefined;
 const correlationService =
-  telemetry && findings && suppressions && threatEventService
+  telemetry && findings && suppressions
     ? createCorrelationService({
         telemetry,
         findings,
         suppressions,
-        threatEvents: threatEventService,
       })
     : undefined;
 const telemetryService = telemetry

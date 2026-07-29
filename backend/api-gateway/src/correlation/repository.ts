@@ -7,7 +7,6 @@ import {
   DETECTION_SOURCE_AGENT_SIGNED,
   DETECTION_SOURCE_BRIDGE,
 } from "../threat-events/provenance";
-import type { BridgeCoverageCounts } from "../threat-events/bridge-coverage";
 import type { AttentionItem } from "./attention";
 import type { FindingsDashboardRawCounts } from "./dashboard";
 import type { FindingStatus } from "./lifecycle";
@@ -116,17 +115,6 @@ export interface CorrelationFindingsRepository {
     tenantId: string,
     input: DetectionSourceUpgradeInput,
   ): Promise<string | undefined>;
-
-  /**
-   * Narrow ADR-0005 coverage signal: signed vs bridge finding counts in a
-   * lookback window, plus earliest agent_signed created_at for soak checks.
-   * Does not mutate rows.
-   */
-  getBridgeCoverageCounts(
-    tenantId: string,
-    windowStart: Date,
-    windowEnd: Date,
-  ): Promise<BridgeCoverageCounts>;
 
   listFindings(
     tenantId: string,
@@ -327,54 +315,6 @@ export function createCorrelationFindingsRepository(
           .returning("id")
           .executeTakeFirst();
         return row?.id;
-      });
-    },
-
-    async getBridgeCoverageCounts(tenantId, windowStart, windowEnd) {
-      return withTenantTransaction(db, tenantId, async (trx) => {
-        const windowResult = await sql<{
-          signed_count: string | number;
-          bridge_count: string | number;
-          oldest_in_window: Date | string | null;
-        }>`
-          select
-            count(*) filter (
-              where detection_source = ${DETECTION_SOURCE_AGENT_SIGNED}
-            ) as signed_count,
-            count(*) filter (
-              where detection_source = ${DETECTION_SOURCE_BRIDGE}
-            ) as bridge_count,
-            min(created_at) as oldest_in_window
-          from correlation_findings
-          where created_at >= ${windowStart}
-            and created_at <= ${windowEnd}
-            and detection_source in (
-              ${DETECTION_SOURCE_AGENT_SIGNED},
-              ${DETECTION_SOURCE_BRIDGE}
-            )
-        `.execute(trx);
-
-        const firstSignedResult = await sql<{
-          first_signed_at: Date | string | null;
-        }>`
-          select min(created_at) as first_signed_at
-          from correlation_findings
-          where detection_source = ${DETECTION_SOURCE_AGENT_SIGNED}
-        `.execute(trx);
-
-        const windowRow = windowResult.rows[0];
-        const firstSigned = firstSignedResult.rows[0];
-
-        return {
-          signedCount: Number(windowRow?.signed_count ?? 0),
-          bridgeCount: Number(windowRow?.bridge_count ?? 0),
-          firstSignedAt: firstSigned?.first_signed_at
-            ? asDate(firstSigned.first_signed_at)
-            : null,
-          oldestInWindowAt: windowRow?.oldest_in_window
-            ? asDate(windowRow.oldest_in_window)
-            : null,
-        };
       });
     },
 

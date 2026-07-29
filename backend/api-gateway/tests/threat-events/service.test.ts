@@ -53,27 +53,7 @@ function findingsStub(
     async getAttentionRawSources() {
       throw new Error("not used");
     },
-    async getBridgeCoverageCounts() {
-      return {
-        signedCount: 0,
-        bridgeCount: 0,
-        firstSignedAt: null,
-        oldestInWindowAt: null,
-      };
-    },
     ...overrides,
-  };
-}
-
-function candidate() {
-  return {
-    ruleId: "agent.heartbeat_burst" as const,
-    title: "Agent heartbeat burst",
-    severity: "medium" as const,
-    evidence: { totalInWindow: 30 },
-    windowStart: bucket,
-    windowEnd: new Date("2026-03-01T12:01:00.000Z"),
-    windowBucket: bucket,
   };
 }
 
@@ -106,34 +86,70 @@ function rowFromInsert(
   };
 }
 
+function makeSignedEnvelope(
+  privateKey: ReturnType<typeof generateEd25519KeyPairForTests>["privateKey"],
+) {
+  const unsigned = {
+    kind: "THREATEVENT" as const,
+    tenantId,
+    agentId,
+    deviceIdentityId: deviceId,
+    detectionRuleId: "agent.heartbeat_burst" as const,
+    title: "Agent heartbeat burst",
+    severity: "medium" as const,
+    evidence: { totalInWindow: 30 },
+    windowStart: bucket,
+    windowEnd: new Date("2026-03-01T12:01:00.000Z"),
+    windowBucket: bucket,
+    occurredAt: bucket,
+    signedAt: bucket,
+  };
+  return {
+    ...unsigned,
+    signature: signThreatEventEnvelope(privateKey, unsigned),
+  };
+}
+
+function activeIdentity(publicKeyEd25519: string): DeviceIdentityRepository {
+  return {
+    async findByAgentId() {
+      return {
+        id: deviceId,
+        tenantId,
+        agentId,
+        publicKeyEd25519,
+        deviceCertPem: null,
+        status: "active",
+        createdAt: new Date(),
+        revokedAt: null,
+      };
+    },
+    async findById() {
+      return {
+        id: deviceId,
+        tenantId,
+        agentId,
+        publicKeyEd25519,
+        deviceCertPem: null,
+        status: "active",
+        createdAt: new Date(),
+        revokedAt: null,
+      };
+    },
+    async insert() {
+      throw new Error("not used");
+    },
+    async revoke() {
+      return undefined;
+    },
+  };
+}
+
 describe("ThreatEventService finality gate", () => {
   it("does not create a finding when finality rejects", async () => {
+    const { publicKeyEd25519, privateKey } = generateEd25519KeyPairForTests();
     let findingsCalled = 0;
     const events = new Map<string, ThreatEventRow>();
-
-    const deviceIdentities: DeviceIdentityRepository = {
-      async findByAgentId() {
-        return {
-          id: deviceId,
-          tenantId,
-          agentId,
-          publicKeyEd25519: "pk",
-          deviceCertPem: null,
-          status: "active",
-          createdAt: new Date(),
-          revokedAt: null,
-        };
-      },
-      async findById() {
-        return undefined;
-      },
-      async insert() {
-        throw new Error("not used");
-      },
-      async revoke() {
-        return undefined;
-      },
-    };
 
     const threatEvents: ThreatEventsRepository = {
       async insertPending(_tid, input) {
@@ -170,7 +186,7 @@ describe("ThreatEventService finality gate", () => {
     });
 
     const service = createThreatEventService({
-      deviceIdentities,
+      deviceIdentities: activeIdentity(publicKeyEd25519),
       threatEvents,
       findings,
       finality: {
@@ -186,10 +202,10 @@ describe("ThreatEventService finality gate", () => {
       now: () => new Date("2026-03-01T12:01:00.000Z"),
     });
 
-    const outcome = await service.submitFromDetection(
+    const outcome = await service.submitSigned(
       tenantId,
       agentId,
-      candidate(),
+      makeSignedEnvelope(privateKey),
     );
 
     assert.equal(outcome.ok, false);
@@ -204,32 +220,9 @@ describe("ThreatEventService finality gate", () => {
   });
 
   it("creates a finding only after finality succeeds", async () => {
+    const { publicKeyEd25519, privateKey } = generateEd25519KeyPairForTests();
     let findingsCalled = 0;
     const events = new Map<string, ThreatEventRow>();
-
-    const deviceIdentities: DeviceIdentityRepository = {
-      async findByAgentId() {
-        return {
-          id: deviceId,
-          tenantId,
-          agentId,
-          publicKeyEd25519: "pk",
-          deviceCertPem: null,
-          status: "active",
-          createdAt: new Date(),
-          revokedAt: null,
-        };
-      },
-      async findById() {
-        return undefined;
-      },
-      async insert() {
-        throw new Error("not used");
-      },
-      async revoke() {
-        return undefined;
-      },
-    };
 
     const threatEvents: ThreatEventsRepository = {
       async insertPending(_tid, input) {
@@ -263,7 +256,7 @@ describe("ThreatEventService finality gate", () => {
     });
 
     const service = createThreatEventService({
-      deviceIdentities,
+      deviceIdentities: activeIdentity(publicKeyEd25519),
       threatEvents,
       findings,
       finality: createDevSingleNodeFinalizer(),
@@ -271,10 +264,10 @@ describe("ThreatEventService finality gate", () => {
       now: () => new Date("2026-03-01T12:01:00.000Z"),
     });
 
-    const outcome = await service.submitFromDetection(
+    const outcome = await service.submitSigned(
       tenantId,
       agentId,
-      candidate(),
+      makeSignedEnvelope(privateKey),
     );
 
     assert.equal(outcome.ok, true);
@@ -289,6 +282,7 @@ describe("ThreatEventService finality gate", () => {
   });
 
   it("fails closed without an active device identity", async () => {
+    const { privateKey } = generateEd25519KeyPairForTests();
     let findingsCalled = 0;
     const service = createThreatEventService({
       deviceIdentities: {
@@ -326,10 +320,10 @@ describe("ThreatEventService finality gate", () => {
       gossip: createInMemoryGossip(),
     });
 
-    const outcome = await service.submitFromDetection(
+    const outcome = await service.submitSigned(
       tenantId,
       agentId,
-      candidate(),
+      makeSignedEnvelope(privateKey),
     );
     assert.equal(outcome.ok, false);
     if (!outcome.ok) {
@@ -345,53 +339,11 @@ describe("ThreatEventService submitSigned Ed25519 gate", () => {
     let findingsCalled = 0;
     const events = new Map<string, ThreatEventRow>();
 
-    const unsigned = {
-      kind: "THREATEVENT" as const,
-      tenantId,
-      agentId,
-      deviceIdentityId: deviceId,
-      detectionRuleId: "agent.heartbeat_burst",
-      title: "Agent heartbeat burst",
-      severity: "medium" as const,
-      evidence: { totalInWindow: 30 },
-      windowStart: bucket,
-      windowEnd: new Date("2026-03-01T12:01:00.000Z"),
-      windowBucket: bucket,
-      occurredAt: new Date("2026-03-01T12:01:00.000Z"),
-      signedAt: new Date("2026-03-01T12:01:00.000Z"),
-    };
-    const envelope = {
-      ...unsigned,
-      signature: signThreatEventEnvelope(privateKey, unsigned),
-    };
-
     const service = createThreatEventService({
-      deviceIdentities: {
-        async findByAgentId() {
-          return undefined;
-        },
-        async findById() {
-          return {
-            id: deviceId,
-            tenantId,
-            agentId,
-            publicKeyEd25519,
-            deviceCertPem: null,
-            status: "active",
-            createdAt: new Date(),
-            revokedAt: null,
-          };
-        },
-        async insert() {
-          throw new Error("not used");
-        },
-        async revoke() {
-          return undefined;
-        },
-      },
+      deviceIdentities: activeIdentity(publicKeyEd25519),
       threatEvents: {
         async insertPending(_tid, input) {
-          const id = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+          const id = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
           const event = rowFromInsert(id, input);
           events.set(id, event);
           return { ok: true, event };
@@ -400,10 +352,7 @@ describe("ThreatEventService submitSigned Ed25519 gate", () => {
           return events.get(id);
         },
         async transitionFinality(_tid, id, to, options) {
-          const current = events.get(id);
-          if (!current) {
-            return { ok: false, reason: "not_found" };
-          }
+          const current = events.get(id)!;
           const next = {
             ...current,
             finalityState: to,
@@ -425,41 +374,50 @@ describe("ThreatEventService submitSigned Ed25519 gate", () => {
       gossip: createInMemoryGossip(),
     });
 
-    const outcome = await service.submitSigned(tenantId, agentId, envelope);
+    const outcome = await service.submitSigned(
+      tenantId,
+      agentId,
+      makeSignedEnvelope(privateKey),
+    );
     assert.equal(outcome.ok, true);
-    if (outcome.ok && outcome.status === "created") {
-      assert.equal(outcome.findingId, "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
-    }
     assert.equal(findingsCalled, 1);
   });
 
   it("rejects a tampered signature before finality", async () => {
     const { publicKeyEd25519, privateKey } = generateEd25519KeyPairForTests();
-    let findingsCalled = 0;
-    let inserted = 0;
+    let insertCalled = 0;
+    const envelope = makeSignedEnvelope(privateKey);
+    envelope.signature = `${envelope.signature.slice(0, -2)}aa`;
 
-    const unsigned = {
-      kind: "THREATEVENT" as const,
-      tenantId,
-      agentId,
-      deviceIdentityId: deviceId,
-      detectionRuleId: "agent.heartbeat_burst",
-      title: "Agent heartbeat burst",
-      severity: "medium" as const,
-      evidence: {},
-      windowStart: bucket,
-      windowEnd: new Date("2026-03-01T12:01:00.000Z"),
-      windowBucket: bucket,
-      occurredAt: new Date("2026-03-01T12:01:00.000Z"),
-      signedAt: new Date("2026-03-01T12:01:00.000Z"),
-    };
-    const goodSig = signThreatEventEnvelope(privateKey, unsigned);
-    const envelope = {
-      ...unsigned,
-      title: "tampered title",
-      signature: goodSig,
-    };
+    const service = createThreatEventService({
+      deviceIdentities: activeIdentity(publicKeyEd25519),
+      threatEvents: {
+        async insertPending() {
+          insertCalled += 1;
+          throw new Error("should not insert");
+        },
+        async getById() {
+          return undefined;
+        },
+        async transitionFinality() {
+          throw new Error("should not transition");
+        },
+      },
+      findings: findingsStub(),
+      finality: createDevSingleNodeFinalizer(),
+      gossip: createInMemoryGossip(),
+    });
 
+    const outcome = await service.submitSigned(tenantId, agentId, envelope);
+    assert.equal(outcome.ok, false);
+    if (!outcome.ok) {
+      assert.equal(outcome.status, "invalid_signature");
+    }
+    assert.equal(insertCalled, 0);
+  });
+
+  it("rejects revoked device identities", async () => {
+    const { publicKeyEd25519, privateKey } = generateEd25519KeyPairForTests();
     const service = createThreatEventService({
       deviceIdentities: {
         async findByAgentId() {
@@ -471,63 +429,6 @@ describe("ThreatEventService submitSigned Ed25519 gate", () => {
             tenantId,
             agentId,
             publicKeyEd25519,
-            deviceCertPem: null,
-            status: "active",
-            createdAt: new Date(),
-            revokedAt: null,
-          };
-        },
-        async insert() {
-          throw new Error("not used");
-        },
-        async revoke() {
-          return undefined;
-        },
-      },
-      threatEvents: {
-        async insertPending() {
-          inserted += 1;
-          throw new Error("should not insert");
-        },
-        async getById() {
-          return undefined;
-        },
-        async transitionFinality() {
-          throw new Error("should not transition");
-        },
-      },
-      findings: findingsStub({
-        async insertFindingIgnoreDup() {
-          findingsCalled += 1;
-          return "x";
-        },
-      }),
-      finality: createDevSingleNodeFinalizer(),
-      gossip: createInMemoryGossip(),
-    });
-
-    const outcome = await service.submitSigned(tenantId, agentId, envelope);
-    assert.equal(outcome.ok, false);
-    if (!outcome.ok) {
-      assert.equal(outcome.status, "invalid_signature");
-    }
-    assert.equal(inserted, 0);
-    assert.equal(findingsCalled, 0);
-  });
-
-  it("rejects revoked device identities", async () => {
-    let findingsCalled = 0;
-    const service = createThreatEventService({
-      deviceIdentities: {
-        async findByAgentId() {
-          return undefined;
-        },
-        async findById() {
-          return {
-            id: deviceId,
-            tenantId,
-            agentId,
-            publicKeyEd25519: "pk",
             deviceCertPem: null,
             status: "revoked",
             createdAt: new Date(),
@@ -552,36 +453,19 @@ describe("ThreatEventService submitSigned Ed25519 gate", () => {
           throw new Error("should not transition");
         },
       },
-      findings: findingsStub({
-        async insertFindingIgnoreDup() {
-          findingsCalled += 1;
-          return "x";
-        },
-      }),
+      findings: findingsStub(),
       finality: createDevSingleNodeFinalizer(),
       gossip: createInMemoryGossip(),
     });
 
-    const outcome = await service.submitSigned(tenantId, agentId, {
-      kind: "THREATEVENT",
+    const outcome = await service.submitSigned(
       tenantId,
       agentId,
-      deviceIdentityId: deviceId,
-      detectionRuleId: "agent.heartbeat_burst",
-      title: "x",
-      severity: "medium",
-      evidence: {},
-      windowStart: bucket,
-      windowEnd: bucket,
-      windowBucket: bucket,
-      occurredAt: bucket,
-      signature: "aa".repeat(32),
-      signedAt: bucket,
-    });
+      makeSignedEnvelope(privateKey),
+    );
     assert.equal(outcome.ok, false);
     if (!outcome.ok) {
       assert.equal(outcome.status, "identity_revoked");
     }
-    assert.equal(findingsCalled, 0);
   });
 });

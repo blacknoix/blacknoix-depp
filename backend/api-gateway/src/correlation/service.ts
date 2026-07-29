@@ -34,8 +34,6 @@ import type {
   FindingSuppressionRow,
   FindingSuppressionsRepository,
 } from "./suppression-repository";
-import type { ThreatEventService } from "../threat-events/service";
-
 export interface SilenceEvaluateOptions {
   /** When set, evaluate only this agent. */
   agentId?: string;
@@ -130,8 +128,6 @@ export interface CorrelationServiceDeps {
   telemetry: TelemetryRepository;
   findings: CorrelationFindingsRepository;
   suppressions: FindingSuppressionsRepository;
-  /** Required: findings materialize only after threat-event finality. */
-  threatEvents: ThreatEventService;
   /** Injectable clock for deterministic tests. Defaults to Date.now. */
   now?: () => Date;
 }
@@ -150,9 +146,14 @@ function isUniqueViolation(err: unknown): boolean {
 export function createCorrelationService(
   deps: CorrelationServiceDeps,
 ): CorrelationService {
-  const { telemetry, findings, suppressions, threatEvents } = deps;
+  const { telemetry, findings, suppressions } = deps;
   const now = deps.now ?? (() => new Date());
 
+  /**
+   * Gateway correlation no longer materializes findings (ADR-0005 final
+   * deletion). Live findings come only from agent-signed THREATEVENTs.
+   * Snooze still short-circuits evaluation noise.
+   */
   async function persistCandidate(
     tenantId: string,
     agentId: string,
@@ -181,48 +182,13 @@ export function createCorrelationService(
       return "snoozed";
     }
 
-    const outcome = await threatEvents.submitFromDetection(
-      tenantId,
-      agentId,
-      candidate,
-      at,
-    );
-
-    if (outcome.ok && outcome.status === "created") {
-      logLifecycle("info", "correlation_finding_created", {
-        tenantId,
-        agentId,
-        ruleId: candidate.ruleId,
-        findingId: outcome.findingId,
-        threatEventId: outcome.threatEventId,
-      });
-      return "created";
-    }
-
-    if (outcome.ok && outcome.status === "upgraded") {
-      logLifecycle("info", "correlation_finding_provenance_upgraded", {
-        tenantId,
-        agentId,
-        ruleId: candidate.ruleId,
-        findingId: outcome.findingId,
-        threatEventId: outcome.threatEventId,
-      });
-      return "deduped";
-    }
-
-    if (outcome.ok && outcome.status === "deduped") {
-      return "deduped";
-    }
-
-    logLifecycle("warn", "correlation_finding_finality_blocked", {
+    logLifecycle("info", "correlation_bridge_write_path_deleted", {
       tenantId,
       agentId,
       ruleId: candidate.ruleId,
-      status: outcome.status,
-      reason: outcome.reason,
+      windowBucket: candidate.windowBucket.toISOString(),
+      evaluatedAt: at.toISOString(),
     });
-    // Fail closed: no finding without finality. Treat as deduped/suppressed
-    // for silence counts (no new operator row).
     return "deduped";
   }
 

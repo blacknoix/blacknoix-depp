@@ -8,11 +8,6 @@ import { createFindingSuppressionsRepository } from "../../src/correlation/suppr
 import { withTenantTransaction } from "../../src/db/tenant-context";
 import { createTelemetryRepository } from "../../src/telemetry/repository";
 import { createTelemetryService } from "../../src/telemetry/service";
-import { createDeviceIdentityRepository } from "../../src/threat-events/device-identity-repository";
-import { createDevSingleNodeFinalizer } from "../../src/threat-events/finality";
-import { createInMemoryGossip } from "../../src/threat-events/gossip";
-import { createThreatEventsRepository } from "../../src/threat-events/repository";
-import { createThreatEventService } from "../../src/threat-events/service";
 import {
   connectDb,
   resetSchema,
@@ -30,20 +25,10 @@ let agentB: string;
 function correlationFor(
   now?: () => Date,
 ): ReturnType<typeof createCorrelationService> {
-  const findings = createCorrelationFindingsRepository(db.app);
-  const threatEvents = createThreatEventService({
-    deviceIdentities: createDeviceIdentityRepository(db.app),
-    threatEvents: createThreatEventsRepository(db.app),
-    findings,
-    finality: createDevSingleNodeFinalizer(),
-    gossip: createInMemoryGossip(),
-    ...(now ? { now } : {}),
-  });
   return createCorrelationService({
     telemetry: createTelemetryRepository(db.app),
-    findings,
+    findings: createCorrelationFindingsRepository(db.app),
     suppressions: createFindingSuppressionsRepository(db.app),
-    threatEvents,
     ...(now ? { now } : {}),
   });
 }
@@ -159,7 +144,7 @@ describe("correlation findings persistence and isolation", () => {
 });
 
 describe("post-ingest correlation evaluation", () => {
-  it("fires lifecycle churn at threshold and not below", async () => {
+  it("does not materialize findings from gateway correlation after bridge deletion", async () => {
     const telemetry = createTelemetryRepository(db.app);
     const findings = createCorrelationFindingsRepository(db.app);
     const nowIso = "2026-03-01T12:10:00.000Z";
@@ -167,9 +152,9 @@ describe("post-ingest correlation evaluation", () => {
     const service = createTelemetryService({ telemetry, correlation });
 
     const base = new Date("2026-03-01T12:05:00.000Z").getTime();
-    const below = await service.ingestBatch(
+    const churn = await service.ingestBatch(
       tenantA,
-      Array.from({ length: 5 }, (_, i) => ({
+      Array.from({ length: 6 }, (_, i) => ({
         schemaVersion: 1 as const,
         agentId: agentA,
         eventType: (i % 2 === 0 ? "agent.started" : "agent.stopped") as
@@ -179,36 +164,10 @@ describe("post-ingest correlation evaluation", () => {
         payload: {},
       })),
     );
-    assert.equal(below.ok, true);
-
-    let listed = await findings.listFindings(tenantA, { limit: 50, offset: 0 });
-    assert.equal(listed.length, 0);
-
-    const sixth = await service.ingest(tenantA, {
-      schemaVersion: 1,
-      agentId: agentA,
-      eventType: "agent.started",
-      occurredAt: new Date(base + 5_000),
-      payload: {},
-    });
-    assert.equal(sixth.ok, true);
-
-    listed = await findings.listFindings(tenantA, { limit: 50, offset: 0 });
-    assert.equal(listed.length, 1);
-    assert.equal(listed[0].ruleId, "agent.lifecycle_churn");
-    assert.equal(listed[0].evidence.totalInWindow, 6);
-    assert.ok(Array.isArray(listed[0].evidence.sampleEventIds));
-  });
-
-  it("fires heartbeat burst at threshold and dedups same bucket", async () => {
-    const telemetry = createTelemetryRepository(db.app);
-    const findings = createCorrelationFindingsRepository(db.app);
-    const nowIso = "2026-03-01T12:00:30.000Z";
-    const correlation = correlationFor(fixedNow(nowIso));
-    const service = createTelemetryService({ telemetry, correlation });
+    assert.equal(churn.ok, true);
 
     const start = new Date("2026-03-01T12:00:00.000Z").getTime();
-    const batch = await service.ingestBatch(
+    const burst = await service.ingestBatch(
       tenantA,
       Array.from({ length: 30 }, (_, i) => ({
         schemaVersion: 1 as const,
@@ -218,27 +177,13 @@ describe("post-ingest correlation evaluation", () => {
         payload: {},
       })),
     );
-    assert.equal(batch.ok, true);
+    assert.equal(burst.ok, true);
 
-    let listed = await findings.listFindings(tenantA, { limit: 50, offset: 0 });
-    assert.equal(listed.length, 1);
-    assert.equal(listed[0].ruleId, "agent.heartbeat_burst");
-    assert.equal(listed[0].evidence.totalInWindow, 30);
-
-    const again = await service.ingest(tenantA, {
-      schemaVersion: 1,
-      agentId: agentA,
-      eventType: "heartbeat",
-      occurredAt: new Date(start + 15_000),
-      payload: {},
-    });
-    assert.equal(again.ok, true);
-
-    listed = await findings.listFindings(tenantA, { limit: 50, offset: 0 });
-    assert.equal(listed.length, 1);
+    const listed = await findings.listFindings(tenantA, { limit: 50, offset: 0 });
+    assert.equal(listed.length, 0);
   });
 
-  it("does not create findings for another tenant's agent traffic", async () => {
+  it("keeps tenant isolation for telemetry even when correlation no longer writes findings", async () => {
     const telemetry = createTelemetryRepository(db.app);
     const findings = createCorrelationFindingsRepository(db.app);
     const correlation = correlationFor(fixedNow("2026-03-01T12:00:30.000Z"));
@@ -266,7 +211,12 @@ describe("post-ingest correlation evaluation", () => {
       limit: 50,
       offset: 0,
     });
-    assert.equal(seenByB.length, 1);
+    assert.equal(seenByB.length, 0);
+
+    const eventsB = await telemetry.listRecentByTenant(tenantB);
+    assert.ok(eventsB.length >= 30);
+    const eventsA = await telemetry.listRecentByTenant(tenantA);
+    assert.equal(eventsA.length, 0);
   });
 
   it("keeps ingest successful when correlation throws", async () => {
@@ -328,19 +278,19 @@ describe("post-ingest correlation evaluation", () => {
 });
 
 describe("heartbeat silence evaluation", () => {
-  it("creates a finding for a stale heartbeat and not for a fresh one", async () => {
+  it("evaluates silence but never materializes bridge findings after deletion", async () => {
     const telemetry = createTelemetryRepository(db.app);
     const findingsRepo = createCorrelationFindingsRepository(db.app);
     const nowIso = "2026-03-01T12:10:00.000Z";
     const correlation = correlationFor(fixedNow(nowIso));
 
-    // No heartbeat yet → never-heartbeated → no finding.
+    // No heartbeat yet → never-heartbeated → skipped.
     let result = await correlation.evaluateSilence(tenantA, {
       agentId: agentA,
     });
     assert.deepEqual(result, { evaluated: 1, created: 0, suppressed: 0 });
 
-    // Stale heartbeat (6 minutes before now; threshold is 5 minutes).
+    // Stale heartbeat would formerly create a finding; write path is deleted.
     await telemetry.insertEvent(tenantA, {
       agentId: agentA,
       schemaVersion: 1,
@@ -351,30 +301,15 @@ describe("heartbeat silence evaluation", () => {
 
     result = await correlation.evaluateSilence(tenantA, { agentId: agentA });
     assert.equal(result.evaluated, 1);
-    assert.equal(result.created, 1);
-    assert.equal(result.suppressed, 0);
+    assert.equal(result.created, 0);
+    assert.equal(result.suppressed, 1);
 
-    let listed = await findingsRepo.listFindings(tenantA, {
+    const listed = await findingsRepo.listFindings(tenantA, {
       ruleId: "agent.heartbeat_silence",
       limit: 50,
       offset: 0,
     });
-    assert.equal(listed.length, 1);
-    assert.equal(listed[0].ruleId, "agent.heartbeat_silence");
-    assert.equal(
-      listed[0].evidence.lastHeartbeatAt,
-      "2026-03-01T12:04:00.000Z",
-    );
-
-    // Same-bucket re-eval → suppressed.
-    result = await correlation.evaluateSilence(tenantA, { agentId: agentA });
-    assert.deepEqual(result, { evaluated: 1, created: 0, suppressed: 1 });
-    listed = await findingsRepo.listFindings(tenantA, {
-      ruleId: "agent.heartbeat_silence",
-      limit: 50,
-      offset: 0,
-    });
-    assert.equal(listed.length, 1);
+    assert.equal(listed.length, 0);
   });
 
   it("does not fire when a recent heartbeat exists", async () => {
@@ -403,7 +338,7 @@ describe("heartbeat silence evaluation", () => {
     assert.equal(listed.length, 0);
   });
 
-  it("isolates silence findings by tenant on a capped scan", async () => {
+  it("scans stale agents per tenant without writing findings", async () => {
     const telemetry = createTelemetryRepository(db.app);
     const findingsRepo = createCorrelationFindingsRepository(db.app);
     const correlation = correlationFor(fixedNow("2026-03-01T12:10:00.000Z"));
@@ -420,7 +355,8 @@ describe("heartbeat silence evaluation", () => {
     assert.equal(resultA.created, 0);
 
     const resultB = await correlation.evaluateSilence(tenantB);
-    assert.equal(resultB.created, 1);
+    assert.equal(resultB.created, 0);
+    assert.equal(resultB.suppressed, 1);
 
     const seenByA = await findingsRepo.listFindings(tenantA, {
       limit: 50,
@@ -433,7 +369,7 @@ describe("heartbeat silence evaluation", () => {
       limit: 50,
       offset: 0,
     });
-    assert.equal(seenByB.length, 1);
+    assert.equal(seenByB.length, 0);
   });
 });
 
@@ -605,14 +541,13 @@ describe("findings lifecycle triage", () => {
 });
 
 describe("finding suppressions (snooze)", () => {
-  it("skips creating findings while a rule snooze is active, then resumes after clear/expiry", async () => {
+  it("short-circuits silence evaluation while a rule snooze is active", async () => {
     const findingsRepo = createCorrelationFindingsRepository(db.app);
     const suppressions = createFindingSuppressionsRepository(db.app);
     const nowIso = "2026-03-01T12:10:00.000Z";
     const correlation = correlationFor(fixedNow(nowIso));
     const telemetry = createTelemetryRepository(db.app);
 
-    // Stale heartbeat would fire silence.
     await telemetry.insertEvent(tenantA, {
       agentId: agentA,
       schemaVersion: 1,
@@ -633,7 +568,8 @@ describe("finding suppressions (snooze)", () => {
     const during = await correlation.evaluateSilence(tenantA, {
       agentId: agentA,
     });
-    assert.equal(during.created, 0);
+    // Snooze prevents the deleted write-path noise counter (suppressed).
+    assert.deepEqual(during, { evaluated: 1, created: 0, suppressed: 0 });
     assert.equal(
       (await findingsRepo.listFindings(tenantA, { limit: 50, offset: 0 }))
         .length,
@@ -650,11 +586,13 @@ describe("finding suppressions (snooze)", () => {
     const after = await correlation.evaluateSilence(tenantA, {
       agentId: agentA,
     });
-    assert.equal(after.created, 1);
+    // Bridge write path deleted: evaluation may count as suppressed, never creates.
+    assert.equal(after.created, 0);
+    assert.equal(after.suppressed, 1);
     assert.equal(
       (await findingsRepo.listFindings(tenantA, { limit: 50, offset: 0 }))
         .length,
-      1,
+      0,
     );
 
     // Expiry: uncleared but ends_at in the past is not active.

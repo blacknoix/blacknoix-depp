@@ -1,6 +1,8 @@
-# THREATEVENT contract (Phase 0/1 bridge)
+# THREATEVENT contract (Phase 0/1)
 
-Status: Draft bridge toward TRD. Not yet CometBFT / libp2p / Rust agent.
+Status: Draft toward TRD. Not yet CometBFT / libp2p / Rust agent.
+ADR-0005 final bridge deletion is complete: signed correlation is the only live
+write path; historical `bridge_correlation` rows remain valid readable history.
 
 ## Flow
 
@@ -8,20 +10,18 @@ Status: Draft bridge toward TRD. Not yet CometBFT / libp2p / Rust agent.
 agent credential → JWT
   → POST /v1/agents/:agentId/device-identity (Ed25519 pubkey self-bind)
 
-agent-signed correlation / detection (PRIMARY)
+agent-signed correlation / detection (ONLY LIVE WRITE PATH)
   → POST /v1/threat-events
   → parse envelope → Ed25519 verify vs device_identities.public_key_ed25519
   → ThreatEventService.submitSigned
   → persist pending (detection_source=agent_signed) → gossip → finality
   → materializeFindingAfterFinality → finding agent_signed
-     (or upgrade existing bridge_correlation → agent_signed)
+     (or upgrade existing historical bridge_correlation → agent_signed)
 
-gateway correlation bridge (COVERAGE-GATED FALLBACK)
-  → ThreatEventService.submitFromDetection
-  → persist threat_events (detection_source=bridge_correlation)
-  → gossip → finality → finding bridge_correlation
-  (skipped when global/operator/coverage-disabled, force-enabled override,
-   or agent_signed already covers key)
+gateway correlation evaluation (NO MATERIALIZATION)
+  → may still evaluate rules / honor snooze
+  → MUST NOT call threat-event submission or insert findings
+  → logs correlation_bridge_write_path_deleted when a candidate would formerly bridge
 ```
 
 ## Invariants
@@ -32,32 +32,27 @@ gateway correlation bridge (COVERAGE-GATED FALLBACK)
 4. Agent-signed submit requires an **active** device identity and a valid Ed25519
    signature over canonical bytes (signature field excluded).
 5. Missing / revoked / mismatched identity or bad signature fails closed before finality.
-6. Correlation `submitFromDetection` is a **coverage-gated fallback**: non-crypto
-   bridge signature (gateway never holds agent private keys); still requires an
-   active identity and finality before findings. Bridge findings are labeled
-   `detection_source = "bridge_correlation"` (ADR-0005). Signed findings —
-   including signed correlation — use `detection_source = "agent_signed"` and
-   must never insert the bridge label. Historical `bridge_correlation` rows
-   remain valid after disablement; disablement is reversible until the final
-   deletion slice. The signed path is unchanged when bridge is disabled.
+6. **Live bridge submission is deleted.** There is no `submitFromDetection`, no
+   bridge HTTP entrypoint, and no `CORRELATION_BRIDGE_*` runtime controls.
+   Coverage gating was transitional only and is no longer consulted. New findings
+   use `detection_source = "agent_signed"` only. Historical
+   `bridge_correlation` rows remain valid and queryable; they are never rewritten
+   wholesale to signed and never downgraded from.
 7. Detection findings are inserted or provenance-upgraded only by the single
    finality-gated materializer (`materializeFindingAfterFinality`), which
    requires an intrinsic finality proof from a successful `finalize()`. See
    ADR-0005.
 8. Provenance is **monotonic** for the finding key
    `(tenant, agent, rule, window_bucket)`:
-   - `bridge_correlation` may upgrade to `agent_signed` when a later signed
-     path succeeds (audited via `finding_detection_source_upgraded`).
+   - historical `bridge_correlation` may upgrade to `agent_signed` when a later
+     signed path succeeds (audited via `finding_detection_source_upgraded`).
    - `agent_signed` never downgrades.
    - Same-source repeats dedupe without a second finding.
-9. `threat_events` dedup is path-scoped:
-   `(tenant, agent, detection_rule_id, window_bucket, detection_source)` so
-   bridge and signed may both finalize for the same correlation window.
-10. Bridge auto-disable (when `CORRELATION_BRIDGE_COVERAGE_AUTO_DISABLE=true`)
-    requires signed coverage ratio ≥ threshold over the soak lookback, enough
-    samples, and soak age on the tenant’s first `agent_signed` finding.
-    Coverage eval failures fail closed for disablement (bridge stays on).
-    `CORRELATION_BRIDGE_FORCE_ENABLED_TENANTS` restores bridge without deploy.
+9. `threat_events` dedup remains path-scoped:
+   `(tenant, agent, detection_rule_id, window_bucket, detection_source)` so a
+   signed event may still finalize after a historical bridge event for the same
+   correlation window. Application code must not insert new
+   `bridge_correlation` threat events.
 
 ## Canonical signing bytes (normative — v0)
 
@@ -155,7 +150,6 @@ For agent-signed submit (`ThreatEventService.submitSigned`):
 ## Deferred
 
 - `canonicalVersion: 1` (explicit version field inside the signed JSON)
-- Final deletion of the correlation bridge code path (ADR-0005 final deletion slice)
 - NODEENROLL / device cert issuance
 - Re-bind after revoke (new enrollment cycle)
 - CometBFT / libp2p gossipsub
@@ -164,7 +158,7 @@ For agent-signed submit (`ThreatEventService.submitSigned`):
 
 ## Related
 
-- [ADR-0005](adr/0005-correlation-bridge-provenance-and-finality.md) — bridge
-  provenance, monotonic upgrade, coverage-gated disablement, single finality
+- [ADR-0005](adr/0005-correlation-bridge-provenance-and-finality.md) — signed-only
+  live path, historical bridge provenance, monotonic upgrade, single finality
   materializer
-- [Bridge narrowing checklist](correlation-bridge-narrowing-checklist.md)
+- [Post-deletion notes](correlation-bridge-narrowing-checklist.md)

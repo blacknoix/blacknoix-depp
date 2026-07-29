@@ -10,6 +10,10 @@ import { createInMemoryGossip } from "../../src/threat-events/gossip";
 import { createThreatEventsRepository } from "../../src/threat-events/repository";
 import { createThreatEventService } from "../../src/threat-events/service";
 import {
+  generateEd25519KeyPairForTests,
+  signThreatEventEnvelope,
+} from "../../src/threat-events/signature";
+import {
   connectDb,
   resetSchema,
   seedDeviceIdentity,
@@ -22,6 +26,8 @@ let tenantA: string;
 let tenantB: string;
 let agentA: string;
 let agentB: string;
+let deviceIdA: string;
+let keysA: ReturnType<typeof generateEd25519KeyPairForTests>;
 
 before(async () => {
   db = await connectDb();
@@ -54,12 +60,44 @@ beforeEach(async () => {
   );
   agentA = insertedA.id;
   agentB = insertedB.id;
-  await seedDeviceIdentity(db.migrator, tenantA, agentA);
+  keysA = generateEd25519KeyPairForTests();
+  deviceIdA = await seedDeviceIdentity(
+    db.migrator,
+    tenantA,
+    agentA,
+    keysA.publicKeyEd25519,
+  );
   await seedDeviceIdentity(db.migrator, tenantB, agentB);
 });
 
+function makeSignedEnvelope(overrides: {
+  windowBucket: Date;
+  windowEnd: Date;
+  evidence?: Record<string, unknown>;
+}) {
+  const unsigned = {
+    kind: "THREATEVENT" as const,
+    tenantId: tenantA,
+    agentId: agentA,
+    deviceIdentityId: deviceIdA,
+    detectionRuleId: "agent.heartbeat_burst" as const,
+    title: "Agent heartbeat burst",
+    severity: "medium" as const,
+    evidence: overrides.evidence ?? { totalInWindow: 30 },
+    windowStart: overrides.windowBucket,
+    windowEnd: overrides.windowEnd,
+    windowBucket: overrides.windowBucket,
+    occurredAt: overrides.windowEnd,
+    signedAt: overrides.windowEnd,
+  };
+  return {
+    ...unsigned,
+    signature: signThreatEventEnvelope(keysA.privateKey, unsigned),
+  };
+}
+
 describe("threat_events persistence and finality", () => {
-  it("persists pending then finalizes and materializes a finding", async () => {
+  it("persists pending then finalizes and materializes a signed finding", async () => {
     const findings = createCorrelationFindingsRepository(db.app);
     const service = createThreatEventService({
       deviceIdentities: createDeviceIdentityRepository(db.app),
@@ -71,15 +109,14 @@ describe("threat_events persistence and finality", () => {
     });
 
     const bucket = new Date("2026-03-01T12:00:00.000Z");
-    const outcome = await service.submitFromDetection(tenantA, agentA, {
-      ruleId: "agent.heartbeat_burst",
-      title: "Agent heartbeat burst",
-      severity: "medium",
-      evidence: { totalInWindow: 30 },
-      windowStart: bucket,
-      windowEnd: new Date("2026-03-01T12:01:00.000Z"),
-      windowBucket: bucket,
-    });
+    const outcome = await service.submitSigned(
+      tenantA,
+      agentA,
+      makeSignedEnvelope({
+        windowBucket: bucket,
+        windowEnd: new Date("2026-03-01T12:01:00.000Z"),
+      }),
+    );
 
     assert.equal(outcome.ok, true);
     if (!outcome.ok || outcome.status !== "created") {
@@ -93,10 +130,12 @@ describe("threat_events persistence and finality", () => {
     assert.ok(threat);
     assert.equal(threat.finalityState, "finalized");
     assert.equal(threat.findingId, outcome.findingId);
+    assert.equal(threat.detectionSource, "agent_signed");
 
     const finding = await findings.getFindingById(tenantA, outcome.findingId);
     assert.ok(finding);
     assert.equal(finding.ruleId, "agent.heartbeat_burst");
+    assert.equal(finding.detectionSource, "agent_signed");
   });
 
   it("rejects reverse finality transitions", async () => {
@@ -145,7 +184,7 @@ describe("threat_events persistence and finality", () => {
     }
   });
 
-  it("isolates threat events by tenant", async () => {
+  it("isolates threat events by tenant including historical bridge_correlation rows", async () => {
     const repo = createThreatEventsRepository(db.app);
     const identityA = await createDeviceIdentityRepository(db.app).findByAgentId(
       tenantA,
@@ -172,9 +211,14 @@ describe("threat_events persistence and finality", () => {
     if (!inserted.ok) {
       return;
     }
+    assert.equal(inserted.event.detectionSource, "bridge_correlation");
 
     const cross = await repo.getById(tenantB, inserted.event.id);
     assert.equal(cross, undefined);
+
+    const same = await repo.getById(tenantA, inserted.event.id);
+    assert.ok(same);
+    assert.equal(same.detectionSource, "bridge_correlation");
   });
 
   it("does not materialize a finding when finality rejects", async () => {
@@ -197,15 +241,15 @@ describe("threat_events persistence and finality", () => {
     });
 
     const bucket = new Date("2026-03-01T13:00:00.000Z");
-    const outcome = await service.submitFromDetection(tenantA, agentA, {
-      ruleId: "agent.heartbeat_burst",
-      title: "Agent heartbeat burst",
-      severity: "medium",
-      evidence: {},
-      windowStart: bucket,
-      windowEnd: new Date("2026-03-01T13:01:00.000Z"),
-      windowBucket: bucket,
-    });
+    const outcome = await service.submitSigned(
+      tenantA,
+      agentA,
+      makeSignedEnvelope({
+        windowBucket: bucket,
+        windowEnd: new Date("2026-03-01T13:01:00.000Z"),
+        evidence: {},
+      }),
+    );
 
     assert.equal(outcome.ok, false);
     const listed = await findings.listFindings(tenantA, {

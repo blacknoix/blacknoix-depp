@@ -2,35 +2,22 @@
  * ADR-0005 detection provenance.
  *
  * Property name on findings: detection_source.
- * Bridge fallback path MUST use bridge_correlation exclusively.
- * Signed path (primary) MUST use agent_signed and MUST NEVER write
- * bridge_correlation on insert.
- *
- * Monotonicity: bridge_correlation may upgrade to agent_signed for the same
- * finding key; agent_signed is terminal and never downgrades.
+ * Live writes MUST use agent_signed only.
+ * Historical bridge_correlation rows remain valid and readable; signed may
+ * monotonically upgrade them. agent_signed never downgrades.
  */
 
 export const DETECTION_SOURCE_BRIDGE = "bridge_correlation" as const;
 export const DETECTION_SOURCE_AGENT_SIGNED = "agent_signed" as const;
 export const DETECTION_SOURCE_LEGACY = "legacy_unspecified" as const;
 
-export type DetectionSourceWrite =
-  | typeof DETECTION_SOURCE_BRIDGE
-  | typeof DETECTION_SOURCE_AGENT_SIGNED;
+/** Live write provenance (bridge write path deleted). */
+export type DetectionSourceWrite = typeof DETECTION_SOURCE_AGENT_SIGNED;
 
 export type DetectionSource =
-  | DetectionSourceWrite
+  | typeof DETECTION_SOURCE_BRIDGE
+  | typeof DETECTION_SOURCE_AGENT_SIGNED
   | typeof DETECTION_SOURCE_LEGACY;
-
-/** Evidence keys that claim cryptographic / signed detection (forbidden on bridge). */
-export const SIGNED_DETECTION_EVIDENCE_MARKERS = [
-  "signatureVerified",
-  "ed25519Verified",
-  "signatureValid",
-  "verifiedSignature",
-  "ed25519_verified",
-  "signature_verified",
-] as const;
 
 export type ProvenanceCheckResult =
   | { ok: true }
@@ -44,41 +31,6 @@ export function isMonotonicDetectionSourceUpgrade(
   to: string,
 ): boolean {
   return from === DETECTION_SOURCE_BRIDGE && to === DETECTION_SOURCE_AGENT_SIGNED;
-}
-
-/**
- * Bridge evidence must not carry signed-detection markers or a conflicting
- * detection_source label. Provenance is persisted on the finding column.
- */
-export function assertBridgeEvidenceClean(
-  evidence: Record<string, unknown>,
-): ProvenanceCheckResult {
-  if (Object.prototype.hasOwnProperty.call(evidence, "detection_source")) {
-    const value = evidence.detection_source;
-    if (value !== DETECTION_SOURCE_BRIDGE) {
-      return {
-        ok: false,
-        reason:
-          "bridge evidence must not carry a non-bridge detection_source label",
-      };
-    }
-  }
-
-  for (const key of SIGNED_DETECTION_EVIDENCE_MARKERS) {
-    if (
-      Object.prototype.hasOwnProperty.call(evidence, key) &&
-      evidence[key] !== false &&
-      evidence[key] !== null &&
-      evidence[key] !== undefined
-    ) {
-      return {
-        ok: false,
-        reason: `bridge evidence must not include signed-detection marker "${key}"`,
-      };
-    }
-  }
-
-  return { ok: true };
 }
 
 /**
@@ -100,22 +52,15 @@ export function assertSignedEvidenceClean(
 }
 
 export function assertMaterializerProvenance(
-  path: "bridge" | "signed",
-  detectionSource: DetectionSourceWrite,
+  detectionSource: string,
 ): ProvenanceCheckResult {
-  if (path === "bridge" && detectionSource !== DETECTION_SOURCE_BRIDGE) {
-    return {
-      ok: false,
-      reason: "bridge materializer requires detection_source bridge_correlation",
-    };
-  }
-  if (path === "signed" && detectionSource === DETECTION_SOURCE_BRIDGE) {
+  if (detectionSource === DETECTION_SOURCE_BRIDGE) {
     return {
       ok: false,
       reason: "signed materializer must never use bridge_correlation",
     };
   }
-  if (path === "signed" && detectionSource !== DETECTION_SOURCE_AGENT_SIGNED) {
+  if (detectionSource !== DETECTION_SOURCE_AGENT_SIGNED) {
     return {
       ok: false,
       reason: "signed materializer requires detection_source agent_signed",

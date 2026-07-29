@@ -32,9 +32,6 @@ describe("POST /v1/threat-events", () => {
     await withServer(
       {
         threatEventService: {
-          async submitFromDetection() {
-            throw new Error("not used");
-          },
           async submitSigned() {
             throw new Error("should not submit");
           },
@@ -60,9 +57,6 @@ describe("POST /v1/threat-events", () => {
     await withServer(
       {
         threatEventService: {
-          async submitFromDetection() {
-            throw new Error("not used");
-          },
           async submitSigned() {
             throw new Error("should not submit");
           },
@@ -109,9 +103,6 @@ describe("POST /v1/threat-events", () => {
     const signature = signThreatEventEnvelope(privateKey, unsigned);
 
     const threatEventService: ThreatEventService = {
-      async submitFromDetection() {
-        throw new Error("not used");
-      },
       async submitSigned() {
         return {
           ok: true,
@@ -149,9 +140,6 @@ describe("POST /v1/threat-events", () => {
 
   it("maps invalid_signature to THREAT_EVENT_INVALID", async () => {
     const threatEventService: ThreatEventService = {
-      async submitFromDetection() {
-        throw new Error("not used");
-      },
       async submitSigned() {
         return {
           ok: false,
@@ -194,9 +182,6 @@ describe("POST /v1/threat-events", () => {
 
   it("maps missing identity to non-oracular rejection", async () => {
     const threatEventService: ThreatEventService = {
-      async submitFromDetection() {
-        throw new Error("not used");
-      },
       async submitSigned() {
         return {
           ok: false,

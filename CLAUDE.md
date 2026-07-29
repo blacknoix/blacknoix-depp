@@ -91,14 +91,14 @@ Implemented:
   agents are self-scoped; human operators must pass `agentId`. Filters: eventType,
   since/until (occurred_at, max 30d window), limit 1–100, offset 0–10000.
   Unknown agents return an empty non-oracular page. Dashboards / export / indexing deferred.
-- Correlation v1 (minimal): after successful ingest, two deterministic count rules
-  run synchronously in a separate tenant transaction — `agent.lifecycle_churn`
-  (≥6 start/stop in 10m) and `agent.heartbeat_burst` (≥30 heartbeats in 60s).
-  Silence: `agent.heartbeat_silence` (≥5m since last heartbeat; never-heartbeated
-  agents do not fire) evaluated only via operator `POST /v1/findings/evaluate-silence`
-  (not on ingest; agent principals rejected). Findings persist in
-  `correlation_findings` (RLS, dedup by rule+window_bucket). Correlation failures
-  never fail ingest. `GET /v1/findings` lists findings (optional status filter).
+- Correlation v1 (minimal): Gateway correlation no longer materializes findings.
+  Signed threat-events are the only live write path for operator-visible findings,
+  and they materialize only after finality through the single proof-gated
+  materializer. Historical `bridge_correlation` rows remain valid and readable
+  history, and same-key signed finalization may still upgrade them monotonically
+  to `agent_signed`. There is no live bridge fallback, no bridge-originated write
+  path, and no runtime bridge enablement control. `GET /v1/findings` lists
+  findings (optional status filter).
   Triage: `PATCH /v1/findings/:id` with explicit transitions
   open↔acknowledged→resolved / reopen to open; same-status idempotent; last-change
   audit (`status_changed_at`, nullable `status_changed_by_user_id`); agent

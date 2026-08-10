@@ -6,62 +6,12 @@ import type { AuthenticatedPrincipal } from "./principal";
 import {
   canActAsAgent,
   canListFindings,
-  canManageAgents,
   canManageFindings,
-  canQueryTelemetry,
-  canReadAuditLogs,
   canReadTenantSelf,
 } from "./roles";
 
 /** Authenticated principal with a non-empty agentId. */
 export type AgentPrincipal = AuthenticatedPrincipal & { agentId: string };
-
-/**
- * Human principal allowed to read tenant audit logs (operator or auditor).
- */
-export function requireAuditReader(req: Request): AuthenticatedPrincipal {
-  const principal = requirePrincipal(req);
-  if (!canReadAuditLogs(principal)) {
-    throw new AppError(
-      "AUDIT_REJECTED",
-      403,
-      "Audit query requires an operator or auditor principal",
-    );
-  }
-  return principal;
-}
-
-/**
- * Operator principal for agent enrollment / inventory / credential lifecycle.
- * Auditor-only principals are denied.
- */
-export function requireAgentManager(req: Request): AuthenticatedPrincipal {
-  const principal = requirePrincipal(req);
-  if (!canManageAgents(principal)) {
-    throw new AppError(
-      "AGENTS_REJECTED",
-      403,
-      "Agent management requires an operator principal",
-    );
-  }
-  return principal;
-}
-
-/**
- * Telemetry query/read: agent (self-scoped) or human operator.
- * Auditors and enforce-mode empty-role humans are denied.
- */
-export function requireTelemetryQuerier(req: Request): AuthenticatedPrincipal {
-  const principal = requirePrincipal(req);
-  if (!canQueryTelemetry(principal)) {
-    throw new AppError(
-      "TELEMETRY_QUERY_REJECTED",
-      403,
-      "Telemetry query requires an operator or agent principal",
-    );
-  }
-  return principal;
-}
 
 /**
  * Findings list: agent (self-scoped) or human operator.

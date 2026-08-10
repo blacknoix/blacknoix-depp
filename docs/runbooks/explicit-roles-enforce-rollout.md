@@ -6,49 +6,52 @@ Operational checklist for switching `AUTH_EXPLICIT_ROLES_MODE` from `compat` to
 This runbook does **not** authorize Helm chart changes, Platform image
 scan/provenance, deployment-posture cutover, heartbeat cutover, Legal work, or
 any infrastructure-owned deployment action. It only covers api-gateway
-authorization-mode readiness for human JWT role claims.
+authorization-mode readiness for human JWT role claims on routes included in
+the explicit-roles foundation.
 
 ## Background
 
 | Mode | Behavior |
 |---|---|
-| `compat` (default when unset) | Missing/empty/unsupported-only human roles remain temporary operator-equivalent on role-gated helpers; rate-limited `implicit_operator_compat` warnings. |
-| `enforce` | Missing/empty/unsupported-only human roles are denied on protected human routes. Explicit `operator` / `auditor` only. |
+| `compat` | Missing/empty/unsupported-only human roles remain temporary operator-equivalent on role-gated helpers; rate-limited `implicit_operator_compat` warnings. Transitional — not enforce-equivalent. |
+| `enforce` | Missing/empty/unsupported-only human roles are denied on protected human routes wired in this foundation (findings, tenants/me). |
 
-Invalid `AUTH_EXPLICIT_ROLES_MODE` values fail closed at startup. Do **not**
-infer the mode from `NODE_ENV`.
+**Startup:** `config/env.ts` parses `AUTH_EXPLICIT_ROLES_MODE` via
+`applyExplicitRolesModeFromEnv` before the server accepts requests. Invalid
+values fail closed at startup.
 
-**JWT `roles` claim (human access tokens):** JSON array of strings; supported
-values `operator` and `auditor`; normalized (trim, lower-case, dedupe, drop
-unknown). See ADR-0011 § “JWT roles claim contract”.
+**Verified JWT:** when `AUTH_MODE=jwt`, the mode **must** be set explicitly
+(`compat` or `enforce`). Unset fails startup. Do **not** infer the mode from
+`NODE_ENV`.
+
+**JWT `roles` claim (human access tokens):** JSON array; supported values
+`operator` and `auditor`; normalized via `normalizeDeppRoles`.
 
 **Transitional minting:** `AuthService` login/refresh currently mint
-`roles: ["operator"]`. That is a bridge until authoritative issuer mapping
-lands. Agent JWTs omit human `roles`.
+`roles: ["operator"]`. Bridge only — not authoritative IdP mapping. Agent JWTs
+omit human `roles`.
 
-**Dev-only:** `dev-header` `x-roles` is not a production auth source.
+**Dev-only:** `dev-header` `x-roles` is not a production auth source and does
+not make enforce permissive for JWT principals.
+
+**Deferred on this foundation (do not treat as enforce-covered):** audit-log
+HTTP, agent-management RBAC helpers, telemetry query RBAC.
 
 ## Before switching
 
-1. Confirm the issuer path that will run in the target environment emits a
-   validated `roles` claim for every intended human principal:
-   - either transitional AuthService minting (`["operator"]`), or
-   - an approved future IdP/issuer mapping (not implemented in this repo).
+1. Confirm the issuer path emits a validated `roles` claim for every intended
+   human principal (transitional AuthService minting or future IdP mapping).
 2. Confirm approved values are only `operator` and/or `auditor`.
-3. Confirm login and refresh preserve/reissue intended roles (see
-   `tests/auth/service-roles.test.ts`).
-4. Run enforce-readiness validation from `backend/api-gateway/`:
+3. Confirm login and refresh preserve/reissue intended roles
+   (`tests/auth/service-roles.test.ts`).
+4. From `backend/api-gateway/`:
    ```bash
-   npm run test:unit -- --test-name-pattern "enforce-mode readiness"
+   npm run test:unit -- --test-name-pattern "startup-driven AUTH_EXPLICIT_ROLES_MODE|enforce-mode readiness"
    ```
-   Or run the full unit suite: `npm run test:unit`.
-5. Confirm local/test/proof tooling uses explicit roles (heartbeat proof already
-   mints `roles: ["operator"]`; prefer `x-roles: operator|auditor` in new
-   `dev-header` tests).
-6. Review bounded `implicit_operator_compat` warning volume and disposition any
-   remaining legacy callers that omit roles.
-7. Confirm no protected human production workflow depends on missing role
-   claims under compat elevation.
+   Or full unit suite: `npm run test:unit`.
+5. Prefer explicit roles in local tooling (`x-roles` for `dev-header` only).
+6. Confirm no protected human production workflow depends on missing role
+   claims under compat elevation for **wired** routes (findings, tenants/me).
 
 ## Switching
 
@@ -56,28 +59,26 @@ lands. Agent JWTs omit human `roles`.
    ```text
    AUTH_EXPLICIT_ROLES_MODE=enforce
    ```
-2. Restart/redeploy api-gateway through the established operational process for
+2. If `AUTH_MODE=jwt`, ensure the variable is present (required at startup).
+3. Restart/redeploy api-gateway through the established operational process for
    that environment (owner: whoever operates the service — **not** implied by
    this runbook).
-3. Do not use `NODE_ENV` as a substitute for the explicit setting.
-4. Confirm startup rejects invalid mode values (same fail-closed pattern as
-   `AUTH_MODE`).
+4. Do not use `NODE_ENV` as a substitute for the explicit setting.
+5. Confirm startup rejects invalid mode values.
 
 ## After switching
 
-1. Monitor authorization denials and auth failures using existing safe
-   observability (structured logs; never log JWTs, bearer tokens, or raw
-   secrets). Watch for unexpected `AUDIT_REJECTED`, `AGENTS_REJECTED`,
-   `TELEMETRY_QUERY_REJECTED`, `FINDINGS_REJECTED`, `TENANT_SELF_REJECTED`.
-2. Verify core flows:
-   - operator: audit, agents, telemetry query, findings, tenants/me
-   - auditor: audit + tenants/me only
-   - agent: token exchange, telemetry ingest, threat-event submit as applicable
+1. Monitor authorization denials using safe observability (never log JWTs or
+   secrets). Watch for unexpected `FINDINGS_REJECTED`, `TENANT_SELF_REJECTED`,
+   `AGENT_AUTH_REQUIRED`.
+2. Verify core wired flows:
+   - operator: findings, tenants/me
+   - auditor: tenants/me only (not findings)
+   - agent: threat-event submit as applicable (independent of human roles)
 3. **Rollback (temporary incident mitigation only):**
    - set `AUTH_EXPLICIT_ROLES_MODE=compat`
    - restart/redeploy via the same operational process
-   - document the missing or incorrect issuer role mapping
-   - remediate mapping before retrying `enforce`
+   - remediate issuer mapping before retrying `enforce`
 
 ## Transitional minting exit criteria
 
@@ -86,23 +87,21 @@ the following are true:
 
 1. An authoritative issuer/IdP mapping exists and is approved by the
    appropriate identity/Platform owner.
-2. Login and refresh receive or derive approved explicit roles from that source
-   (not hardcoded transitional minting).
+2. Login and refresh receive or derive approved explicit roles from that source.
 3. Operator and auditor role mappings are documented and tested.
-4. Enforce-readiness validation passes using issuer-mapped role claims (not
-   only transitional minting).
-5. Production/controlled environments have operated in `enforce` without
-   depending on compat elevation for an agreed observation period.
+4. Enforce-readiness validation passes using issuer-mapped role claims.
+5. Controlled environments have operated in `enforce` without depending on
+   compat elevation for an agreed observation period.
 6. `implicit_operator_compat` warnings are absent or explicitly dispositioned.
-7. Rollback and incident procedures (this runbook) remain documented.
-8. Security review confirms no human privilege relies on role absence or
-   default elevation.
+7. Rollback procedures (this runbook) remain documented.
+8. Security review confirms no human privilege relies on role absence.
 
 This slice defines exit criteria only; transitional minting remains in place.
 
 ## Related
 
-- ADR-0011 — staged explicit-role migration and JWT roles claim contract
-- ADR-0010 — auditor least-privilege audit read
+- ADR-0011 — staged explicit-role migration
+- ADR-0010 — auditor role (audit HTTP deferred on this foundation)
 - ADR-0003 — production authentication direction
+- `backend/api-gateway/tests/auth/startup-explicit-roles.test.ts`
 - `backend/api-gateway/tests/auth/enforce-readiness.test.ts`

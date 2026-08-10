@@ -1,27 +1,29 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 
-import type { AgentsService } from "../../src/agents/service";
-import type { AuditRepository } from "../../src/audit/repository";
 import {
   issueAccessToken,
   issueAgentAccessToken,
   type JwtConfig,
 } from "../../src/auth/jwt/access-token";
 import {
+  applyExplicitRolesModeFromEnv,
   configureExplicitRolesMode,
+  getExplicitRolesMode,
   resetImplicitOperatorCompatWarnState,
 } from "../../src/auth/roles";
 import { createJwtStrategy } from "../../src/auth/strategies/jwt";
 import type { CorrelationService } from "../../src/correlation/service";
-import type { TelemetryService } from "../../src/telemetry/service";
 import type { ThreatEventService } from "../../src/threat-events/service";
 import { startTestServer } from "../helpers/test-server";
 
 /**
- * Enforce-mode readiness: minted human JWTs (not x-roles) under
- * AUTH_EXPLICIT_ROLES_MODE=enforce. Representative route families only.
- * See docs/runbooks/explicit-roles-enforce-rollout.md.
+ * Enforce-mode readiness for routes included on this RBAC foundation branch:
+ * findings, tenants/me, threat-events (agent-only). Minted JWTs — not x-roles.
+ *
+ * Mode is applied via applyExplicitRolesModeFromEnv (same helper env.ts uses at
+ * startup), not by treating a naked configureExplicitRolesMode call as proof of
+ * deployment wiring.
  */
 
 const TENANT_ID = "11111111-1111-4111-8111-111111111111";
@@ -57,63 +59,6 @@ function agentBearer(): string {
     agentId: AGENT_ID,
   });
   return `Bearer ${token}`;
-}
-
-function stubAudit(): AuditRepository {
-  return {
-    append: async () => ({ id: "audit-1" }),
-    list: async () => ({ logs: [], nextCursor: null }),
-  };
-}
-
-function stubAgents(): AgentsService {
-  return {
-    register: async (_t, name) => ({
-      agentId: AGENT_ID,
-      name,
-      credential: "plain-once",
-      expiresAt: new Date("2026-11-05T00:00:00.000Z"),
-      credentialId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-    }),
-    exchangeForAccessToken: async () => ({
-      ok: true,
-      credentialId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-      tokens: {
-        accessToken: "agent.jwt",
-        tokenType: "Bearer",
-        expiresIn: 900,
-      },
-    }),
-    rotateCredential: async () => null,
-    revokeCredential: async () => true,
-    listInventory: async () => [],
-  };
-}
-
-function stubTelemetry(): TelemetryService {
-  return {
-    ingest: async () => ({
-      ok: true,
-      event: {
-        id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-        ingestedAt: new Date("2026-01-01T00:00:00.000Z"),
-      },
-    }),
-    ingestBatch: async () => ({ ok: true, events: [] }),
-    query: async () => ({
-      ok: true,
-      result: {
-        events: [],
-        summary: {
-          agentId: AGENT_ID,
-          lastSeenAt: null,
-          lastHeartbeatAt: null,
-          countsByEventType: {},
-          totalInWindow: 0,
-        },
-      },
-    }),
-  };
 }
 
 function stubCorrelation(): CorrelationService {
@@ -166,15 +111,23 @@ function stubThreatEvents(): ThreatEventService {
   };
 }
 
+const resolveTenant = async (id: string) => ({
+  id,
+  slug: "acme",
+  name: "Acme Inc",
+});
+
 describe("enforce-mode readiness (minted JWT roles)", () => {
-  it("operator JWT succeeds on representative operator families; auditor and denials match contract", async () => {
-    configureExplicitRolesMode("enforce");
+  it("applies AUTH_EXPLICIT_ROLES_MODE=enforce via startup helper; operator allowed, missing denied", async () => {
+    assert.equal(
+      applyExplicitRolesModeFromEnv("enforce"),
+      "enforce",
+    );
+    assert.equal(getExplicitRolesMode(), "enforce");
 
     const server = await startTestServer({
       authStrategy: createJwtStrategy(JWT_CONFIG),
-      audit: stubAudit(),
-      agentsService: stubAgents(),
-      telemetryService: stubTelemetry(),
+      lookupTenant: resolveTenant,
       correlationService: stubCorrelation(),
       threatEventService: stubThreatEvents(),
     });
@@ -187,23 +140,6 @@ describe("enforce-mode readiness (minted JWT roles)", () => {
       const unsupported = { authorization: humanBearer(["admin"]) };
       const agent = { authorization: agentBearer() };
 
-      // Operator succeeds
-      assert.equal(
-        (await fetch(`${server.url}/v1/audit/logs`, { headers: op })).status,
-        200,
-      );
-      assert.equal(
-        (await fetch(`${server.url}/v1/agents`, { headers: op })).status,
-        200,
-      );
-      assert.equal(
-        (
-          await fetch(`${server.url}/v1/telemetry/events?agentId=${AGENT_ID}`, {
-            headers: op,
-          })
-        ).status,
-        200,
-      );
       assert.equal(
         (await fetch(`${server.url}/v1/findings`, { headers: op })).status,
         200,
@@ -213,85 +149,22 @@ describe("enforce-mode readiness (minted JWT roles)", () => {
         200,
       );
 
-      // Auditor: audit + tenants/me only
-      assert.equal(
-        (await fetch(`${server.url}/v1/audit/logs`, { headers: aud })).status,
-        200,
-      );
       assert.equal(
         (await fetch(`${server.url}/v1/tenants/me`, { headers: aud })).status,
         200,
       );
-
-      const audAgents = await fetch(`${server.url}/v1/agents`, { headers: aud });
-      assert.equal(audAgents.status, 403);
-      assert.equal((await audAgents.json()).error.code, "AGENTS_REJECTED");
-
-      const audTel = await fetch(
-        `${server.url}/v1/telemetry/events?agentId=${AGENT_ID}`,
-        { headers: aud },
-      );
-      assert.equal(audTel.status, 403);
-      assert.equal((await audTel.json()).error.code, "TELEMETRY_QUERY_REJECTED");
-
       const audFind = await fetch(`${server.url}/v1/findings`, { headers: aud });
       assert.equal(audFind.status, 403);
       assert.equal((await audFind.json()).error.code, "FINDINGS_REJECTED");
 
-      const audIngest = await fetch(`${server.url}/v1/telemetry/events`, {
-        method: "POST",
-        headers: {
-          ...aud,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          schemaVersion: 1,
-          eventType: "heartbeat",
-          occurredAt: new Date().toISOString(),
-        }),
-      });
-      assert.equal(audIngest.status, 401);
-      assert.equal((await audIngest.json()).error.code, "AGENT_AUTH_REQUIRED");
-
-      const audThreat = await fetch(`${server.url}/v1/threat-events`, {
-        method: "POST",
-        headers: {
-          ...aud,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({ kind: "THREATEVENT" }),
-      });
-      assert.equal(audThreat.status, 401);
-      assert.equal((await audThreat.json()).error.code, "AGENT_AUTH_REQUIRED");
-
-      // Missing / empty / unsupported-only → deny protected human routes
       for (const [label, headers] of [
         ["missing", missing],
         ["empty", empty],
         ["unsupported", unsupported],
       ] as const) {
-        const audit = await fetch(`${server.url}/v1/audit/logs`, { headers });
-        assert.equal(audit.status, 403, label);
-        assert.equal((await audit.json()).error.code, "AUDIT_REJECTED", label);
-
-        const agents = await fetch(`${server.url}/v1/agents`, { headers });
-        assert.equal(agents.status, 403, label);
-        assert.equal((await agents.json()).error.code, "AGENTS_REJECTED", label);
-
         const me = await fetch(`${server.url}/v1/tenants/me`, { headers });
         assert.equal(me.status, 403, label);
         assert.equal((await me.json()).error.code, "TENANT_SELF_REJECTED", label);
-
-        const tel = await fetch(
-          `${server.url}/v1/telemetry/events?agentId=${AGENT_ID}`,
-          { headers },
-        );
-        assert.equal(tel.status, 403, label);
-        assert.equal(
-          (await tel.json()).error.code,
-          "TELEMETRY_QUERY_REJECTED",
-          label,
-        );
 
         const findings = await fetch(`${server.url}/v1/findings`, { headers });
         assert.equal(findings.status, 403, label);
@@ -302,26 +175,27 @@ describe("enforce-mode readiness (minted JWT roles)", () => {
         );
       }
 
-      // Agent JWT: ingest ok; human surfaces denied; independent of roles
-      const agentIngest = await fetch(`${server.url}/v1/telemetry/events`, {
+      const agentThreat = await fetch(`${server.url}/v1/threat-events`, {
         method: "POST",
         headers: {
           ...agent,
           "content-type": "application/json",
         },
-        body: JSON.stringify({
-          schemaVersion: 1,
-          eventType: "heartbeat",
-          occurredAt: new Date().toISOString(),
-        }),
+        body: JSON.stringify({ kind: "THREATEVENT" }),
       });
-      assert.equal(agentIngest.status, 201);
+      // Agent JWT reaches the handler; stub rejects as invalid envelope → not AUTH
+      assert.notEqual(agentThreat.status, 401);
 
-      const agentAudit = await fetch(`${server.url}/v1/audit/logs`, {
-        headers: agent,
+      const humanThreat = await fetch(`${server.url}/v1/threat-events`, {
+        method: "POST",
+        headers: {
+          ...op,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ kind: "THREATEVENT" }),
       });
-      assert.equal(agentAudit.status, 403);
-      assert.equal((await agentAudit.json()).error.code, "AUDIT_REJECTED");
+      assert.equal(humanThreat.status, 401);
+      assert.equal((await humanThreat.json()).error.code, "AGENT_AUTH_REQUIRED");
 
       const agentMe = await fetch(`${server.url}/v1/tenants/me`, {
         headers: agent,

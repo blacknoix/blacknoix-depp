@@ -12,6 +12,8 @@ import { logLifecycle } from "../lib/log";
 import type { ExplicitRolesMode } from "./explicit-roles-mode";
 import {
   DEFAULT_EXPLICIT_ROLES_MODE,
+  resolveExplicitRolesMode,
+  type ResolveExplicitRolesModeOptions,
 } from "./explicit-roles-mode";
 import type { AuthenticatedPrincipal } from "./principal";
 
@@ -38,6 +40,20 @@ export function configureExplicitRolesMode(mode: ExplicitRolesMode): void {
 
 export function getExplicitRolesMode(): ExplicitRolesMode {
   return explicitRolesMode;
+}
+
+/**
+ * Startup / test bootstrap: resolve AUTH_EXPLICIT_ROLES_MODE and apply it to
+ * the module-global mode used by authorization helpers. `config/env.ts` calls
+ * this at import time before the server accepts requests.
+ */
+export function applyExplicitRolesModeFromEnv(
+  raw: string | undefined,
+  options: ResolveExplicitRolesModeOptions = {},
+): ExplicitRolesMode {
+  const mode = resolveExplicitRolesMode(raw, options);
+  configureExplicitRolesMode(mode);
+  return mode;
 }
 
 /**
@@ -206,28 +222,12 @@ export function isAuditorOnlyPrincipal(
   return isAuditorPrincipal(principal) && !isOperatorPrincipal(principal);
 }
 
+/**
+ * Operator or auditor — used by tenant self-read in this foundation slice.
+ * Durable audit-log HTTP read is deferred until the audit route lands (ADR-0010).
+ */
 export function canReadAuditLogs(principal: AuthenticatedPrincipal): boolean {
   return isOperatorPrincipal(principal) || isAuditorPrincipal(principal);
-}
-
-/**
- * Enroll / inventory / rotate / revoke / device-identity revoke.
- * Auditor-only and empty-role (enforce) principals are denied.
- */
-export function canManageAgents(principal: AuthenticatedPrincipal): boolean {
-  return isOperatorPrincipal(principal);
-}
-
-/**
- * GET telemetry query/read: agents (self-scoped) or human operators.
- * Auditors and empty-role humans in enforce mode are denied (ADR-0011 follow-on).
- * Compat empty-role humans use isOperatorPrincipal (rate-limited warn).
- */
-export function canQueryTelemetry(principal: AuthenticatedPrincipal): boolean {
-  if (!isHumanPrincipal(principal)) {
-    return true;
-  }
-  return isOperatorPrincipal(principal);
 }
 
 /**

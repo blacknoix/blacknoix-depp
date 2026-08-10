@@ -1,8 +1,8 @@
 import { type NextFunction, type Request, type Response, Router } from "express";
 
+import { requireTenantSelfReader } from "../auth/authorize";
 import { logLifecycle } from "../lib/log";
 import { AppError } from "../middleware/error-handler";
-import { requirePrincipal } from "../middleware/tenant-context";
 import type { TenantLookup } from "../tenants/repository";
 
 export interface TenantsRouterOptions {
@@ -17,16 +17,17 @@ export function createTenantsRouter(options: TenantsRouterOptions = {}): Router 
   const router = Router();
 
   /**
-   * Returns the caller's tenant, resolved through a real, RLS-scoped lookup.
+   * Returns the caller's tenant id as a minimal identity echo (tenantId + scope).
+   * Does not expose slug, name, billing, membership, or config.
    *
-   * requireTenant (mounted in app.ts) has already guaranteed a principal. A
-   * tenant that does not exist yields the same 400 TENANT_REQUIRED envelope as a
-   * missing one, so the endpoint cannot be used to probe which tenants exist;
-   * the distinction is recorded in the server log only.
+   * Authorization: human operator or auditor (`requireTenantSelfReader`).
+   * Agents are denied — agent JWTs already carry tenant id.
+   * Tenant comes only from the principal; unknown tenants yield the same
+   * 400 TENANT_REQUIRED envelope as a missing principal (non-oracular).
    */
   router.get("/me", async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const principal = requirePrincipal(req);
+      const principal = requireTenantSelfReader(req);
 
       if (!options.lookupTenant) {
         throw new AppError(

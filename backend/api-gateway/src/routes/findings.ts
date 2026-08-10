@@ -1,5 +1,9 @@
 import { type NextFunction, type Request, type Response, Router } from "express";
 
+import {
+  requireFindingsOperator,
+  requireFindingsReader,
+} from "../auth/authorize";
 import { parseAttentionSinceQuery } from "../correlation/attention";
 import {
   parseFindingsQueryV1,
@@ -19,7 +23,6 @@ import type {
   FindingSharedViewsRepository,
 } from "../findings-views/repository";
 import { AppError } from "../middleware/error-handler";
-import { requirePrincipal } from "../middleware/tenant-context";
 
 export interface FindingsRouterOptions {
   /**
@@ -91,22 +94,12 @@ function serializeSharedView(row: FindingSharedViewRow) {
   };
 }
 
-function requireOperatorPrincipal(req: Request) {
-  const principal = requirePrincipal(req);
-  if (principal.agentId) {
-    throw new AppError(
-      "FINDINGS_REJECTED",
-      403,
-      "Shared views require an operator principal",
-    );
-  }
-  return principal;
-}
-
 /**
  * Tenant-scoped correlation findings list, silence maintenance, and triage.
  *
- * This is not a full alert / case-management console.
+ * Human callers require an explicit operator role (ADR-0011 / enforce). Agents
+ * may only use GET / (self-scoped list). Auditors are denied. This is not a
+ * full alert / case-management console.
  */
 export function createFindingsRouter(
   options: FindingsRouterOptions = {},
@@ -117,7 +110,7 @@ export function createFindingsRouter(
     "/",
     async (req: Request, res: Response, next: NextFunction) => {
       try {
-        const principal = requirePrincipal(req);
+        const principal = requireFindingsReader(req);
         const service = requireCorrelationService(options);
 
         const parsed = parseFindingsQueryV1(req.query, {
@@ -163,16 +156,8 @@ export function createFindingsRouter(
     "/dashboard",
     async (req: Request, res: Response, next: NextFunction) => {
       try {
-        const principal = requirePrincipal(req);
+        const principal = requireFindingsOperator(req);
         const service = requireCorrelationService(options);
-
-        if (principal.agentId) {
-          throw new AppError(
-            "FINDINGS_REJECTED",
-            403,
-            "Findings dashboard requires an operator principal",
-          );
-        }
 
         const queryKeys = Object.keys(req.query);
         if (queryKeys.length > 0) {
@@ -213,16 +198,8 @@ export function createFindingsRouter(
     "/attention",
     async (req: Request, res: Response, next: NextFunction) => {
       try {
-        const principal = requirePrincipal(req);
+        const principal = requireFindingsOperator(req);
         const service = requireCorrelationService(options);
-
-        if (principal.agentId) {
-          throw new AppError(
-            "FINDINGS_REJECTED",
-            403,
-            "Findings attention requires an operator principal",
-          );
-        }
 
         const parsed = parseAttentionSinceQuery(req.query);
         if (!parsed.ok) {
@@ -269,16 +246,8 @@ export function createFindingsRouter(
     "/evaluate-silence",
     async (req: Request, res: Response, next: NextFunction) => {
       try {
-        const principal = requirePrincipal(req);
+        const principal = requireFindingsOperator(req);
         const service = requireCorrelationService(options);
-
-        if (principal.agentId) {
-          throw new AppError(
-            "FINDINGS_REJECTED",
-            403,
-            "Silence evaluation requires an operator principal",
-          );
-        }
 
         const parsed = parseEvaluateSilenceBody(req.body);
         if (!parsed.ok) {
@@ -308,16 +277,8 @@ export function createFindingsRouter(
     "/suppressions",
     async (req: Request, res: Response, next: NextFunction) => {
       try {
-        const principal = requirePrincipal(req);
+        const principal = requireFindingsOperator(req);
         const service = requireCorrelationService(options);
-
-        if (principal.agentId) {
-          throw new AppError(
-            "FINDINGS_REJECTED",
-            403,
-            "Suppression management requires an operator principal",
-          );
-        }
 
         const rows = await service.listSuppressions(principal.tenantId);
         res.status(200).json({
@@ -341,16 +302,8 @@ export function createFindingsRouter(
     "/suppressions",
     async (req: Request, res: Response, next: NextFunction) => {
       try {
-        const principal = requirePrincipal(req);
+        const principal = requireFindingsOperator(req);
         const service = requireCorrelationService(options);
-
-        if (principal.agentId) {
-          throw new AppError(
-            "FINDINGS_REJECTED",
-            403,
-            "Suppression management requires an operator principal",
-          );
-        }
 
         const parsed = parseCreateSuppressionBody(req.body, new Date());
         if (!parsed.ok) {
@@ -390,16 +343,8 @@ export function createFindingsRouter(
     "/suppressions/:id",
     async (req: Request, res: Response, next: NextFunction) => {
       try {
-        const principal = requirePrincipal(req);
+        const principal = requireFindingsOperator(req);
         const service = requireCorrelationService(options);
-
-        if (principal.agentId) {
-          throw new AppError(
-            "FINDINGS_REJECTED",
-            403,
-            "Suppression management requires an operator principal",
-          );
-        }
 
         const id = typeof req.params.id === "string" ? req.params.id : "";
         if (!UUID.test(id)) {
@@ -442,7 +387,7 @@ export function createFindingsRouter(
     "/views",
     async (req: Request, res: Response, next: NextFunction) => {
       try {
-        const principal = requireOperatorPrincipal(req);
+        const principal = requireFindingsOperator(req);
         const repo = requireSharedViews(options);
         const views = await repo.list(principal.tenantId);
         res.status(200).json({
@@ -463,7 +408,7 @@ export function createFindingsRouter(
     "/views",
     async (req: Request, res: Response, next: NextFunction) => {
       try {
-        const principal = requireOperatorPrincipal(req);
+        const principal = requireFindingsOperator(req);
         const repo = requireSharedViews(options);
         const parsed = parseCreateSharedFindingViewBody(req.body);
         if (!parsed.ok) {
@@ -509,7 +454,7 @@ export function createFindingsRouter(
     "/views/:id",
     async (req: Request, res: Response, next: NextFunction) => {
       try {
-        const principal = requireOperatorPrincipal(req);
+        const principal = requireFindingsOperator(req);
         const repo = requireSharedViews(options);
         const id = typeof req.params.id === "string" ? req.params.id : "";
         if (!UUID.test(id)) {
@@ -544,16 +489,8 @@ export function createFindingsRouter(
     "/:id",
     async (req: Request, res: Response, next: NextFunction) => {
       try {
-        const principal = requirePrincipal(req);
+        const principal = requireFindingsOperator(req);
         const service = requireCorrelationService(options);
-
-        if (principal.agentId) {
-          throw new AppError(
-            "FINDINGS_REJECTED",
-            403,
-            "Finding triage requires an operator principal",
-          );
-        }
 
         const findingId = typeof req.params.id === "string" ? req.params.id : "";
         if (!UUID.test(findingId)) {

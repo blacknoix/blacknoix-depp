@@ -43,6 +43,7 @@ export function createJwtStrategy(config: JwtConfig): AuthStrategy {
           tenantId: claims.tenantId,
           userId: claims.userId,
           sessionId: claims.sessionId,
+          ...(claims.roles ? { roles: claims.roles } : {}),
         };
       } catch (err) {
         if (err instanceof AccessTokenError) {

@@ -9,6 +9,11 @@ import type { Request } from "express";
  *
  * `userId` and `roles` are optional because the only strategy available today
  * cannot establish them. A verified strategy must populate them.
+ *
+ * `roles` (when present) is an allow-listed set such as `operator` / `auditor`.
+ * Empty/missing roles are operator-equivalent only in
+ * AUTH_EXPLICIT_ROLES_MODE=compat; enforce denies them (ADR-0011). See
+ * `auth/roles.ts`.
  */
 export interface AuthenticatedPrincipal {
   readonly tenantId: string;

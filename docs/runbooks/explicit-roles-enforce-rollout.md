@@ -34,8 +34,15 @@ omit human `roles`.
 **Dev-only:** `dev-header` `x-roles` is not a production auth source and does
 not make enforce permissive for JWT principals.
 
-**Deferred on this foundation (do not treat as enforce-covered):** audit-log
-HTTP, agent-management RBAC helpers, telemetry query RBAC.
+**Deferred on this foundation (do not treat as enforce-covered):** durable
+audit-log HTTP (`GET /v1/audit/logs`). Auditor-capable human surface today:
+`GET /v1/tenants/me`.
+
+**Wired operator-only (humans):** agent inventory, human enroll, credential
+revoke, device-identity revoke, telemetry GET/query.
+
+**Wired agent-only:** telemetry ingest/batch, device-identity bind, threat-event
+submit.
 
 ## Before switching
 
@@ -72,9 +79,10 @@ HTTP, agent-management RBAC helpers, telemetry query RBAC.
    secrets). Watch for unexpected `FINDINGS_REJECTED`, `TENANT_SELF_REJECTED`,
    `AGENT_AUTH_REQUIRED`.
 2. Verify core wired flows:
-   - operator: findings, tenants/me
-   - auditor: tenants/me only (not findings)
-   - agent: threat-event submit as applicable (independent of human roles)
+   - operator: findings, tenants/me, agents inventory/enroll, telemetry query
+   - auditor: tenants/me only (not findings, agents management, or telemetry query)
+   - agent: telemetry ingest/batch, device bind, threat-event submit as applicable
+     (independent of human roles); agent self-scoped telemetry query only
 3. **Rollback (temporary incident mitigation only):**
    - set `AUTH_EXPLICIT_ROLES_MODE=compat`
    - restart/redeploy via the same operational process

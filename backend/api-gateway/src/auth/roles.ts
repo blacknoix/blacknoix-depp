@@ -223,11 +223,30 @@ export function isAuditorOnlyPrincipal(
 }
 
 /**
- * Operator or auditor — used by tenant self-read in this foundation slice.
- * Durable audit-log HTTP read is deferred until the audit route lands (ADR-0010).
+ * Operator or auditor — shared human read set for tenant self-read.
+ * Durable audit-log HTTP read remains deferred (no audit route on this branch).
  */
 export function canReadAuditLogs(principal: AuthenticatedPrincipal): boolean {
   return isOperatorPrincipal(principal) || isAuditorPrincipal(principal);
+}
+
+/**
+ * Enroll (human path) / inventory / credential revoke / device-identity revoke.
+ * Auditor-only and empty-role (enforce) principals are denied.
+ */
+export function canManageAgents(principal: AuthenticatedPrincipal): boolean {
+  return isOperatorPrincipal(principal);
+}
+
+/**
+ * GET telemetry query/read: agents (self-scoped) or human operators.
+ * Auditors and empty-role humans in enforce mode are denied.
+ */
+export function canQueryTelemetry(principal: AuthenticatedPrincipal): boolean {
+  if (!isHumanPrincipal(principal)) {
+    return true;
+  }
+  return isOperatorPrincipal(principal);
 }
 
 /**

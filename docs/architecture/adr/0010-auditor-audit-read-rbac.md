@@ -40,11 +40,21 @@ A principal that has **only** `auditor` (no `operator`) is auditor-only.
 |---|---|---|
 | `GET /v1/tenants/me` | Allow | Allow |
 | Findings list / management | Allow (list + manage) | Deny (`FINDINGS_REJECTED`) |
+| Agent inventory / human enroll / credential revoke / device revoke | Allow (`requireAgentManager`) | Deny (`AGENTS_REJECTED`) |
+| Telemetry GET/query | Allow (`requireTelemetryQuerier`) | Deny (`TELEMETRY_QUERY_REJECTED`) |
 | `GET /v1/audit/logs` | **Deferred** (no audit route on this branch) | **Deferred** |
-| Agent enroll / inventory / credential lifecycle | **Deferred** (not centralized on this branch) | **Deferred** |
-| Telemetry query | **Deferred** | **Deferred** |
-| Telemetry ingest / threat-event submit | Agent-only (`requireAgent` where wired) | Deny (`AGENT_AUTH_REQUIRED`) |
+| Telemetry ingest / threat-event submit / device bind | Agent-only (`requireAgent`) | Deny (`AGENT_AUTH_REQUIRED`) |
 | Role / RBAC administration | Not implemented | Not implemented |
+
+### Authorization helpers (this branch)
+
+- `requireTenantSelfReader` — human operator or auditor
+- `requireFindingsReader` / `requireFindingsOperator`
+- `requireAgentManager` — human operator agent-management surfaces
+- `requireTelemetryQuerier` — human operator or self-scoped agent query
+- `requireAgent` — agent-only ingest / bind / threat-events
+
+`requireAuditReader` is **not** exported — audit HTTP is deferred.
 
 ### How roles are supplied
 
@@ -55,19 +65,12 @@ A principal that has **only** `auditor` (no `operator`) is auditor-only.
 3. Tenant identity remains server-derived from the authenticated principal /
    verified token.
 
-### Authorization helpers (this branch)
-
-- `requireTenantSelfReader` — human operator or auditor (`canReadTenantSelf`).
-- `requireFindingsReader` / `requireFindingsOperator` — findings routes.
-- `requireAgent` — agent-only threat-event submit (mode-independent).
-
-`requireAuditReader`, `requireAgentManager`, and `requireTelemetryQuerier` are
-**not** exported on this foundation; they return with their route families.
-
 ## Consequences
 
 - Auditor is a first-class allow-listed role without claiming audit HTTP is done.
 - Operators retain prior behavior when roles are omitted under `compat` only.
+- Agent management and telemetry query are operator-gated for humans on this
+  branch; audit HTTP remains deferred.
 - Persisted user↔role mappings, IdP role sync, and fine-grained permission
   catalogs remain future work.
 

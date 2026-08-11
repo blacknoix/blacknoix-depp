@@ -6,7 +6,9 @@ import {
   applyExplicitRolesModeFromEnv,
   canActAsAgent,
   canListFindings,
+  canManageAgents,
   canManageFindings,
+  canQueryTelemetry,
   canReadAuditLogs,
   canReadTenantSelf,
   configureExplicitRolesMode,
@@ -106,39 +108,47 @@ describe("principal role helpers (compat)", () => {
     const p = { tenantId };
     assert.equal(isOperatorPrincipal(p), true);
     assert.equal(canReadAuditLogs(p), true);
+    assert.equal(canManageAgents(p), true);
+    assert.equal(canQueryTelemetry(p), true);
     assert.equal(canListFindings(p), true);
     assert.equal(canManageFindings(p), true);
     assert.equal(canReadTenantSelf(p), true);
     assert.equal(isAuditorOnlyPrincipal(p), false);
   });
 
-  it("allows auditor-only tenant self / audit-capability but not findings", () => {
+  it("allows auditor-only tenant self / audit-capability but not findings or agents/telemetry query", () => {
     const p = { tenantId, roles: ["auditor"] as const };
     assert.equal(isOperatorPrincipal(p), false);
     assert.equal(isAuditorOnlyPrincipal(p), true);
     assert.equal(canReadAuditLogs(p), true);
     assert.equal(canReadTenantSelf(p), true);
+    assert.equal(canManageAgents(p), false);
+    assert.equal(canQueryTelemetry(p), false);
     assert.equal(canListFindings(p), false);
     assert.equal(canManageFindings(p), false);
   });
 
-  it("lets operator+auditor manage findings and tenant self", () => {
+  it("lets operator+auditor manage agents, findings, telemetry query, and tenant self", () => {
     const p = { tenantId, roles: ["auditor", "operator"] as const };
     assert.equal(isOperatorPrincipal(p), true);
     assert.equal(isAuditorOnlyPrincipal(p), false);
+    assert.equal(canManageAgents(p), true);
     assert.equal(canReadAuditLogs(p), true);
+    assert.equal(canQueryTelemetry(p), true);
     assert.equal(canListFindings(p), true);
     assert.equal(canManageFindings(p), true);
     assert.equal(canReadTenantSelf(p), true);
   });
 
-  it("denies agents for audit/tenant-self but allows findings list", () => {
+  it("denies agents for audit/tenant-self/manage but allows telemetry query and findings list", () => {
     const agent = {
       tenantId,
       agentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     };
     assert.equal(canActAsAgent(agent), true);
     assert.equal(canReadAuditLogs(agent), false);
+    assert.equal(canManageAgents(agent), false);
+    assert.equal(canQueryTelemetry(agent), true);
     assert.equal(canListFindings(agent), true);
     assert.equal(canManageFindings(agent), false);
     assert.equal(canReadTenantSelf(agent), false);
@@ -173,23 +183,29 @@ describe("principal role helpers (enforce)", () => {
     ];
     for (const p of cases) {
       assert.equal(isOperatorPrincipal(p), false, JSON.stringify(p));
+      assert.equal(canManageAgents(p), false, JSON.stringify(p));
       assert.equal(canReadAuditLogs(p), false, JSON.stringify(p));
+      assert.equal(canQueryTelemetry(p), false, JSON.stringify(p));
       assert.equal(canListFindings(p), false, JSON.stringify(p));
       assert.equal(canManageFindings(p), false, JSON.stringify(p));
       assert.equal(canReadTenantSelf(p), false, JSON.stringify(p));
     }
   });
 
-  it("allows explicit operator findings; auditor cannot list or manage findings but can read tenant self", () => {
+  it("allows explicit operator findings/agents/telemetry; auditor cannot manage them but can read tenant self", () => {
     configureExplicitRolesMode("enforce");
     const op = { tenantId, roles: ["operator"] as const };
+    assert.equal(canManageAgents(op), true);
     assert.equal(canReadAuditLogs(op), true);
+    assert.equal(canQueryTelemetry(op), true);
     assert.equal(canListFindings(op), true);
     assert.equal(canManageFindings(op), true);
     assert.equal(canReadTenantSelf(op), true);
 
     const aud = { tenantId, roles: ["auditor"] as const };
+    assert.equal(canManageAgents(aud), false);
     assert.equal(canReadAuditLogs(aud), true);
+    assert.equal(canQueryTelemetry(aud), false);
     assert.equal(canListFindings(aud), false);
     assert.equal(canManageFindings(aud), false);
     assert.equal(canReadTenantSelf(aud), true);

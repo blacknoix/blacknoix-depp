@@ -1,5 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
+import { normalizeDeppRoles } from "../roles";
+
 /**
  * DEPP access-token issuing and verification (ADR-0003 §4 / §5).
  *
@@ -8,7 +10,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
  * is hardcoded — the verifier never reads an attacker-supplied `alg`.
  *
  * Two token kinds share the same issuer/audience/secret:
- *   - human: tid + sub (userId) + sid (sessionId)
+ *   - human: tid + sub (userId) + sid (sessionId) + optional roles
  *   - agent: tid + aid (agentId) + token_use=agent
  *
  * No mutable presentation fields ever go in a token.
@@ -27,6 +29,8 @@ export interface AccessTokenClaims {
   readonly tenantId: string;
   readonly userId: string;
   readonly sessionId: string;
+  /** Optional allow-listed DEPP roles (`operator`, `auditor`). */
+  readonly roles?: readonly string[];
 }
 
 /** Agent machine access-token claims (ADR-0003 §5). */
@@ -36,7 +40,13 @@ export interface AgentAccessTokenClaims {
 }
 
 export type VerifiedAccessToken =
-  | { kind: "human"; tenantId: string; userId: string; sessionId: string }
+  | {
+      kind: "human";
+      tenantId: string;
+      userId: string;
+      sessionId: string;
+      roles?: readonly string[];
+    }
   | { kind: "agent"; tenantId: string; agentId: string };
 
 export interface IssuedAgentTokens {
@@ -74,7 +84,8 @@ export function issueAccessToken(
   issuedAt: number = nowSeconds(),
 ): string {
   const header = { alg: ALG, typ: TYP };
-  const payload = {
+  const roles = normalizeDeppRoles(claims.roles);
+  const payload: Record<string, unknown> = {
     iss: config.issuer,
     aud: config.audience,
     sub: claims.userId,
@@ -83,6 +94,9 @@ export function issueAccessToken(
     iat: issuedAt,
     exp: issuedAt + config.accessTtlSeconds,
   };
+  if (roles) {
+    payload.roles = roles;
+  }
 
   const signingInput = `${encodeSegment(header)}.${encodeSegment(payload)}`;
 
@@ -118,6 +132,7 @@ interface RawPayload {
   sid?: unknown;
   aid?: unknown;
   token_use?: unknown;
+  roles?: unknown;
   iat?: unknown;
   exp?: unknown;
 }
@@ -216,5 +231,12 @@ export function verifyAccessToken(
     throw new AccessTokenError("missing required claims");
   }
 
-  return { kind: "human", tenantId: tid, userId: sub, sessionId: sid };
+  const roles = normalizeDeppRoles(payload.roles);
+  return {
+    kind: "human",
+    tenantId: tid,
+    userId: sub,
+    sessionId: sid,
+    ...(roles ? { roles } : {}),
+  };
 }

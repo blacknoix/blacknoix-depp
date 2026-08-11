@@ -1,6 +1,7 @@
 import dotenv from "dotenv";
 
 import { resolveAuthMode } from "../auth/auth-mode";
+import { applyExplicitRolesModeFromEnv } from "../auth/roles";
 
 // quiet: true suppresses dotenv's startup banner, which it writes to stdout via
 // console.log. Left on, it interleaves free text with our structured JSON log
@@ -57,6 +58,14 @@ const nodeEnv = process.env.NODE_ENV ?? "development";
 // Evaluated at import time so the service fails to start rather than serving
 // requests with weaker authentication than intended.
 const authMode = resolveAuthMode(process.env.AUTH_MODE, nodeEnv);
+
+// Explicit-role migration mode (ADR-0011). Invalid values stop startup.
+// AUTH_MODE=jwt requires an explicit mode (not inferred from NODE_ENV).
+// Applied at import so request paths see the same mode before listen().
+const explicitRolesMode = applyExplicitRolesModeFromEnv(
+  process.env.AUTH_EXPLICIT_ROLES_MODE,
+  { requireExplicit: authMode === "jwt" },
+);
 
 /**
  * Max events per POST /v1/telemetry/events/batch.
@@ -159,6 +168,8 @@ export const env = {
   port,
   appName: process.env.APP_NAME ?? "depp-api-gateway",
   authMode,
+  /** compat | enforce — see ADR-0011. Unset defaults to compat unless AUTH_MODE=jwt. */
+  explicitRolesMode,
 
   // Left undefined when unset: createApp() owns the default so there is only
   // one place to change it. An invalid value fails closed — body-parser throws

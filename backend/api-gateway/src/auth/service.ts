@@ -1,4 +1,5 @@
 import { issueAccessToken, type JwtConfig } from "./jwt/access-token";
+import { TRANSITIONAL_HUMAN_OPERATOR_ROLES } from "./roles";
 import type { SessionsRepository } from "../sessions/repository";
 import type { FederatedIdentity, UsersRepository } from "../users/repository";
 
@@ -47,7 +48,15 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
     sessionId: string,
     refreshToken: string,
   ): IssuedTokens {
-    const accessToken = issueAccessToken(jwtConfig, { tenantId, userId, sessionId });
+    // Transitional explicit operator claim (ADR-0011) until IdP / persisted
+    // role mapping lands. Same roles on login and refresh so enforce mode
+    // does not strand refreshed sessions. Agent tokens are issued elsewhere.
+    const accessToken = issueAccessToken(jwtConfig, {
+      tenantId,
+      userId,
+      sessionId,
+      roles: TRANSITIONAL_HUMAN_OPERATOR_ROLES,
+    });
 
     return {
       accessToken,

@@ -55,6 +55,50 @@ describe("access token issue/verify", () => {
     assert.deepEqual(claims, { kind: "agent", ...agentClaims });
   });
 
+  it("round-trips optional roles claims", () => {
+    const token = issueAccessToken(
+      config,
+      { ...CLAIMS, roles: ["auditor", "admin", "operator"] },
+      1_000,
+    );
+    const claims = verifyAccessToken(config, token, 1_000);
+    assert.deepEqual(claims, {
+      kind: "human",
+      tenantId: CLAIMS.tenantId,
+      userId: CLAIMS.userId,
+      sessionId: CLAIMS.sessionId,
+      roles: ["auditor", "operator"],
+    });
+  });
+
+  it("omits roles when empty or unsupported-only after normalize", () => {
+    for (const roles of [[], ["admin"], ["Admin", "root"]] as const) {
+      const token = issueAccessToken(config, { ...CLAIMS, roles }, 1_000);
+      const claims = verifyAccessToken(config, token, 1_000);
+      assert.deepEqual(claims, {
+        kind: "human",
+        tenantId: CLAIMS.tenantId,
+        userId: CLAIMS.userId,
+        sessionId: CLAIMS.sessionId,
+      });
+    }
+  });
+
+  it("agent tokens do not carry human roles claims", () => {
+    const token = issueAgentAccessToken(
+      config,
+      {
+        tenantId: CLAIMS.tenantId,
+        agentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      },
+      1_000,
+    );
+    const claims = verifyAccessToken(config, token, 1_000);
+    assert.equal(claims.kind, "agent");
+    if (claims.kind !== "agent") return;
+    assert.equal("roles" in claims, false);
+  });
+
   it("rejects an expired token", () => {
     const token = issueAccessToken(config, CLAIMS, 1_000);
 

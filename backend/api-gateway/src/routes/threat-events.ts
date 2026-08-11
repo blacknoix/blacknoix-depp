@@ -1,8 +1,8 @@
 import { type NextFunction, type Request, type Response, Router } from "express";
 
+import { requireAgent } from "../auth/authorize";
 import { logLifecycle } from "../lib/log";
 import { AppError } from "../middleware/error-handler";
-import { requirePrincipal } from "../middleware/tenant-context";
 import { parseThreatEventEnvelope } from "../threat-events/envelope";
 import type { ThreatEventService } from "../threat-events/service";
 
@@ -25,7 +25,7 @@ export function createThreatEventsRouter(
 
   router.post("/", async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const principal = requireAgentPrincipal(req);
+      const principal = requireAgent(req);
 
       if (!options.threatEvents) {
         throw new AppError(
@@ -94,20 +94,6 @@ export function createThreatEventsRouter(
   });
 
   return router;
-}
-
-function requireAgentPrincipal(req: Request) {
-  const principal = requirePrincipal(req);
-
-  if (!principal.agentId) {
-    throw new AppError(
-      "AGENT_AUTH_REQUIRED",
-      401,
-      "Agent authentication is required",
-    );
-  }
-
-  return principal as typeof principal & { agentId: string };
 }
 
 function bindEnvelopePrincipal(

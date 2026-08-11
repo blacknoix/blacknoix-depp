@@ -1,6 +1,8 @@
 import { type NextFunction, type Request, type Response, Router } from "express";
 
 import type { AgentsService } from "../agents/service";
+import { requireAgent, requireAgentManager } from "../auth/authorize";
+import { canManageAgents } from "../auth/roles";
 import { logLifecycle } from "../lib/log";
 import { AppError } from "../middleware/error-handler";
 import { requirePrincipal } from "../middleware/tenant-context";
@@ -13,7 +15,7 @@ export interface AgentsRouterOptions {
    */
   agentsService?: AgentsService;
 
-  /** Device identity bind/revoke. Omitted → those routes fail closed (503). */
+  /** Device identity bind/revoke. Omitted -> those routes fail closed (503). */
   deviceIdentities?: DeviceIdentityService;
 }
 
@@ -32,33 +34,25 @@ function readString(body: unknown, key: string): string {
  * Tenant-scoped agent enrollment (register + revoke), operator inventory,
  * and Windows-first device identity bind/revoke.
  *
- * Who may call enrollment: any authenticated tenant principal (human JWT /
- * dev-header). RBAC on enrollment is deferred. Agent machine identity is
- * established by the returned credential, not by this route's caller type.
+ * Human operator management (inventory, enroll, credential revoke, device
+ * identity revoke): requireAgentManager / canManageAgents (ADR-0011).
+ * Agent principals may still call enroll; auditor-only and enforce empty-role
+ * humans are denied.
  *
- * Device identity bind: agent principal only; path agentId must match.
- * Device identity revoke: operator principal only.
+ * Device identity bind: requireAgent; path agentId must match.
  *
- * Inventory (GET /) is operator-only — agent principals are rejected.
+ * Inventory (GET /) is operator-only - agents and auditor-only denied.
  */
 export function createAgentsRouter(options: AgentsRouterOptions = {}): Router {
   const router = Router();
 
   /**
-   * GET /v1/agents — operator agent inventory (liveness + open findings).
-   * Agent principals rejected. Enrollment UX / remote actions deferred.
+   * GET /v1/agents - operator agent inventory (liveness + open findings).
+   * Agent and auditor-only principals rejected.
    */
   router.get("/", async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const principal = requirePrincipal(req);
-
-      if (principal.agentId) {
-        throw new AppError(
-          "AGENTS_REJECTED",
-          403,
-          "Agent inventory requires an operator principal",
-        );
-      }
+      const principal = requireAgentManager(req);
 
       if (!options.agentsService) {
         throw new AppError(
@@ -103,12 +97,21 @@ export function createAgentsRouter(options: AgentsRouterOptions = {}): Router {
   });
 
   /**
-   * POST /v1/agents — register an agent and mint its long-lived credential.
+   * POST /v1/agents - register an agent and mint its long-lived credential.
    * The plaintext credential is returned once and never stored.
    */
   router.post("/", async (req: Request, res: Response, next: NextFunction) => {
     try {
       const principal = requirePrincipal(req);
+
+      // Agents may still enroll; humans need operator (canManageAgents).
+      if (!principal.agentId && !canManageAgents(principal)) {
+        throw new AppError(
+          "AGENTS_REJECTED",
+          403,
+          "Agent enrollment requires an operator principal",
+        );
+      }
 
       if (!options.agentsService) {
         throw new AppError(
@@ -147,21 +150,13 @@ export function createAgentsRouter(options: AgentsRouterOptions = {}): Router {
   });
 
   /**
-   * POST /v1/agents/:agentId/device-identity — agent self-binds Ed25519 pubkey.
+   * POST /v1/agents/:agentId/device-identity - agent self-binds Ed25519 pubkey.
    */
   router.post(
     "/:agentId/device-identity",
     async (req: Request, res: Response, next: NextFunction) => {
       try {
-        const principal = requirePrincipal(req);
-
-        if (!principal.agentId) {
-          throw new AppError(
-            "AGENT_AUTH_REQUIRED",
-            401,
-            "Agent authentication is required",
-          );
-        }
+        const principal = requireAgent(req);
 
         if (!options.deviceIdentities) {
           throw new AppError(
@@ -253,21 +248,13 @@ export function createAgentsRouter(options: AgentsRouterOptions = {}): Router {
   );
 
   /**
-   * POST /v1/agents/:agentId/device-identity/revoke — operator revoke.
+   * POST /v1/agents/:agentId/device-identity/revoke - operator revoke.
    */
   router.post(
     "/:agentId/device-identity/revoke",
     async (req: Request, res: Response, next: NextFunction) => {
       try {
-        const principal = requirePrincipal(req);
-
-        if (principal.agentId) {
-          throw new AppError(
-            "AGENTS_REJECTED",
-            403,
-            "Device identity revoke requires an operator principal",
-          );
-        }
+        const principal = requireAgentManager(req);
 
         if (!options.deviceIdentities) {
           throw new AppError(
@@ -315,14 +302,14 @@ export function createAgentsRouter(options: AgentsRouterOptions = {}): Router {
   );
 
   /**
-   * POST /v1/agents/:agentId/credentials/revoke — revoke the active credential.
+   * POST /v1/agents/:agentId/credentials/revoke - revoke the active credential.
    * Existing agent access JWTs remain valid until expiry (denylist deferred).
    */
   router.post(
     "/:agentId/credentials/revoke",
     async (req: Request, res: Response, next: NextFunction) => {
       try {
-        const principal = requirePrincipal(req);
+        const principal = requireAgentManager(req);
 
         if (!options.agentsService) {
           throw new AppError(

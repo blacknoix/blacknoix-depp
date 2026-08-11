@@ -24,6 +24,7 @@ async function withServer(
 function tenantHeaders(extra: Record<string, string> = {}) {
   return {
     "x-tenant-id": TENANT_ID,
+    "x-roles": "operator",
     ...extra,
   };
 }

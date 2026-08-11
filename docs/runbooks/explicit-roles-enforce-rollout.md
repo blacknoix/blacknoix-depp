@@ -118,5 +118,6 @@ This slice defines exit criteria only; transitional minting remains in place.
 - ADR-0011 — staged explicit-role migration
 - ADR-0010 — auditor role (audit HTTP deferred on this foundation)
 - ADR-0003 — production authentication direction
+- [Staging enforce + alert evidence](./staging-enforce-alert-evidence.md) — repository-only staging capture pack (verified JWT; not production cutover)
 - `backend/api-gateway/tests/auth/startup-explicit-roles.test.ts`
 - `backend/api-gateway/tests/auth/enforce-readiness.test.ts`

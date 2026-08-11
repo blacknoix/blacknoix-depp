@@ -92,6 +92,15 @@ default minting as proof that auditor/role-less paths are IdP-complete.
 
 `compat` is a **rollback posture**, not a production authorization claim.
 
+### Controlled test issuer (security controls)
+
+When Identity/IdP cannot yet mint auditor or role-less claims, an approved
+**controlled test issuer** may be used solely to produce verified JWTs for this
+evidence pack. The controlled test issuer must run only in a restricted,
+short-lived operator environment; it must not persist JWT_ACCESS_SECRET, emit
+tokens to shared logs, CI output, shell history, or evidence artifacts, and it
+must be unavailable to application users.
+
 ## Environment assertions (no secret values)
 
 Record only that each item was checked; never paste secrets.
@@ -242,3 +251,9 @@ audit checks, invalid-mode abort, and rollback rehearsal meet expected results
 Successful staging evidence supports questionnaire / readiness discussion.
 It **does not** authorize production cutover, Platform scan acceptance, Legal
 disclosure completion, or removal of transitional AuthService role minting.
+
+## Evidence limitations
+
+A successful controlled-test-issuer run proves the deployed DEPP verification
+and authorization path, but it does not prove an external IdP's role-claim
+issuance, federation configuration, or user-provisioning lifecycle.

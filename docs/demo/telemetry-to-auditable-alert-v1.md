@@ -48,6 +48,13 @@ Failures return non-2xx; no partial event/alert/audit. Batch ingest does **not**
 participate in this rule. Legacy findings correlation remains separate and
 best-effort.
 
+## Alert reads (immutable in v1)
+
+`GET /v1/alerts` and `GET /v1/alerts/:id` are the only alert HTTP surfaces.
+Alerts are **immutable / read-only in v1**: there is no PATCH/POST status,
+triage, acknowledge, resolve, or other mutation API. Lifecycle and status
+mutation are explicitly deferred.
+
 ## Roles
 
 | Principal | Ingest | `GET /v1/alerts` |

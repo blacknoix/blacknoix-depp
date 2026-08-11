@@ -38,9 +38,17 @@ be set explicitly (not inferred from `NODE_ENV`).
 | `GET /v1/tenants/me` | `requireTenantSelfReader` | Operator **or** auditor |
 | Agent inventory / human enroll / credential revoke / device-identity revoke | `requireAgentManager` / `canManageAgents` | Operator-only; enroll still allows **agent** principals |
 | Device-identity bind | `requireAgent` | Agent-only; path self-match |
-| Telemetry GET/query | `requireTelemetryQuerier` / `canQueryTelemetry` | Human operators; agents self-scoped only |
+| `GET /v1/telemetry/events` | `requireTelemetryQuerier` / `canQueryTelemetry` | Intentional authenticated read surface on this slice (see below) |
 | Telemetry POST ingest + batch | `requireAgent` | Agent-only; mode-independent |
 | Threat-event submit | `requireAgent` | Agent-only; mode-independent |
+
+**`GET /v1/telemetry/events` (intentional on this foundation):** human **operator**
+allowed; human **auditor** denied; under `enforce`, missing / empty / malformed /
+unsupported-only human role claims denied; **agent** access limited to existing
+self-scoped query only (no broader tenant read). POST ingest and batch ingest
+remain agent-only and are unchanged by this decision. Documenting this surface
+does **not** authorize Helm/deployment cutover or production `enforce`
+activation.
 
 ### Deferred
 

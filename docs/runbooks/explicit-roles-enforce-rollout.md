@@ -14,7 +14,7 @@ the explicit-roles foundation.
 | Mode | Behavior |
 |---|---|
 | `compat` | Missing/empty/unsupported-only human roles remain temporary operator-equivalent on role-gated helpers; rate-limited `implicit_operator_compat` warnings. Transitional — not enforce-equivalent. |
-| `enforce` | Missing/empty/unsupported-only human roles are denied on protected human routes wired in this foundation (findings, tenants/me). |
+| `enforce` | Missing/empty/unsupported-only human roles are denied on protected human routes wired in this foundation (findings, tenants/me, agent management, `GET /v1/telemetry/events`). |
 
 **Startup:** `config/env.ts` parses `AUTH_EXPLICIT_ROLES_MODE` via
 `applyExplicitRolesModeFromEnv` before the server accepts requests. Invalid
@@ -39,10 +39,11 @@ audit-log HTTP (`GET /v1/audit/logs`). Auditor-capable human surface today:
 `GET /v1/tenants/me`.
 
 **Wired operator-only (humans):** agent inventory, human enroll, credential
-revoke, device-identity revoke, telemetry GET/query.
+revoke, device-identity revoke, and intentional `GET /v1/telemetry/events`
+(auditor denied; agents self-scoped only on that GET).
 
-**Wired agent-only:** telemetry ingest/batch, device-identity bind, threat-event
-submit.
+**Wired agent-only:** telemetry POST ingest/batch, device-identity bind,
+threat-event submit.
 
 ## Before switching
 
@@ -58,7 +59,8 @@ submit.
    Or full unit suite: `npm run test:unit`.
 5. Prefer explicit roles in local tooling (`x-roles` for `dev-header` only).
 6. Confirm no protected human production workflow depends on missing role
-   claims under compat elevation for **wired** routes (findings, tenants/me).
+   claims under compat elevation for **wired** routes (findings, tenants/me,
+   agent management, `GET /v1/telemetry/events`).
 
 ## Switching
 
@@ -79,10 +81,15 @@ submit.
    secrets). Watch for unexpected `FINDINGS_REJECTED`, `TENANT_SELF_REJECTED`,
    `AGENT_AUTH_REQUIRED`.
 2. Verify core wired flows:
-   - operator: findings, tenants/me, agents inventory/enroll, telemetry query
-   - auditor: tenants/me only (not findings, agents management, or telemetry query)
-   - agent: telemetry ingest/batch, device bind, threat-event submit as applicable
-     (independent of human roles); agent self-scoped telemetry query only
+   - operator: findings, tenants/me, agents inventory/enroll,
+     `GET /v1/telemetry/events`
+   - auditor: tenants/me only (not findings, agents management, or
+     `GET /v1/telemetry/events`)
+   - agent: telemetry POST ingest/batch, device bind, threat-event submit as
+     applicable (independent of human roles); agent self-scoped
+     `GET /v1/telemetry/events` only
+   - This checklist does **not** authorize deployment cutover or production
+     `enforce` activation by itself
 3. **Rollback (temporary incident mitigation only):**
    - set `AUTH_EXPLICIT_ROLES_MODE=compat`
    - restart/redeploy via the same operational process

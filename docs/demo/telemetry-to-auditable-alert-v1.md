@@ -38,11 +38,11 @@ count, contributing telemetry event IDs.
 
 For **single-event** `POST /v1/telemetry/events` with `auth_failure`:
 
-1. Insert telemetry event  
-2. Evaluate burst rule  
-3. Insert-or-ignore alert  
-4. Insert `alert_created` audit **only if** the alert was newly created  
-5. Commit → then return success  
+1. Insert telemetry event
+2. Evaluate burst rule
+3. Insert-or-ignore alert
+4. Insert `alert_created` audit **only if** the alert was newly created
+5. Commit → then return success
 
 Failures return non-2xx; no partial event/alert/audit. Batch ingest does **not**
 participate in this rule. Legacy findings correlation remains separate and

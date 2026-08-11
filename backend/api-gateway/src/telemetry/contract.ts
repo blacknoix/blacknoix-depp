@@ -18,6 +18,8 @@ export const TELEMETRY_EVENT_TYPES = [
   "heartbeat",
   "agent.started",
   "agent.stopped",
+  "auth_success",
+  "auth_failure",
 ] as const;
 
 export type TelemetryEventTypeV1 = (typeof TELEMETRY_EVENT_TYPES)[number];

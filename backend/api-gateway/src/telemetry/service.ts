@@ -1,5 +1,6 @@
 import { logLifecycle } from "../lib/log";
 import type { CorrelationService } from "../correlation/service";
+import type { AlertsRepository } from "../alerts/repository";
 import type { TelemetryEventV1 } from "./contract";
 import type { TelemetryQueryV1 } from "./query";
 import type {
@@ -33,12 +34,17 @@ export interface TelemetryService {
    * tenantId must come from the gateway principal. The event's agentId is
    * checked for existence in that tenant; unknown or cross-tenant agents
    * collapse to agent_not_found (non-oracular).
+   *
+   * Single-event auth_failure uses a same-transaction path that may raise
+   * rule.auth_failure_burst.v1. Failures on that path propagate (non-2xx).
+   * Batch ingest does not participate in the new rule.
    */
   ingest(tenantId: string, event: TelemetryEventV1): Promise<IngestOutcome>;
 
   /**
    * All-or-nothing batch insert in a single tenant transaction.
    * Caller must have already validated the event list.
+   * Does not run rule.auth_failure_burst.v1 (slice: single-event path only).
    */
   ingestBatch(
     tenantId: string,
@@ -59,10 +65,16 @@ export interface TelemetryService {
 export interface TelemetryServiceDeps {
   telemetry: TelemetryRepository;
   /**
-   * Optional post-ingest correlation. When present, runs after a successful
-   * insert; failures are logged and never fail the ingest response.
+   * Optional post-ingest correlation (legacy findings path). When present,
+   * runs after a successful insert; failures are logged and never fail the
+   * ingest response. Untouched by auth-failure burst alerts.
    */
   correlation?: CorrelationService;
+  /**
+   * Same-TX auth_failure burst evaluation (telemetry-to-auditable-alert-v1).
+   * Used only by single-event ingest when eventType is auth_failure.
+   */
+  authFailureAlerts?: AlertsRepository;
 }
 
 export type { TelemetryAgentSummary, TelemetryEventRow, TelemetryQueryResult };
@@ -70,7 +82,7 @@ export type { TelemetryAgentSummary, TelemetryEventRow, TelemetryQueryResult };
 export function createTelemetryService(
   deps: TelemetryServiceDeps,
 ): TelemetryService {
-  const { telemetry, correlation } = deps;
+  const { telemetry, correlation, authFailureAlerts } = deps;
 
   async function runCorrelationSafe(
     tenantId: string,
@@ -135,6 +147,36 @@ export function createTelemetryService(
 
   return {
     async ingest(tenantId, event) {
+      if (
+        event.eventType === "auth_failure" &&
+        authFailureAlerts !== undefined
+      ) {
+        if (typeof tenantId !== "string" || tenantId.trim() === "") {
+          throw new Error("ingest requires a non-empty tenantId");
+        }
+
+        const exists = await telemetry.agentExists(tenantId, event.agentId);
+        if (!exists) {
+          return { ok: false, reason: "agent_not_found" };
+        }
+
+        // Same-TX event + optional alert + audit. Errors propagate to the route.
+        const inserted = await authFailureAlerts.ingestAuthFailureAndEvaluate(
+          tenantId,
+          {
+            agentId: event.agentId,
+            schemaVersion: event.schemaVersion,
+            occurredAt: event.occurredAt,
+            payload: event.payload,
+          },
+        );
+
+        // Legacy post-ingest correlation remains best-effort and separate.
+        await runCorrelationSafe(tenantId, event.agentId);
+
+        return { ok: true, event: inserted };
+      }
+
       const batch = await ingestBatch(tenantId, [event]);
       if (!batch.ok) {
         return batch;

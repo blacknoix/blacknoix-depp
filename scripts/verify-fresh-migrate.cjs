@@ -22,6 +22,8 @@ const DB_NAME = "depp_migrate_verify";
 const EXPECTED_TABLES = [
   "agent_credentials",
   "agents",
+  "alert_audit_events",
+  "alerts",
   "correlation_findings",
   "device_identities",
   "finding_shared_views",
@@ -52,6 +54,7 @@ const EXPECTED_MIGRATIONS = [
   "014_threat_events",
   "015_finding_detection_source",
   "016_threat_event_detection_source",
+  "017_alerts_and_alert_audit",
 ];
 
 function superuserUrl() {

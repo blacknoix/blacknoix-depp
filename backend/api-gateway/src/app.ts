@@ -12,10 +12,12 @@ import { requireTenant } from "./middleware/tenant-context";
 import type { OidcLoginService } from "./auth/oidc/login";
 import type { AuthService } from "./auth/service";
 import type { AgentsService } from "./agents/service";
+import type { AlertsService } from "./alerts/service";
 import type { CorrelationService } from "./correlation/service";
 import type { DatabaseHealthCheck } from "./db/pool";
 import type { FindingSharedViewsRepository } from "./findings-views/repository";
 import { createAgentsRouter } from "./routes/agents";
+import { createAlertsRouter } from "./routes/alerts";
 import { createAuthRouter } from "./routes/auth";
 import { createFindingsRouter } from "./routes/findings";
 import { createHealthRouter } from "./routes/health";
@@ -114,6 +116,12 @@ export interface AppOptions {
   correlationService?: CorrelationService;
 
   /**
+   * Backs GET /v1/alerts and GET /v1/alerts/:id (auditable auth-failure burst).
+   * Omitted means those routes fail closed.
+   */
+  alertsService?: AlertsService;
+
+  /**
    * Backs GET/POST/DELETE /v1/findings/views (tenant shared views). Omitted
    * means those routes fail closed.
    */
@@ -188,6 +196,15 @@ export function createApp(options: AppOptions = {}) {
     createTelemetryRouter({
       telemetryService: options.telemetryService,
       batchMaxEvents: options.telemetryBatchMaxEvents,
+    }),
+  );
+
+  // Auditable alerts (auth-failure burst) — human operator/auditor read only.
+  app.use(
+    "/v1/alerts",
+    requireTenant,
+    createAlertsRouter({
+      alertsService: options.alertsService,
     }),
   );
 

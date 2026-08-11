@@ -15,6 +15,8 @@ import { createSessionsRepository } from "./sessions/repository";
 import { createTenantsRepository } from "./tenants/repository";
 import { createTelemetryRepository } from "./telemetry/repository";
 import { createTelemetryService } from "./telemetry/service";
+import { createAlertsRepository } from "./alerts/repository";
+import { createAlertsService } from "./alerts/service";
 import { createCorrelationFindingsRepository } from "./correlation/repository";
 import { createFindingSuppressionsRepository } from "./correlation/suppression-repository";
 import { createCorrelationService } from "./correlation/service";
@@ -81,10 +83,15 @@ const correlationService =
         threatEvents: threatEventService,
       })
     : undefined;
+const alertsRepo = db ? createAlertsRepository(db) : undefined;
+const alertsService = alertsRepo
+  ? createAlertsService({ alerts: alertsRepo })
+  : undefined;
 const telemetryService = telemetry
   ? createTelemetryService({
       telemetry,
       ...(correlationService ? { correlation: correlationService } : {}),
+      ...(alertsRepo ? { authFailureAlerts: alertsRepo } : {}),
     })
   : undefined;
 
@@ -141,6 +148,7 @@ const app = createApp({
   deviceIdentities: deviceIdentityService,
   threatEventService,
   correlationService,
+  alertsService,
   sharedViews,
 });
 

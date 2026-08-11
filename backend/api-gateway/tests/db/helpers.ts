@@ -23,6 +23,8 @@ export interface DbHandles {
  * Must exist after migrate:latest on this branch.
  */
 export const SCHEMA_RESET_TABLES = [
+  "alert_audit_events",
+  "alerts",
   "threat_events",
   "device_identities",
   "finding_shared_views",

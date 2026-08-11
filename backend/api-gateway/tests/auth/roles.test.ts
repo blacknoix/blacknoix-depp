@@ -9,6 +9,7 @@ import {
   canManageAgents,
   canManageFindings,
   canQueryTelemetry,
+  canReadAlerts,
   canReadAuditLogs,
   canReadTenantSelf,
   configureExplicitRolesMode,
@@ -122,6 +123,7 @@ describe("principal role helpers (compat)", () => {
     assert.equal(isAuditorOnlyPrincipal(p), true);
     assert.equal(canReadAuditLogs(p), true);
     assert.equal(canReadTenantSelf(p), true);
+    assert.equal(canReadAlerts(p), true);
     assert.equal(canManageAgents(p), false);
     assert.equal(canQueryTelemetry(p), false);
     assert.equal(canListFindings(p), false);
@@ -151,6 +153,7 @@ describe("principal role helpers (compat)", () => {
     assert.equal(canQueryTelemetry(agent), true);
     assert.equal(canListFindings(agent), true);
     assert.equal(canManageFindings(agent), false);
+    assert.equal(canReadAlerts(agent), false);
     assert.equal(canReadTenantSelf(agent), false);
   });
 

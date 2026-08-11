@@ -38,6 +38,15 @@ describe("parseTelemetryEventV1", () => {
     }
   });
 
+  it("accepts auth_success and auth_failure", () => {
+    for (const eventType of ["auth_success", "auth_failure"] as const) {
+      const result = parseTelemetryEventV1(validBody({ eventType }));
+      assert.equal(result.ok, true);
+      if (!result.ok) return;
+      assert.equal(result.event.eventType, eventType);
+    }
+  });
+
   it("rejects a non-object body", () => {
     const result = parseTelemetryEventV1([]);
     assert.equal(result.ok, false);

@@ -9,6 +9,7 @@ import {
   canManageAgents,
   canManageFindings,
   canQueryTelemetry,
+  canReadAlerts,
   canReadTenantSelf,
 } from "./roles";
 
@@ -89,6 +90,21 @@ export function requireTenantSelfReader(req: Request): AuthenticatedPrincipal {
       "TENANT_SELF_REJECTED",
       403,
       "Tenant self-read requires an operator or auditor principal",
+    );
+  }
+  return principal;
+}
+
+/**
+ * GET /v1/alerts — human operator or auditor (read-only). Agents denied.
+ */
+export function requireAlertReader(req: Request): AuthenticatedPrincipal {
+  const principal = requirePrincipal(req);
+  if (!canReadAlerts(principal)) {
+    throw new AppError(
+      "ALERTS_REJECTED",
+      403,
+      "Alert read requires an operator or auditor principal",
     );
   }
   return principal;

@@ -226,6 +226,38 @@ export interface ThreatEventsTable {
   detection_source: string;
 }
 
+/**
+ * Tenant-owned auditable alert (telemetry-to-auditable-alert-v1).
+ * Deduped by (tenant_id, agent_id, rule_id, window_bucket). No lifecycle
+ * mutation columns in this slice.
+ */
+export interface AlertsTable {
+  id: Generated<string>;
+  tenant_id: string;
+  agent_id: string;
+  rule_id: string;
+  window_bucket: Timestamp;
+  window_start: Timestamp;
+  window_end: Timestamp;
+  contributing_count: number;
+  contributing_event_ids: string[];
+  created_at: Generated<Timestamp>;
+}
+
+/**
+ * Tenant-owned append-only alert audit trail. App role: INSERT+SELECT only.
+ */
+export interface AlertAuditEventsTable {
+  id: Generated<string>;
+  tenant_id: string;
+  alert_id: string;
+  event_type: string;
+  occurred_at: Generated<Timestamp>;
+  actor_kind: string;
+  actor_id: string | null;
+  detail: Record<string, unknown>;
+}
+
 export interface Database {
   tenants: TenantsTable;
   agents: AgentsTable;
@@ -240,4 +272,6 @@ export interface Database {
   finding_shared_views: FindingSharedViewsTable;
   device_identities: DeviceIdentitiesTable;
   threat_events: ThreatEventsTable;
+  alerts: AlertsTable;
+  alert_audit_events: AlertAuditEventsTable;
 }

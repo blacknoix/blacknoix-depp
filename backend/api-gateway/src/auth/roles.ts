@@ -276,3 +276,12 @@ export function canManageFindings(principal: AuthenticatedPrincipal): boolean {
 export function canReadTenantSelf(principal: AuthenticatedPrincipal): boolean {
   return canReadAuditLogs(principal);
 }
+
+/**
+ * GET /v1/alerts list/detail — human operator or auditor (read-only).
+ * Agents denied. Enforce empty/unsupported roles denied via isOperatorPrincipal
+ * / isAuditorPrincipal.
+ */
+export function canReadAlerts(principal: AuthenticatedPrincipal): boolean {
+  return isOperatorPrincipal(principal) || isAuditorPrincipal(principal);
+}

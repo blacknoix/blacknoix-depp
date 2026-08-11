@@ -101,6 +101,11 @@ short-lived operator environment; it must not persist JWT_ACCESS_SECRET, emit
 tokens to shared logs, CI output, shell history, or evidence artifacts, and it
 must be unavailable to application users.
 
+The controlled test issuer must mint tokens only through the existing
+`issueAccessToken` or `issueAgentAccessToken` code path, using the approved
+`JWT_ACCESS_SECRET` and the configured DEPP issuer and audience values. It must
+not use bespoke signing or alternate cryptographic logic.
+
 ## Environment assertions (no secret values)
 
 Record only that each item was checked; never paste secrets.

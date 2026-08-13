@@ -194,21 +194,50 @@ Requests are resolved into an `AuthenticatedPrincipal` by a pluggable
 `AuthStrategy` selected via `AUTH_MODE`. Route handlers read `req.principal` and
 never parse credentials themselves.
 
-The only implemented mode is `dev-header`, which trusts the client-supplied
-`x-tenant-id` header without verification. It is a development stand-in.
+Two modes are implemented (`src/auth/auth-mode.ts`):
 
-**The service cannot start with `NODE_ENV=production`.** Unverified modes are
-rejected at startup, and `dev-header` is currently the only mode, so there is no
-configuration in which api-gateway runs in production. This is intentional and
-fail-closed; it lifts when a verified mode exists.
+- `dev-header` — trusts the client-supplied `x-tenant-id` header without
+  verification. A development stand-in, and the default when `AUTH_MODE` is
+  unset. Listed in `UNVERIFIED_MODES` and therefore **rejected at startup when
+  `NODE_ENV=production`**.
+- `jwt` — the principal comes only from a DEPP-signed HS256 access token, never
+  from request headers. It verifies a signature, so it is not an unverified mode
+  and is permitted in production.
+
+Startup requirements for `AUTH_MODE=jwt`, all fail-closed:
+
+- `JWT_ACCESS_SECRET` (≥32 characters), `JWT_ISSUER`, `JWT_AUDIENCE` — missing
+  configuration throws rather than yielding a strategy that cannot verify.
+- `AUTH_EXPLICIT_ROLES_MODE` must be set explicitly to `compat` or `enforce`.
+  Unset is rejected under `jwt` (verified authentication must opt in); an
+  invalid value is rejected in any mode. See ADR-0011.
 
 An unrecognised `AUTH_MODE` also stops startup rather than falling back.
 
-The production authentication mechanism is decided in ADR-0003 but **not yet
-implemented**: per-tenant OIDC federation, no stored human credentials,
-DEPP-issued short-lived access tokens with server-side refresh, and a separate
-machine-identity path for agents. Roles come from IdP claims, with DEPP-persisted
-mappings only as a per-tenant compatibility layer.
+**Presented-but-invalid credentials are authentication failures, not anonymous
+requests.** A bearer token that fails verification — tampered signature,
+`alg: none` or any non-HS256 header, malformed structure, wrong issuer or
+audience, expired, missing claims — makes the strategy throw
+`InvalidCredentialError`. `middleware/authenticate.ts` records it as
+`req.authFailed` (it still never rejects, so `/` and `/health` stay reachable),
+and `requireTenant` / `requirePrincipal` answer `401 INVALID_TOKEN` with
+`WWW-Authenticate: Bearer error="invalid_token"` before any tenant lookup or
+RBAC check runs. This is distinct from a request carrying no credential at all,
+which still yields `400 TENANT_REQUIRED`. Rejection messages are fixed and
+claim-free so they cannot become an oracle for token forgery. The verifier
+hardcodes HS256 and never reads an attacker-supplied `alg`.
+
+ADR-0003 decides the full production mechanism. Implemented so far: DEPP-issued
+short-lived access tokens with server-side refresh, and the separate
+machine-identity path for agents. **Not yet implemented**: per-tenant OIDC
+federation end to end, and roles sourced from IdP claims — `AuthService`-minted
+human tokens still carry the transitional `operator` role
+(`TRANSITIONAL_HUMAN_OPERATOR_ROLES`), with DEPP-persisted mappings intended
+only as a per-tenant compatibility layer.
+
+Local JWT/enforce verification uses a controlled test issuer. It is not
+staging evidence and not external-IdP evidence; issuer, audience, JWKS/key
+rotation, and claim-mapping behaviour against a real IdP remain unverified.
 
 ## Tenancy model
 Authoritative decision: docs/architecture/adr/0001-tenancy-and-data-model.md.

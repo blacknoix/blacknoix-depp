@@ -33,10 +33,11 @@ function isAuthMode(value: string): value is AuthMode {
  * Pure and exported so the guard can be tested directly rather than by
  * spawning processes.
  *
- * Note that dev-header is currently the only implemented mode and is banned in
- * production, so the service cannot start with NODE_ENV=production at all.
- * That is intentional: there is no production-safe authentication yet, and
- * refusing to boot is the honest outcome.
+ * dev-header is banned in production because it verifies nothing. jwt is not,
+ * so NODE_ENV=production now boots under AUTH_MODE=jwt. Reaching production
+ * still takes more than this guard: jwt additionally requires verified JWT
+ * configuration and an explicit AUTH_EXPLICIT_ROLES_MODE, both enforced at
+ * startup.
  */
 export function resolveAuthMode(
   rawMode: string | undefined,

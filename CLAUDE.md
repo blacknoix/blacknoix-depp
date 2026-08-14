@@ -19,8 +19,8 @@ Early. One backend service exists; everything else is still scaffolding.
 
 What actually exists:
 - CLAUDE.md
-- docs/architecture/adr/ — ADR-0001–0004 (tenancy, auth seam, production auth, persistence)
-- backend/api-gateway/ — running Express service, see below
+- docs/architecture/adr/ — ADR-0001–0005, 0010–0011 accepted; ADR-0013 Proposed (staging deployment baseline); enterprise-readiness control matrix under `docs/architecture/`
+- backend/api-gateway/ — running Express service, see below (includes production container **source** packaging: Dockerfile / `.dockerignore` / `npm run smoke:dist`; not Docker/staging/IdP proof by itself)
 - frontend/ — operator app shell + findings + agents inventory (Vite + React + TypeScript)
 - infra/ — empty
 
@@ -65,13 +65,13 @@ Treat this as the current priority order unless explicitly changed.
 
 ## Current status
 - Repository setup: done (git, hygiene files, ADR log)
-- Product docs: ADRs 0001–0004 accepted; Work/Findings/Attention runbook at `docs/runbooks/work-findings-attention.md` (operational invariants — not a full product spec)
-- Backend implementation: api-gateway — middleware baseline; `/v1/tenants/me`; tenant-scoped telemetry ingest + query/summary; minimal post-ingest correlation findings; agent enrollment + hashed credentials + agent JWT exchange for authenticated ingest; Findings triage + Attention + Work views/default
+- Product docs: ADRs 0001–0005, 0010–0011 accepted; ADR-0013 Proposed (staging deployment baseline + packaging boundaries); enterprise-readiness control matrix at `docs/architecture/enterprise-readiness-control-matrix.md` (Draft / evidence-baseline; no Complete without linked evidence); staging enforce+alert evidence runbook at `docs/runbooks/staging-enforce-alert-evidence.md`; Work/Findings/Attention runbook at `docs/runbooks/work-findings-attention.md` (operational invariants — not a full product spec)
+- Backend implementation: api-gateway — middleware baseline; `/v1/tenants/me`; tenant-scoped telemetry ingest + query/summary; minimal post-ingest correlation findings; agent enrollment + hashed credentials + agent JWT exchange for authenticated ingest; Findings triage + Attention + Work views/default; production container **source** packaging under ADR-0013 (Dockerfile, `.dockerignore`, `smoke:dist`)
 - Frontend implementation: operator app shell (default `/work`) + findings (`/findings`) + agents (`/agents`) with URL cross-links (`agentId` / `findingId`)
 - Infra setup: not started
-- Auth / RBAC: authentication seam (ADR-0002) with `dev-header` + `jwt`; human OIDC/refresh and agent credential exchange implemented; no RBAC
+- Auth / RBAC: authentication seam (ADR-0002) with `dev-header` + `jwt`; human OIDC/refresh and agent credential exchange implemented; allow-listed roles + staged `AUTH_EXPLICIT_ROLES_MODE` (ADR-0010/0011)
 - Database: schema + RLS (tenants, agents, agent_credentials, users, sessions, refresh_tokens, telemetry_events, correlation_findings, finding_suppressions, finding_revisit_reminders, finding_attention_dismissals, finding_shared_views, work_shared_views, work_tenant_defaults) via Kysely + migrator, plus platform-global `oidc_initiations`. NOTE: some auth narrative elsewhere may still need a docs-sync pass.
-- Enterprise hardening: not started
+- Enterprise hardening: packaging baseline started (ADR-0013); Docker verification, scan/SBOM, staging deploy, Kubernetes, and IdP proof remain separate / not claimed here
 
 ## backend/api-gateway
 Implemented:
@@ -276,6 +276,7 @@ Run from `backend/api-gateway/`:
 - Start dev: `npm run dev` (tsx, no build step)
 - Typecheck: `npm run typecheck`
 - Build: `npm run build` (emits to dist/)
+- Dist smoke (local process only): `npm run smoke:dist` (requires prior build; not Docker/staging proof)
 - Start built: `npm start`
 - Lint: not configured yet
 - Test: `npm test` (`node:test` + tsx; see `tests/`)

@@ -48,9 +48,9 @@ States are exactly one of: **Done**, **In progress**, **Blocked**, **Not started
 
 | Area | State | Linked evidence | Next measurable gate | Blocking dependency | Owner |
 |---|---|---|---|---|---|
-| Tenant isolation + RBAC | In progress | RLS + dbtests; ADR-0010/0011; RBAC unit suites; local JWT/`enforce` @ `2ba2bc1` (local only) | Land the next critical-path API/dbtest vertical suite that fails closed on cross-tenant and role-denied paths as a single gated checklist (see section below) | Staging IdP + enforce evidence not started | BLACKNOIX founder |
-| Audit logging | In progress | `alert_audit_events` append-only grants + `alerts-auth-failure.dbtest.ts` cases 4–5; alerts HTTP RBAC unit test | Extend vertical-slice validation so denied RBAC/cross-tenant attempts are recorded safely (or explicitly proven non-oracular without secret leakage) and authorized alert creation remains tenant-bound | No general credential-lifecycle audit HTTP on this tip; SIEM/export deferred | BLACKNOIX founder |
-| Telemetry ingestion | In progress | Telemetry routes/services; unit + `telemetry.dbtest.ts`; auth_failure → alert path in alerts dbtest | Keep agent-authenticated ingest as the only write path into the alert spine for the vertical slice; add checklist assertion that agent telemetry appears only in its tenant alert list | Deployed control-plane ingest reachability (external) | BLACKNOIX founder |
+| Tenant isolation + RBAC | In progress | RLS + dbtests; ADR-0010/0011; RBAC unit suites; local JWT/`enforce` @ `2ba2bc1` (local only); **local vertical-slice** `tests/db/tenant-isolation-immutable-audit.dbtest.ts` (criteria 1–3 via HTTP+RLS; disposable Postgres only) | Keep Day-30 local gate green; next is criterion-7 recovery drill (separate), then staging IdP+enforce | Staging IdP + enforce evidence not started | BLACKNOIX founder |
+| Audit logging | In progress | `alert_audit_events` append-only grants + `alerts-auth-failure.dbtest.ts` cases 4–5; alerts HTTP RBAC; **local vertical-slice** `tenant-isolation-immutable-audit.dbtest.ts` (c4 tenant-bound `alert_created`; c5 `depp_app` UPDATE/DELETE deny) | Schedule criterion-7 recovery drill; SIEM/export deferred | No general credential-lifecycle audit HTTP on this tip; SIEM/export deferred | BLACKNOIX founder |
+| Telemetry ingestion | In progress | Telemetry routes/services; unit + `telemetry.dbtest.ts`; auth_failure → alert path; **local vertical-slice** `tenant-isolation-immutable-audit.dbtest.ts` (c6 agent `auth_failure` burst → Tenant-A-only `GET /v1/alerts`) | Keep agent-authenticated ingest as the only write path into the alert spine; staging ingest reachability next | Deployed control-plane ingest reachability (external) | BLACKNOIX founder |
 | Kubernetes/GitOps | Not started | No Helm/GitOps manifests; `infra/` is local Compose only | Introduce GitOps/Helm skeletons only after packaging + vertical-slice local gates pass | Platform cluster, scan/provenance, secret injection (external) | BLACKNOIX founder (repo); Platform (cluster) |
 | Windows agent | Not started | No Windows agent package in-repo; threat-event docs reference a future agent | Do not start agent features until tenant-isolation + immutable-audit vertical slice gates secure onboarding | Product/agent runtime scope deferred | BLACKNOIX founder |
 | Readiness and packaging | In progress | `/ready` `e046202`; live Postgres readiness `bf88acc`; container artifact `container-verification-20260817-081502.json` @ `bf88acc` cited by `9a3ecf0`; `smoke:dist`; ADR-0013 (historical) | Treat local readiness+packaging as closed for **local** evidence only; next packaging gates are scan/provenance and deployment-level readiness probe config | Non-local DB roles, secret injection, registry/scan, K8s probe wiring | BLACKNOIX founder |
@@ -106,9 +106,9 @@ Secure customer onboarding is gated by a single vertical proof:
 
 **authenticated principal → tenant-scoped telemetry → tenant-bound alert → append-only audit → fail-closed cross-tenant/RBAC denial**
 
-Local building blocks already exist (`alerts-auth-failure.dbtest.ts`, alerts RBAC unit tests, RLS helpers). The next **implementation** commit must be the smallest **test-first** suite that turns those pieces into an explicit onboarding gate—not docs-only work, not agent/UI/platform expansion.
+Local building blocks already exist (`alerts-auth-failure.dbtest.ts`, alerts RBAC unit tests, RLS helpers). **Local implementation evidence (criteria 1–6 only):** `backend/api-gateway/tests/db/tenant-isolation-immutable-audit.dbtest.ts` via `npm run test:db` against disposable Compose Postgres. Status remains **In progress**—not staging/platform/Done. Criterion 7 (recovery drill) remains explicitly out of scope for that suite.
 
-### Pre-implementation acceptance criteria (must all pass before claiming the slice)
+### Acceptance criteria (1–6 gated locally; 7 deferred)
 
 | # | Criterion | Planned test layer |
 |---|---|---|
@@ -120,13 +120,12 @@ Local building blocks already exist (`alerts-auth-failure.dbtest.ts`, alerts RBA
 | 6 | A registered agent’s authenticated telemetry event appears only in its tenant’s alert/dashboard path | **Database integration** + **API integration** for `GET /v1/alerts` tenant scoping |
 | 7 | A documented recovery test restores the vertical slice without violating tenant isolation or audit integrity | **Manual recovery drill** (procedure + recorded results) until automation exists; not claimed Done until executed and linked |
 
-### Ordered execution sequence (implementation; approval required before coding)
+### Ordered execution sequence (post local 1–6 gate)
 
-1. **First implementation commit (smallest test-first gate):** add/extend a focused vertical suite under `backend/api-gateway/tests/` that fails the build unless criteria 1–6 pass against the disposable Compose Postgres fixture (reuse `tests/db/helpers.ts`; no ad hoc persistent DB; no committed secrets). Prefer extending `alerts-auth-failure.dbtest.ts` / alerts API tests over new product surface area.
-2. Wire the suite into the existing `npm run test:db` / unit scripts already used by developers (no new platform).
-3. Record exact commands, source SHA, and fixture assumptions in the matrix evidence cell for this slice when green.
-4. Only then schedule the **manual recovery drill** (criterion 7) as a separate commit/evidence note.
-5. **Defer:** Windows agent work, UI polish, Helm/GitOps scaffolding, Dockerfile/verifier changes, ADR-0012/0013 edits, and staging IdP packs until this local vertical gate is green.
+1. **Landed (local only):** `tests/db/tenant-isolation-immutable-audit.dbtest.ts` fails the build unless criteria 1–6 pass against disposable Compose Postgres (`npm run test:db`). Reuses `tests/db/helpers.ts`, real telemetry+alerts services, JWT strategy; no committed secrets.
+2. Record source SHA in the Day-30 evidence cells when this commit lands (this citation).
+3. Next: schedule the **manual recovery drill** (criterion 7) as a separate commit/evidence note—do not claim Done for the slice until then.
+4. **Defer:** Windows agent work, UI polish, Helm/GitOps scaffolding, Dockerfile/verifier changes, ADR-0012/0013 edits, and staging IdP packs until founder schedules those gates.
 
 ### External / deployment prerequisites (later gates — not claims of this planning commit)
 

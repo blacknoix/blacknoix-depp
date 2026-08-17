@@ -1,0 +1,370 @@
+# Staging image supply-chain (INTENTIONALLY NON-OPERATIONAL BY DEFAULT)
+#
+# Target architecture only (founder-recorded): GitHub Actions OIDC -> ECR,
+# Trivy + Syft CycloneDX + Cosign keyless, digest-only GitOps promotion later.
+#
+# This workflow does NOT run on push. It only accepts workflow_dispatch and
+# fails closed while any required input remains a REPLACE_* placeholder or
+# the explicit execute confirmation is unset.
+#
+# Do NOT uncomment a push trigger until: AWS non-prod account, ECR repo,
+# IAM OIDC trust, GitHub protected environment, and founder approval exist.
+#
+# Future (DISABLED) trigger sketch — keep commented; do not enable casually:
+#   push:
+#     branches: [main]
+#     paths:
+#       - "backend/api-gateway/**"
+#       - ".github/workflows/staging-image-supply-chain.yml"
+
+name: staging-image-supply-chain
+
+on:
+  workflow_dispatch:
+    inputs:
+      founder_approval:
+        description: "Must equal I_APPROVE_STAGING_IMAGE_PIPELINE after AWS/GitHub prerequisites exist"
+        required: true
+        default: "REPLACE_WITH_FOUNDER_APPROVAL"
+      execute_confirm:
+        description: "Must equal I_UNDERSTAND_THIS_PUSHES_TO_ECR to run build/scan/push steps"
+        required: true
+        default: "REPLACE_WITH_EXECUTE_CONFIRM"
+      aws_role_to_assume:
+        description: "IAM role ARN for GitHub OIDC (no wildcards). Placeholder until provisioned."
+        required: true
+        default: "REPLACE_WITH_AWS_ROLE_ARN"
+      ecr_repository_uri:
+        description: "ECR repository URI without tag (…amazonaws.com/name). No latest."
+        required: true
+        default: "REPLACE_WITH_ECR_REPOSITORY_URI"
+      aws_region:
+        description: "AWS region for ECR (decision record default ap-south-1)"
+        required: true
+        default: "ap-south-1"
+      high_vuln_exception_approved:
+        description: "Set YES only for a time-bounded High-with-fix exception; otherwise NO"
+        required: true
+        default: "NO"
+      high_vuln_exception_reason:
+        description: "Required when high_vuln_exception_approved=YES"
+        required: false
+        default: ""
+      high_vuln_exception_expiry:
+        description: "UTC date YYYY-MM-DD; required when exception=YES; must be in the future"
+        required: false
+        default: ""
+      high_vuln_exception_founder_ack:
+        description: "Must equal FOUNDER_ACK_HIGH_EXCEPTION when exception=YES"
+        required: false
+        default: ""
+
+# Least privilege for this skeleton. id-token is required only after gates pass
+# (GitHub OIDC -> AWS and Cosign keyless). actions:write is for artifact upload.
+permissions:
+  contents: read
+  id-token: write
+  actions: write
+  attestations: write
+
+concurrency:
+  group: staging-image-supply-chain-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # -------------------------------------------------------------------------
+  # Gate 0: fail closed BEFORE checkout network to AWS or any cloud auth.
+  # -------------------------------------------------------------------------
+  non-operational-guard:
+    name: non-operational guard (fail closed)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Reject placeholders and incomplete exception inputs
+        env:
+          FOUNDER_APPROVAL: ${{ inputs.founder_approval }}
+          EXECUTE_CONFIRM: ${{ inputs.execute_confirm }}
+          AWS_ROLE_TO_ASSUME: ${{ inputs.aws_role_to_assume }}
+          ECR_REPOSITORY_URI: ${{ inputs.ecr_repository_uri }}
+          AWS_REGION: ${{ inputs.aws_region }}
+          HIGH_EXC: ${{ inputs.high_vuln_exception_approved }}
+          HIGH_REASON: ${{ inputs.high_vuln_exception_reason }}
+          HIGH_EXPIRY: ${{ inputs.high_vuln_exception_expiry }}
+          HIGH_ACK: ${{ inputs.high_vuln_exception_founder_ack }}
+        run: |
+          set -euo pipefail
+          echo "INTENTIONALLY NON-OPERATIONAL unless all gates pass"
+
+          fail() { echo "::error::$1"; exit 1; }
+
+          [[ "${FOUNDER_APPROVAL}" == "I_APPROVE_STAGING_IMAGE_PIPELINE" ]] \
+            || fail "founder_approval placeholder/unapproved — refusing to proceed"
+          [[ "${EXECUTE_CONFIRM}" == "I_UNDERSTAND_THIS_PUSHES_TO_ECR" ]] \
+            || fail "execute_confirm not set — refusing build/push"
+          [[ "${AWS_ROLE_TO_ASSUME}" != REPLACE_WITH_* ]] \
+            || fail "aws_role_to_assume is still a REPLACE_* placeholder — before AWS auth"
+          [[ "${AWS_ROLE_TO_ASSUME}" == arn:aws:iam::*:role/* ]] \
+            || fail "aws_role_to_assume must look like an IAM role ARN form (still no account committed in-repo defaults)"
+          case "${AWS_ROLE_TO_ASSUME}" in
+            *REPLACE*|*EXAMPLE*|*123456789012*) fail "aws_role_to_assume contains forbidden placeholder/example patterns" ;;
+          esac
+          [[ "${ECR_REPOSITORY_URI}" != REPLACE_WITH_* ]] \
+            || fail "ecr_repository_uri is still a REPLACE_* placeholder — before AWS auth"
+          [[ "${ECR_REPOSITORY_URI}" != *latest* ]] \
+            || fail "ecr_repository_uri must not contain latest"
+          [[ "${ECR_REPOSITORY_URI}" != *:* ]] \
+            || fail "ecr_repository_uri must be repository URI without a tag"
+          [[ "${ECR_REPOSITORY_URI}" == *.dkr.ecr.*.amazonaws.com/* ]] \
+            || fail "ecr_repository_uri must be an Amazon ECR repository URI"
+          [[ "${AWS_REGION}" =~ ^[a-z]{2}-[a-z]+-[0-9]+$ ]] \
+            || fail "aws_region looks invalid"
+
+          if [[ "${HIGH_EXC}" == "YES" ]]; then
+            [[ -n "${HIGH_REASON}" ]] || fail "high exception missing reason"
+            [[ "${HIGH_ACK}" == "FOUNDER_ACK_HIGH_EXCEPTION" ]] \
+              || fail "high exception missing founder ack"
+            [[ "${HIGH_EXPIRY}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] \
+              || fail "high exception expiry must be YYYY-MM-DD"
+            today="$(date -u +%F)"
+            [[ "${HIGH_EXPIRY}" > "${today}" ]] \
+              || fail "high exception expiry must be in the future (UTC)"
+          elif [[ "${HIGH_EXC}" != "NO" ]]; then
+            fail "high_vuln_exception_approved must be YES or NO"
+          fi
+
+          echo "Guard passed — cloud steps may run only in this workflow run"
+
+  # -------------------------------------------------------------------------
+  # Quality + supply chain. Separated so AWS auth cannot run if guard fails.
+  # GitHub Environment protection (e.g. staging-image-supply-chain) is a
+  # FUTURE prerequisite — not assumed to exist yet. Add `environment:` only
+  # after the environment is created and required reviewers are configured.
+  # -------------------------------------------------------------------------
+  supply-chain:
+    name: build scan sbom sign push (gated)
+    needs: non-operational-guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write
+      actions: write
+      attestations: write
+    defaults:
+      run:
+        working-directory: backend/api-gateway
+    env:
+      AWS_REGION: ${{ inputs.aws_region }}
+      ECR_REPOSITORY_URI: ${{ inputs.ecr_repository_uri }}
+      IMAGE_SOURCE_SHA: ${{ github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: backend/api-gateway/package-lock.json
+
+      - name: npm ci
+        run: npm ci
+
+      - name: typecheck
+        run: npm run typecheck
+
+      - name: typecheck:test
+        run: npm run typecheck:test
+
+      - name: test:unit
+        run: npm run test:unit
+
+      - name: test:db skipped until safe CI Postgres fixture exists
+        run: |
+          echo "SKIP: npm run test:db requires disposable Postgres (Compose)."
+          echo "Do not invent a CI database here; add a later fixture slice."
+
+      - name: Set image coordinates (digest after push)
+        id: coords
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          SHORT_SHA="$(echo "${IMAGE_SOURCE_SHA}" | cut -c1-12)"
+          # Mutable tags are build aids only — deployment MUST use @sha256 digest.
+          echo "image_tag=sha-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "image_ref_tag=${ECR_REPOSITORY_URI}:sha-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials via GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ inputs.aws_role_to_assume }}
+          aws-region: ${{ inputs.aws_region }}
+
+      - name: Login to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build api-gateway image (Dockerfile backend/api-gateway)
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          docker build \
+            --file backend/api-gateway/Dockerfile \
+            --tag "${{ steps.coords.outputs.image_ref_tag }}" \
+            --label "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
+            --label "org.opencontainers.image.revision=${IMAGE_SOURCE_SHA}" \
+            --label "org.opencontainers.image.title=depp-api-gateway" \
+            --label "depp.blacknoix.io/environment=staging" \
+            --label "depp.blacknoix.io/data-classification=synthetic-only" \
+            backend/api-gateway
+
+      - name: Trivy image scan (Critical/High with fix — fail closed)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.coords.outputs.image_ref_tag }}
+          format: json
+          output: trivy-image.json
+          exit-code: "0"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+          scanners: vuln
+
+      - name: Enforce scan policy (Critical always; High unless complete exception)
+        working-directory: ${{ github.workspace }}
+        env:
+          HIGH_EXC: ${{ inputs.high_vuln_exception_approved }}
+          HIGH_REASON: ${{ inputs.high_vuln_exception_reason }}
+          HIGH_EXPIRY: ${{ inputs.high_vuln_exception_expiry }}
+          HIGH_ACK: ${{ inputs.high_vuln_exception_founder_ack }}
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import json, os, sys
+          from datetime import datetime, timezone
+
+          path = "trivy-image.json"
+          with open(path, encoding="utf-8") as f:
+              report = json.load(f)
+
+          critical_fixed = []
+          high_fixed = []
+          for result in report.get("Results") or []:
+              for vuln in result.get("Vulnerabilities") or []:
+                  sev = (vuln.get("Severity") or "").upper()
+                  fixed = vuln.get("FixedVersion")
+                  if not fixed:
+                      continue
+                  item = f"{vuln.get('VulnerabilityID')} {vuln.get('PkgName')} fixed_in={fixed}"
+                  if sev == "CRITICAL":
+                      critical_fixed.append(item)
+                  elif sev == "HIGH":
+                      high_fixed.append(item)
+
+          if critical_fixed:
+              print("BLOCK: Critical vulnerabilities with available fix:")
+              print("\n".join(critical_fixed))
+              sys.exit(1)
+
+          if high_fixed:
+              if os.environ.get("HIGH_EXC") != "YES":
+                  print("BLOCK: High vulnerabilities with available fix (no complete exception):")
+                  print("\n".join(high_fixed))
+                  sys.exit(1)
+              reason = os.environ.get("HIGH_REASON") or ""
+              expiry = os.environ.get("HIGH_EXPIRY") or ""
+              ack = os.environ.get("HIGH_ACK") or ""
+              if not reason or ack != "FOUNDER_ACK_HIGH_EXCEPTION":
+                  print("BLOCK: High exception incomplete (reason/ack)")
+                  sys.exit(1)
+              try:
+                  exp = datetime.strptime(expiry, "%Y-%m-%d").date()
+              except ValueError:
+                  print("BLOCK: High exception expiry invalid")
+                  sys.exit(1)
+              if exp <= datetime.now(timezone.utc).date():
+                  print("BLOCK: High exception expiry not in the future")
+                  sys.exit(1)
+              with open("high-vuln-exception-record.txt", "w", encoding="utf-8") as out:
+                  out.write("high_vuln_exception=YES\n")
+                  out.write(f"reason={reason}\n")
+                  out.write(f"expiry_utc={expiry}\n")
+                  out.write(f"founder_ack={ack}\n")
+                  out.write(f"source_sha={os.environ.get('IMAGE_SOURCE_SHA','')}\n")
+                  out.write("findings:\n")
+                  out.write("\n".join(high_fixed) + "\n")
+              print("WARN: High findings allowed under time-bounded founder exception; record artifacted")
+          print("Scan policy gate passed")
+          PY
+
+      - name: Generate CycloneDX SBOM with Syft
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+          syft "${{ steps.coords.outputs.image_ref_tag }}" -o cyclonedx-json=sbom.cyclonedx.json
+
+      - name: Push image tags to ECR (digest captured next)
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          docker push "${{ steps.coords.outputs.image_ref_tag }}"
+
+      - name: Resolve immutable digest (deployment must use @sha256)
+        id: digest
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          DIGEST="$(docker inspect --format='{{index .RepoDigests 0}}' "${{ steps.coords.outputs.image_ref_tag }}" | awk -F@ '{print $2}')"
+          [[ "${DIGEST}" == sha256:* ]] || { echo "failed to resolve sha256 digest"; exit 1; }
+          echo "image_digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "image_ref_digest=${ECR_REPOSITORY_URI}@${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "Deploy ONLY: ${ECR_REPOSITORY_URI}@${DIGEST}"
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.7.0
+
+      - name: Cosign keyless sign (GitHub OIDC identity)
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          cosign sign --yes "${{ steps.digest.outputs.image_ref_digest }}"
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ inputs.ecr_repository_uri }}
+          subject-digest: ${{ steps.digest.outputs.image_digest }}
+          push-to-registry: true
+
+      - name: Write digest evidence summary (no secrets)
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          {
+            echo "source_sha=${IMAGE_SOURCE_SHA}"
+            echo "image_tag_ref=${{ steps.coords.outputs.image_ref_tag }}"
+            echo "image_digest_ref=${{ steps.digest.outputs.image_ref_digest }}"
+            echo "deploy_rule=repository@sha256-digest-only"
+            echo "gitops_note=REPLACE_WITH_ECR_IMAGE_AT_DIGEST in infra/gitops must become digest ref"
+          } > image-digest-evidence.txt
+
+      - name: Upload supply-chain artifacts (retain per GitHub plan; pilot target 180d)
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-image-supply-chain-${{ github.sha }}
+          path: |
+            trivy-image.json
+            sbom.cyclonedx.json
+            image-digest-evidence.txt
+            high-vuln-exception-record.txt
+          if-no-files-found: warn
+          retention-days: 180
+
+      # GitOps promotion PR is a SEPARATE later slice (separate repo / protected branch).
+      - name: GitOps promotion placeholder
+        run: |
+          echo "STOP: do not run cluster CLIs or GitOps sync from this workflow."
+          echo "Next slice: open a PR in the GitOps repo replacing REPLACE_WITH_ECR_IMAGE_AT_DIGEST"
+          echo "with ${{ steps.digest.outputs.image_ref_digest }}"

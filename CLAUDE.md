@@ -276,7 +276,10 @@ Run from `backend/api-gateway/`:
 - Start dev: `npm run dev` (tsx, no build step)
 - Typecheck: `npm run typecheck`
 - Build: `npm run build` (emits to dist/)
-- Dist smoke (local process only): `npm run smoke:dist` (requires prior build; not Docker/staging proof)
+- Dist smoke (local process only): `npm run smoke:dist` — builds, then boots
+  `dist/index.js` and asserts liveness plus three fail-closed startup cases
+  (short JWT secret, missing `AUTH_EXPLICIT_ROLES_MODE` under jwt, `dev-header`
+  in production). No Docker, no database, no network; not Docker/staging proof
 - Start built: `npm start`
 - Lint: not configured yet
 - Test: `npm test` (`node:test` + tsx; see `tests/`)
@@ -286,6 +289,57 @@ Run from `backend/api-gateway/`:
 - Enable local marker hook once: `git config core.hooksPath .githooks`
 
 No commands exist for infra/ yet.
+
+### Container image (api-gateway)
+
+`backend/api-gateway/Dockerfile` is a two-stage build: the build stage installs
+all dependencies, runs `tsc`, then `npm prune --omit=dev`; the runtime stage
+copies the pruned `node_modules` plus `dist/` and the manifest, and runs as the
+base image's unprivileged `node` user. The build context is the package
+directory, not the repository root.
+
+Build:
+
+```
+docker build -t depp-api-gateway:local -f backend/api-gateway/Dockerfile backend/api-gateway
+```
+
+Run (placeholders — supply real values from your own environment):
+
+```
+docker run --rm -p 3000:3000 \
+  -e PORT=3000 \
+  -e AUTH_MODE=jwt \
+  -e AUTH_EXPLICIT_ROLES_MODE=enforce \
+  -e JWT_ACCESS_SECRET='<at least 32 characters>' \
+  -e JWT_ISSUER='<issuer>' \
+  -e JWT_AUDIENCE='<audience>' \
+  -e DATABASE_URL='postgres://<app-role>:<password>@<host>:5432/<db>' \
+  depp-api-gateway:local
+```
+
+Facts that constrain what a running container means:
+
+- **The image sets `NODE_ENV=production`.** `AUTH_MODE=dev-header` is therefore
+  refused at startup (ADR-0002), so a container must be given a verified mode.
+  Overriding `NODE_ENV` to re-enable the development stand-in defeats the guard.
+- **The database must already be reachable, and migrations must already have
+  run.** The image cannot run them: `migrate:latest` executes through `tsx`, a
+  devDependency, which the pruned runtime tree does not contain. Migrations are
+  a separate step run as `depp_migrator` via `DATABASE_MIGRATION_URL`
+  (ADR-0013). The container receives the application-role `DATABASE_URL` only.
+- **The pool connects lazily**, so the gateway starts even when the database is
+  unreachable. A started container is not evidence of a working database.
+- **`GET /health` is liveness, not readiness.** It returns 200 while the process
+  serves, including when the database is down (`src/routes/health.ts`). No
+  readiness endpoint exists yet, and the image declares no `HEALTHCHECK` so that
+  liveness is not mistaken for readiness.
+- **Secrets are injected as environment variables** by whatever runs the
+  container. No `.env` is present in the image (`.dockerignore`), and none may
+  be committed.
+- **A successful container start is not staging acceptance evidence.** ADR-0013
+  defines a 13-item bundle for that; building and booting an image satisfies
+  none of it.
 
 Run from `frontend/`:
 - Install dependencies: `npm install`

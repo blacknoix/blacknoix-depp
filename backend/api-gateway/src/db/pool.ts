@@ -97,9 +97,11 @@ export function createDatabaseHealthCheck(pool: Pool | undefined): DatabaseHealt
     } catch (err) {
       const described = err instanceof Error ? err : new Error(String(err));
 
+      // Log a bounded failure signal only. Driver messages routinely include
+      // host, port, user, or auth detail — none of that belongs in stdout even
+      // when /ready itself stays redacted.
       logLifecycle("warn", "db_health_check_failed", {
         errorName: described.name,
-        errorMessage: described.message,
       });
 
       return { status: "down" };

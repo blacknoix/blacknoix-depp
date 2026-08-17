@@ -76,7 +76,9 @@ Treat this as the current priority order unless explicitly changed.
 ## backend/api-gateway
 Implemented:
 - Middleware: request ID, structured JSON request logging, tenant context, 404 handler, centralized error handler
-- Routes: `GET /`, `GET /health`, `GET /v1/tenants/me`, `GET /v1/agents` (operator inventory), `POST /v1/agents` (enroll), `POST /v1/agents/:id/credentials/revoke`, `POST /v1/auth/agent/token`, `POST /v1/telemetry/events`, `POST /v1/telemetry/events/batch`, `GET /v1/telemetry/events`, `GET /v1/findings`, `GET /v1/findings/dashboard`, `GET /v1/findings/attention`, `POST /v1/findings/attention/dismiss`, `POST /v1/findings/evaluate-silence`, `PATCH /v1/findings/:id`, `GET|POST /v1/findings/suppressions`, `DELETE /v1/findings/suppressions/:id`, `GET|POST|DELETE /v1/findings/views`, `GET|POST|DELETE /v1/work/views`, `PUT|DELETE /v1/work/default`
+- Routes: `GET /`, `GET /health` (liveness), `GET /ready` (readiness: 200 when
+  the database probe is `up`; 503 on `down` / `not_configured`; no debounce),
+  `GET /v1/tenants/me`, `GET /v1/agents` (operator inventory), `POST /v1/agents` (enroll), `POST /v1/agents/:id/credentials/revoke`, `POST /v1/auth/agent/token`, `POST /v1/telemetry/events`, `POST /v1/telemetry/events/batch`, `GET /v1/telemetry/events`, `GET /v1/findings`, `GET /v1/findings/dashboard`, `GET /v1/findings/attention`, `POST /v1/findings/attention/dismiss`, `POST /v1/findings/evaluate-silence`, `PATCH /v1/findings/:id`, `GET|POST /v1/findings/suppressions`, `DELETE /v1/findings/suppressions/:id`, `GET|POST|DELETE /v1/findings/views`, `GET|POST|DELETE /v1/work/views`, `PUT|DELETE /v1/work/default`
 - Error envelope: `{ ok: false, error: { code, message }, requestId }`
 - Success envelope on /v1: `{ ok: true, data, requestId }`
 - Tests: `node:test` integration suite against `createApp()` (`npm test`)
@@ -330,10 +332,16 @@ Facts that constrain what a running container means:
   (ADR-0013). The container receives the application-role `DATABASE_URL` only.
 - **The pool connects lazily**, so the gateway starts even when the database is
   unreachable. A started container is not evidence of a working database.
-- **`GET /health` is liveness, not readiness.** It returns 200 while the process
-  serves, including when the database is down (`src/routes/health.ts`). No
-  readiness endpoint exists yet, and the image declares no `HEALTHCHECK` so that
-  liveness is not mistaken for readiness.
+- **`GET /health` is liveness; `GET /ready` is readiness.** `/health` returns 200
+  while the process serves, including when the database is down
+  (`src/routes/health.ts`). `/ready` (`src/routes/ready.ts`) reads the same probe
+  and answers 200 only when the database reports `up`, 503 on `down` or
+  `not_configured`. It carries no debounce: a single failed probe is unready
+  immediately, and transient-fault tolerance belongs in the deployment's probe
+  `failureThreshold`/period, not in application code. The image still declares
+  no `HEALTHCHECK`, because a Docker healthcheck governs container restart —
+  a liveness concern — and pointing it at `/ready` would restart instances over
+  a database fault.
 - **Secrets are injected as environment variables** by whatever runs the
   container. No `.env` is present in the image (`.dockerignore`), and none may
   be committed.

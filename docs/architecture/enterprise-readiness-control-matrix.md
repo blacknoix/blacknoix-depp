@@ -35,7 +35,7 @@
 | Local Postgres fixture | `infra/docker-compose.yml` + `infra/postgres/init/` (`depp_app` / `depp_migrator` local-dev roles) |
 | Kubernetes / Helm / GitOps / image scan / SBOM | **Not present** in-repo (no charts, no scan workflow). CI (`.github/workflows/api-gateway.yml`) runs typecheck + `test:unit` only |
 | Windows agent runtime / installer | **Not present** (docs mention future agent; no agent binary package in this repository) |
-| Backup/restore recovery drill | **Not present** (ADR-0004 defers; Backup control remains Unverified) |
+| Backup/restore recovery drill | **Local only:** `npm run recovery:local-postgres` (`scripts/local-postgres-recovery-drill.cjs`); runbook `docs/runbooks/local-postgres-recovery-drill.md`; outside-repo report under `~/Downloads/depp-local-recovery-drill/recovery-drill-*` (source SHA recorded in report; not staging/RPO/RTO) |
 
 ---
 
@@ -48,8 +48,8 @@ States are exactly one of: **Done**, **In progress**, **Blocked**, **Not started
 
 | Area | State | Linked evidence | Next measurable gate | Blocking dependency | Owner |
 |---|---|---|---|---|---|
-| Tenant isolation + RBAC | In progress | RLS + dbtests; ADR-0010/0011; RBAC unit suites; local JWT/`enforce` @ `2ba2bc1` (local only); **local vertical-slice** `tests/db/tenant-isolation-immutable-audit.dbtest.ts` (criteria 1–3 via HTTP+RLS; disposable Postgres only) | Keep Day-30 local gate green; next is criterion-7 recovery drill (separate), then staging IdP+enforce | Staging IdP + enforce evidence not started | BLACKNOIX founder |
-| Audit logging | In progress | `alert_audit_events` append-only grants + `alerts-auth-failure.dbtest.ts` cases 4–5; alerts HTTP RBAC; **local vertical-slice** `tenant-isolation-immutable-audit.dbtest.ts` (c4 tenant-bound `alert_created`; c5 `depp_app` UPDATE/DELETE deny) | Schedule criterion-7 recovery drill; SIEM/export deferred | No general credential-lifecycle audit HTTP on this tip; SIEM/export deferred | BLACKNOIX founder |
+| Tenant isolation + RBAC | In progress | RLS + dbtests; ADR-0010/0011; RBAC unit suites; local JWT/`enforce` @ `2ba2bc1` (local only); **local vertical-slice** `tests/db/tenant-isolation-immutable-audit.dbtest.ts` (criteria 1–3 via HTTP+RLS; disposable Postgres only); **local recovery drill** post-restore re-proof via `npm run recovery:local-postgres` | Keep Day-30 local gates green; staging IdP+enforce next | Staging IdP + enforce evidence not started | BLACKNOIX founder |
+| Audit logging | In progress | `alert_audit_events` append-only grants + `alerts-auth-failure.dbtest.ts` cases 4–5; alerts HTTP RBAC; **local vertical-slice** `tenant-isolation-immutable-audit.dbtest.ts` (c4/c5); **local recovery drill** proves restored audit tenant-binding + `depp_app` UPDATE/DELETE deny | Staging append-only observation; SIEM/export deferred | No general credential-lifecycle audit HTTP on this tip; SIEM/export deferred | BLACKNOIX founder |
 | Telemetry ingestion | In progress | Telemetry routes/services; unit + `telemetry.dbtest.ts`; auth_failure → alert path; **local vertical-slice** `tenant-isolation-immutable-audit.dbtest.ts` (c6 agent `auth_failure` burst → Tenant-A-only `GET /v1/alerts`) | Keep agent-authenticated ingest as the only write path into the alert spine; staging ingest reachability next | Deployed control-plane ingest reachability (external) | BLACKNOIX founder |
 | Kubernetes/GitOps | Not started | No Helm/GitOps manifests; `infra/` is local Compose only | Introduce GitOps/Helm skeletons only after packaging + vertical-slice local gates pass | Platform cluster, scan/provenance, secret injection (external) | BLACKNOIX founder (repo); Platform (cluster) |
 | Windows agent | Not started | No Windows agent package in-repo; threat-event docs reference a future agent | Do not start agent features until tenant-isolation + immutable-audit vertical slice gates secure onboarding | Product/agent runtime scope deferred | BLACKNOIX founder |
@@ -89,7 +89,7 @@ States are exactly one of: **Done**, **In progress**, **Blocked**, **Not started
 | Endpoint/agent telemetry ingestion | Unauthenticated or cross-tenant ingest | Agent-authenticated ingest; tenant+agent from principal | Agent ingest succeeds; human denied on agent-only ingest; cross-tenant query isolation | [docs/telemetry.md](../telemetry.md); `src/telemetry/`; `src/routes/telemetry.ts` | Unit + `tests/db/telemetry.dbtest.ts`; alerts path ties auth_failure ingest → tenant alert | Local only | BLACKNOIX founder | Deployed CP ingest / chart cutover external | TBD | In progress |
 | Detection/correlation and tenant-scoped finding/alert visibility | Missed detection; cross-tenant leakage | Findings/alerts remain tenant-scoped | Cross-tenant list/detail empty/non-oracular | [ADR-0005](adr/0005-correlation-bridge-provenance-and-finality.md); alerts + findings routes | Local dbtests/route tests; alerts isolation case 2 | Local only | BLACKNOIX founder | Staging proof TBD | TBD | In progress |
 | Secrets management and rotation | Long-lived leaked secrets | Hashed agent credentials; no secrets in logs/artifacts | Exchange/ingest reject unusable credentials; probe failure logs omit driver/connection secrets | [docs/agents.md](../agents.md); `src/agents/`; readiness logger hardening in `src/db/pool.ts` (`bf88acc`) | Local tests; container/dbtest non-leak assertions. No KMS/vault evidence | Local/dev | BLACKNOIX founder | Enterprise secret store deferred | TBD | In progress |
-| Backup and restore | Unrecoverable tenant data loss | Documented, tested backup/restore with tenant + audit integrity | Restore drill restores isolation and append-only audit invariants | ADR-0004 defers backup/restore/retention | TBD — no restore runbook/drill in-repo | TBD | BLACKNOIX founder | No accepted restore drill | TBD | Unverified |
+| Backup and restore | Unrecoverable tenant data loss | Documented, tested backup/restore with tenant + audit integrity | Restore drill restores isolation and append-only audit invariants | ADR-0004 defers enterprise backup/retention; **local** drill: `scripts/local-postgres-recovery-drill.cjs` + [local-postgres-recovery-drill](../runbooks/local-postgres-recovery-drill.md) | Local report dir `~/Downloads/depp-local-recovery-drill/recovery-drill-*` (command `npm run recovery:local-postgres`; pre-tip SHA `fbc43fb`; disposable Compose only) | Local only — **not** staging/production/RPO/RTO | BLACKNOIX founder | Staging/managed backup + production restore program absent | TBD | In progress |
 | Kubernetes/platform hardening | Cluster compromise; unscanned images | Hardened deploy path; provenance; gated cutover | Platform scan/provenance; chart cutover only after gates | Local Compose only; no Helm/GitOps/scan config in-repo; ADR-0013 packaging baseline (historical) | TBD | Blocked / external | Platform (external); BLACKNOIX founder (app manifests when unblocked) | Cluster, scan, provenance, Legal where required | TBD | Blocked |
 | Observability, SLOs, and incident response | Undetected outages | Health/ready, logs, SLOs, IR | `/health` liveness; `/ready` reflects DB probe without hysteresis | `src/routes/health.ts`, `src/routes/ready.ts`, `createDatabaseHealthCheck` | Unit `tests/ready.test.ts`; live `tests/db/readiness.dbtest.ts` @ `bf88acc`. No SLO/IR bundle | Local only | BLACKNOIX founder | Deployed probe thresholds / SLO stack not started | TBD | Unverified |
 | Evidence-bundle integrity and provenance | Misleading Complete claims | Bundles declare claim class/SHA/scope; safe runners | ADR-0012 accepted; five-path validation | Planned ADR-0012 **not present** | Local JWT bundle @ `2ba2bc1` (pre-ADR-0012). Container artifacts outside git, SHA-pinned in this matrix | Local only | BLACKNOIX founder | ADR-0012 uncommitted | TBD | In progress |
@@ -106,9 +106,9 @@ Secure customer onboarding is gated by a single vertical proof:
 
 **authenticated principal → tenant-scoped telemetry → tenant-bound alert → append-only audit → fail-closed cross-tenant/RBAC denial**
 
-Local building blocks already exist (`alerts-auth-failure.dbtest.ts`, alerts RBAC unit tests, RLS helpers). **Local implementation evidence (criteria 1–6 only):** `backend/api-gateway/tests/db/tenant-isolation-immutable-audit.dbtest.ts` via `npm run test:db` against disposable Compose Postgres. Status remains **In progress**—not staging/platform/Done. Criterion 7 (recovery drill) remains explicitly out of scope for that suite.
+Local building blocks already exist (`alerts-auth-failure.dbtest.ts`, alerts RBAC unit tests, RLS helpers). **Local implementation evidence (criteria 1–6):** `backend/api-gateway/tests/db/tenant-isolation-immutable-audit.dbtest.ts` via `npm run test:db`. **Local criterion-7 recovery drill:** `npm run recovery:local-postgres` ([runbook](../runbooks/local-postgres-recovery-drill.md)); outside-repo report under `~/Downloads/depp-local-recovery-drill/`. Status remains **In progress**—not staging/platform/Done.
 
-### Acceptance criteria (1–6 gated locally; 7 deferred)
+### Acceptance criteria (1–6 gated locally; 7 local recovery drill landed; staging deferred)
 
 | # | Criterion | Planned test layer |
 |---|---|---|
@@ -118,13 +118,13 @@ Local building blocks already exist (`alerts-auth-failure.dbtest.ts`, alerts RBA
 | 4 | Authorized mutations that create security-relevant state also create tenant-bound audit events (`alert_audit_events` for alert creation on this tip) | **Database integration** (same-TX durable-before-success already partially proven—keep as required gate) |
 | 5 | Application runtime role (`depp_app`) cannot `UPDATE` or `DELETE` immutable audit events | **Database integration** (privilege negative already present—retain as required gate) |
 | 6 | A registered agent’s authenticated telemetry event appears only in its tenant’s alert/dashboard path | **Database integration** + **API integration** for `GET /v1/alerts` tenant scoping |
-| 7 | A documented recovery test restores the vertical slice without violating tenant isolation or audit integrity | **Manual recovery drill** (procedure + recorded results) until automation exists; not claimed Done until executed and linked |
+| 7 | A documented recovery test restores the vertical slice without violating tenant isolation or audit integrity | **Local drill landed:** `npm run recovery:local-postgres` + runbook; still **not** staging/production recovery evidence |
 
-### Ordered execution sequence (post local 1–6 gate)
+### Ordered execution sequence (post local 1–7 local gates)
 
-1. **Landed (local only):** `tests/db/tenant-isolation-immutable-audit.dbtest.ts` fails the build unless criteria 1–6 pass against disposable Compose Postgres (`npm run test:db`). Reuses `tests/db/helpers.ts`, real telemetry+alerts services, JWT strategy; no committed secrets.
-2. Record source SHA in the Day-30 evidence cells when this commit lands (this citation).
-3. Next: schedule the **manual recovery drill** (criterion 7) as a separate commit/evidence note—do not claim Done for the slice until then.
+1. **Landed (local only):** `tests/db/tenant-isolation-immutable-audit.dbtest.ts` fails the build unless criteria 1–6 pass against disposable Compose Postgres (`npm run test:db`).
+2. **Landed (local only):** `npm run recovery:local-postgres` backup/restore drill with post-restore c1–c6 verification ([runbook](../runbooks/local-postgres-recovery-drill.md)).
+3. Record source SHA / outside-repo report path in Day-30 + Backup evidence cells (this citation). Do **not** mark enterprise Backup/restore **Done**.
 4. **Defer:** Windows agent work, UI polish, Helm/GitOps scaffolding, Dockerfile/verifier changes, ADR-0012/0013 edits, and staging IdP packs until founder schedules those gates.
 
 ### External / deployment prerequisites (later gates — not claims of this planning commit)

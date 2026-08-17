@@ -17,7 +17,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
     "check:merge-markers": "node ../../scripts/check-merge-markers.cjs",
-    "verify:fresh-migrate": "node ../../scripts/verify-fresh-migrate.cjs"
+    "verify:fresh-migrate": "node ../../scripts/verify-fresh-migrate.cjs",
+    "recovery:local-postgres": "node ../../scripts/local-postgres-recovery-drill.cjs"
   },
   "keywords": [],
   "author": "",

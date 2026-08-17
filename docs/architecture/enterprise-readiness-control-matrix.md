@@ -3,57 +3,175 @@
 ## Status
 
 - Draft / evidence-baseline
-- Date: 2026-08-14
-- Rule: no deliverable is Complete without a direct evidence link.
+- Date: 2026-08-17
+- Tip reconciled against: `9a3ecf086375110f6ca3d48ccb322d1b74f0fed5` (`feat/container-baseline-recreate`)
+- Rule: no deliverable is **Done** / Complete for staging or production without a direct evidence link whose scope matches the claim.
+- Owner for all matrix areas below unless an external dependency is named: **BLACKNOIX founder**
 
 ## Evidence Rules
 
 - Evidence must link to a commit/PR, ADR, accepted test report, deployment proof, or accepted evidence bundle.
 - Local verification must never be presented as staging or production verification.
 - Evidence scopes must be explicit (for example: local controlled-issuer, local RLS/dbtest, staging IdP, production).
-- Unproven items must use **Unverified**, **In progress**, or **Blocked**—not **Complete**.
-- Scope note (not a Complete claim): `local-jwt-enforce-20260813-193009` is immutable **local** controlled-issuer JWT/`enforce` evidence for commit `2ba2bc11dac03b7b8fc0ad346f71eb3c5b49aa6c`, produced under the pre-ADR-0012 runner. It is not staging, production, IdP, or container evidence (`claimClass`: local JWT/enforce verification; `issuerClass`: controlled test issuer (non-IdP evidence); `stagingEvidence`/`idpEvidence`/`productionAuthorized`: false per that bundle’s summary).
-- ADR-0012 remains reserved/uncommitted for runner-integrity changes and five-path validation; do not treat it as accepted in this matrix until that lineage lands.
-- ADR-0013 defines the staging deployment **baseline intent** and container packaging boundaries; it does not by itself prove Docker, staging, scan, SBOM, readiness, Kubernetes, or IdP outcomes.
-- External-IdP validation is a separate future evidence lineage.
-- Local RLS/dbtest verification must not be represented as staging or production proof.
+- Unproven items must use **Unverified**, **In progress**, **Blocked**, or **Not started**—not staging/production **Done**.
+- Scope note (immutable, out of scope for this planning commit): `local-jwt-enforce-20260813-193009` is **local** controlled-issuer JWT/`enforce` evidence for commit `2ba2bc11dac03b7b8fc0ad346f71eb3c5b49aa6c` under the pre-ADR-0012 runner. It is not staging, production, IdP, or container evidence.
+- ADR-0012 remains reserved/uncommitted for runner-integrity / five-path validation and must not be created or altered here.
+- ADR-0013 is a **historical** staging-deployment-baseline decision record. It must not be rewritten; implementation status lives in this matrix and `CLAUDE.md`.
+- Persistence on this tip is **Kysely + SQL migrations** (not Prisma). Alert spine tables are created in `backend/api-gateway/src/db/migrations/017_alerts_and_alert_audit.ts`.
+- Local RLS/dbtest and local container verification must not be represented as staging or production proof.
 
-## Control Matrix
+## Repository facts reconciled (2026-08-17)
+
+| Fact | Evidence on tip |
+|---|---|
+| Multi-tenant RLS + `withTenantTransaction` | ADR-0001/0004; `src/db/`; many `tests/db/*.dbtest.ts` |
+| Explicit human roles `operator`/`auditor` + `AUTH_EXPLICIT_ROLES_MODE` | ADR-0010/0011; `src/auth/`; unit RBAC suites; local JWT/`enforce` bundle @ `2ba2bc1` |
+| Telemetry ingest + tenant isolation | `src/telemetry/`; `tests/telemetry/`; `tests/db/telemetry.dbtest.ts` |
+| Auth-failure burst → tenant alerts + append-only `alert_audit_events` | Commits `2570aac` / `35866cc`; migration `017_alerts_and_alert_audit.ts`; `tests/db/alerts-auth-failure.dbtest.ts`; `tests/alerts/route-rbac.test.ts` |
+| App role cannot `UPDATE`/`DELETE` `alert_audit_events` | Granted `SELECT, INSERT` only in migration 017; asserted in `alerts-auth-failure.dbtest.ts` case 5 |
+| Credential-lifecycle HTTP audit API (`/v1/audit/logs`) | **Absent** on this tip (`src/audit/` / `routes/audit.ts` not present) |
+| `/health` liveness + `/ready` readiness | `e046202`; unit `tests/ready.test.ts`; live `SELECT 1` dbtest `bf88acc` (`tests/db/readiness.dbtest.ts`) |
+| Local container baseline | Outside-repo artifact `container-verification-20260817-081502.json` bound to `bf88acc` (cited by `9a3ecf0`); proves build, `Config.User=node`, `/health` liveness under `not_configured`, SIGTERM — **not** staging, **not** live-DB-in-container |
+| Local Postgres fixture | `infra/docker-compose.yml` + `infra/postgres/init/` (`depp_app` / `depp_migrator` local-dev roles) |
+| Kubernetes / Helm / GitOps / image scan / SBOM | **Not present** in-repo (no charts, no scan workflow). CI (`.github/workflows/api-gateway.yml`) runs typecheck + `test:unit` only |
+| Windows agent runtime / installer | **Not present** (docs mention future agent; no agent binary package in this repository) |
+| Backup/restore recovery drill | **Not present** (ADR-0004 defers; Backup control remains Unverified) |
+
+---
+
+## 30 / 60 / 90-day enterprise-readiness status
+
+States are exactly one of: **Done**, **In progress**, **Blocked**, **Not started**.
+**Done** here means “done for the named local/implementation gate with linked evidence,” never “enterprise-complete” or “staging-complete,” unless a staging/production evidence link is present (none are, on this tip).
+
+### Day-30 horizon (secure local vertical-slice foundation)
+
+| Area | State | Linked evidence | Next measurable gate | Blocking dependency | Owner |
+|---|---|---|---|---|---|
+| Tenant isolation + RBAC | In progress | RLS + dbtests; ADR-0010/0011; RBAC unit suites; local JWT/`enforce` @ `2ba2bc1` (local only) | Land the next critical-path API/dbtest vertical suite that fails closed on cross-tenant and role-denied paths as a single gated checklist (see section below) | Staging IdP + enforce evidence not started | BLACKNOIX founder |
+| Audit logging | In progress | `alert_audit_events` append-only grants + `alerts-auth-failure.dbtest.ts` cases 4–5; alerts HTTP RBAC unit test | Extend vertical-slice validation so denied RBAC/cross-tenant attempts are recorded safely (or explicitly proven non-oracular without secret leakage) and authorized alert creation remains tenant-bound | No general credential-lifecycle audit HTTP on this tip; SIEM/export deferred | BLACKNOIX founder |
+| Telemetry ingestion | In progress | Telemetry routes/services; unit + `telemetry.dbtest.ts`; auth_failure → alert path in alerts dbtest | Keep agent-authenticated ingest as the only write path into the alert spine for the vertical slice; add checklist assertion that agent telemetry appears only in its tenant alert list | Deployed control-plane ingest reachability (external) | BLACKNOIX founder |
+| Kubernetes/GitOps | Not started | No Helm/GitOps manifests; `infra/` is local Compose only | Introduce GitOps/Helm skeletons only after packaging + vertical-slice local gates pass | Platform cluster, scan/provenance, secret injection (external) | BLACKNOIX founder (repo); Platform (cluster) |
+| Windows agent | Not started | No Windows agent package in-repo; threat-event docs reference a future agent | Do not start agent features until tenant-isolation + immutable-audit vertical slice gates secure onboarding | Product/agent runtime scope deferred | BLACKNOIX founder |
+| Readiness and packaging | In progress | `/ready` `e046202`; live Postgres readiness `bf88acc`; container artifact `container-verification-20260817-081502.json` @ `bf88acc` cited by `9a3ecf0`; `smoke:dist`; ADR-0013 (historical) | Treat local readiness+packaging as closed for **local** evidence only; next packaging gates are scan/provenance and deployment-level readiness probe config | Non-local DB roles, secret injection, registry/scan, K8s probe wiring | BLACKNOIX founder |
+
+### Day-60 horizon (staging-shaped control-plane proof)
+
+| Area | State | Linked evidence | Next measurable gate | Blocking dependency | Owner |
+|---|---|---|---|---|---|
+| Tenant isolation + RBAC | Not started | Staging enforce+alert runbook exists (`docs/runbooks/staging-enforce-alert-evidence.md`) but **no filled staging evidence pack** in-repo | Execute staging JWT+`enforce` principal×route matrix with real issuer roles | External IdP owner; staging deploy | BLACKNOIX founder + Identity (external) |
+| Audit logging | Not started | Local alert-audit only | Staging observation that alert_audit remains append-only under app role and tenant-scoped | Staging DB + app-role provisioning | BLACKNOIX founder + DB/Platform (external) |
+| Telemetry ingestion | Not started | Local only | Staging agent JWT ingest → tenant-visible alert | Reachable staging control plane | BLACKNOIX founder + Platform (external) |
+| Kubernetes/GitOps | Blocked | No charts/workflows for deploy | First GitOps path that deploys api-gateway with injected secrets and documented probe wiring | Cluster, registry, scan/provenance | Platform (external); BLACKNOIX founder (manifests when unblocked) |
+| Windows agent | Not started | — | Still deferred past onboarding vertical slice | Day-30 vertical slice + product decision | BLACKNOIX founder |
+| Readiness and packaging | Blocked | Local container/dbtest only | Staging deployment uses `/ready` as readiness probe (not `/health`) with non-local secrets/roles | Secret injection; non-local roles; scanned image | Platform + BLACKNOIX founder |
+
+### Day-90 horizon (enterprise sales gates)
+
+| Area | State | Linked evidence | Next measurable gate | Blocking dependency | Owner |
+|---|---|---|---|---|---|
+| Tenant isolation + RBAC | Not started | — | Production-shaped IdP federation evidence lineage (separate from local JWT bundle) | IdP, production auth cutover (ADR-0003 residual) | BLACKNOIX founder + Identity |
+| Audit logging | Not started | — | Retention/SIEM export and production audit integrity evidence | ADR-level retention work not on tip; SIEM sink | BLACKNOIX founder |
+| Telemetry ingestion | Not started | — | Load/availability and deployed heartbeat cutover evidence | Platform image scan/provenance; Legal/privacy where required | Platform / Legal (external) |
+| Kubernetes/GitOps | Blocked | — | Hardened deploy with provenance, network policy, and documented IR hooks | Platform hardening program | Platform (external) |
+| Windows agent | Not started | — | Agent enrollment/identity against staging control plane | Agent product + staging CP | BLACKNOIX founder |
+| Readiness and packaging | Blocked | — | Production readiness gating + restore drill of the vertical slice | Backup/restore program; production env | BLACKNOIX founder + Platform |
+
+---
+
+## Control Matrix (detailed)
 
 | Control | Risk | Required outcome | Acceptance test | Implementation/code link | Evidence link | Environment proof | Owner | Blocker/dependency | Target date | Status |
 |---|---|---|---|---|---|---|---|---|---|---|
-| Tenant isolation | Cross-tenant data disclosure | Every tenant-owned read/write is scoped by `tenant_id` and enforced by Postgres RLS via `app.current_tenant` / `withTenantTransaction` | Tenant A cannot read or mutate tenant B rows for tenant-owned tables; unknown/cross-tenant paths are non-oracular | [ADR-0001](adr/0001-tenancy-and-data-model.md); [ADR-0004](adr/0004-persistence-and-data-access.md); `backend/api-gateway/src/db/` migrations + `withTenantTransaction` | Local dbtests under `backend/api-gateway/tests/db/` (suite requires real Postgres; see ADR-0004). Local JWT/enforce bundle cross-tenant negatives: outside-git evidence dir `depp-local-jwt-enforce-evidence/local-jwt-enforce-20260813-193009` for SHA `2ba2bc11dac03b7b8fc0ad346f71eb3c5b49aa6c` (local scope only) | Local only (dbtest / controlled local run). Staging/production: TBD | TBD | Staging/production RLS proof not linked here | TBD | In progress |
-| Authentication and authorization | Unverified principals; privilege escalation; fail-open roles | Verified auth strategy; allow-listed human roles; `AUTH_MODE=jwt` requires explicit `AUTH_EXPLICIT_ROLES_MODE`; agent vs human route guards | Role-less human denied on protected human routes under `enforce`; invalid/unset explicit-roles mode aborts startup under JWT; agents cannot use human-only surfaces | [ADR-0002](adr/0002-authentication-seam.md); [ADR-0003](adr/0003-production-authentication.md); [ADR-0010](adr/0010-auditor-audit-read-rbac.md); [ADR-0011](adr/0011-explicit-roles-migration.md); [explicit-roles-enforce-rollout](../runbooks/explicit-roles-enforce-rollout.md); `backend/api-gateway/src/auth/` | Local controlled-issuer JWT/`enforce` PASS summary: `local-jwt-enforce-20260813-193009` @ `2ba2bc11dac03b7b8fc0ad346f71eb3c5b49aa6c` (local / non-IdP only). Unit/db auth tests under `backend/api-gateway/tests/` | Local only. Staging JWT+enforce with real issuer: TBD. Production: TBD | TBD | IdP federation and staging enforce evidence lineages incomplete; ADR-0012 runner integrity not committed | TBD | In progress |
-| Audit logging and auditability | Undetectable security-relevant abuse; mutable audit history | Durable security-relevant audit where product ADRs require it; least-privilege audit read | Alert/audit append-only behavior where implemented; auditor/operator read per ADR-0010 where those surfaces exist | [ADR-0010](adr/0010-auditor-audit-read-rbac.md); alert spine docs in [docs/alerts.md](../alerts.md); staging enforce+alert evidence runbook [staging-enforce-alert-evidence](../runbooks/staging-enforce-alert-evidence.md) | Local/dbtest and local JWT/enforce rows are local-only. No staging/production audit evidence linked here | Local/dev scope only until linked | TBD | Broader credential-lifecycle audit ADRs / HTTP audit APIs not present on this baseline tip; retention purge / SIEM export deferred | TBD | In progress |
-| Endpoint/agent telemetry ingestion | Unauthenticated or cross-tenant ingest; silent agent loss | Agent-authenticated ingest (`POST /v1/telemetry/events` / batch); tenant+agent from principal | Agent JWT ingest succeeds; human denied on agent-only ingest; cross-tenant query isolation | [docs/telemetry.md](../telemetry.md); `backend/api-gateway/src/telemetry/`; `backend/api-gateway/src/routes/telemetry.ts` | Local unit/dbtest paths under `backend/api-gateway/tests/`. Deployment/chart cutover evidence: TBD / external where applicable | Local proof only unless a scoped deployment evidence link is added | TBD | Helm/chart cutover and platform scan/provenance remain external blockers where applicable | TBD | In progress |
-| Detection/correlation and tenant-scoped finding visibility | Missed detection; cross-tenant finding/alert leakage | Deterministic correlation/findings (and alerts where present) remain tenant-scoped; operators can read; agents limited per RBAC | Findings/alerts listed only within tenant; cross-tenant negative; rule evaluation does not fail ingest | [ADR-0005](adr/0005-correlation-bridge-provenance-and-finality.md); [docs/alerts.md](../alerts.md); findings/alerts routes under `backend/api-gateway/src/` | Local dbtests / route tests under `backend/api-gateway/tests/` (link specific accepted reports TBD). Local JWT/enforce alert-matrix rows in `local-jwt-enforce-20260813-193009` are local-only | Local only. Staging/production detection evidence: TBD | TBD | Full rule DSL / case management deferred; staging proof TBD | TBD | In progress |
-| Secrets management and rotation | Long-lived leaked agent/human secrets | Agent credentials hashed at rest; revoke/expiry controls where implemented; no secrets in logs/artifacts | Exchange/ingest reject revoked or unusable credentials where implemented; secrets never logged | [docs/agents.md](../agents.md); `backend/api-gateway/src/agents/` | ADR-0003 notes deferred encryption-at-rest / key management. Automated accepted reports TBD. No KMS/vault enterprise secret-store evidence linked | Local/dev. Production secret store: TBD | TBD | Enterprise secret-store and automatic rotation deferred | TBD | In progress |
-| Backup and restore | Unrecoverable tenant data loss | Documented, tested backup/restore of Postgres (and dependent stores) with tenant integrity | Restore drill restores tenant isolation and critical tables; RPO/RTO recorded | ADR-0004 explicitly defers backup/restore/retention policy | TBD | TBD | TBD | No backup/restore runbook or accepted restore drill linked in-repo | TBD | Unverified |
-| Kubernetes/platform hardening | Cluster compromise; unscanned images; unsafe cutover | Hardened deploy path; image provenance; no cutover without platform gates | Platform scan/provenance evidence for images; chart cutover only after gates | `infra/` (empty / not started per `CLAUDE.md`); [ADR-0013](adr/0013-staging-deployment-baseline.md) (packaging baseline only—not platform proof) | TBD for platform scan bundles. Source Dockerfile packaging is not scan/provenance evidence | Deployment environment: Blocked / external | Platform (external) | Image scan/provenance; reachable control-plane where required; Legal/privacy where required (external) | TBD | Blocked |
-| Observability, SLOs, and incident response | Undetected outages; slow incident response | Service health, structured logs, defined SLOs, IR runbooks | On-call can detect ingest/API failure; IR steps exercised | Request logging, `GET /health` (liveness) and `GET /ready` (readiness: 200 on probe `up`, 503 on `down`/`not_configured`, no application-side debounce) in api-gateway — `src/routes/health.ts`, `src/routes/ready.ts`; probe seam `createDatabaseHealthCheck` (`select 1`) in `src/db/pool.ts`; [explicit-roles-enforce-rollout](../runbooks/explicit-roles-enforce-rollout.md) mentions rollback as incident mitigation | Unit mapping: `tests/ready.test.ts` (stubbed probe). **Local-only implementation evidence:** `tests/db/readiness.dbtest.ts` under `npm run test:db` against disposable `infra/docker-compose.yml` Postgres with app-role `DATABASE_URL` — proves real `SELECT 1` → `/ready` 200, unreachable DB → `/ready` 503 + `/health` 200, and non-leaking response/logs. **Not staging/platform traffic gating.** No SLO doc, IR evidence bundle, metrics, or tracing linked | Local unit + local `test:db` only | TBD | Probe-threshold policy is a deployment concern and is not configured anywhere yet; enterprise observability stack not started; no Complete without deployed evidence | TBD | Unverified |
-| Evidence-bundle integrity and provenance | Misleading Complete claims; argv/token leakage in runners | Evidence bundles declare claim class, SHA, scope; runners do not expose secrets/tokens via process argv; ADR-0012 integrity path accepted | Bundle meta matches recorded SHA; preflight bans unsafe HTTP CLI token patterns; five-path validation complete | Planned ADR-0012: reserved / not accepted in this tree. Pre-ADR-0012 local runner lineage referenced by evidence meta (outside-git evidence) | `local-jwt-enforce-20260813-193009` @ `2ba2bc11dac03b7b8fc0ad346f71eb3c5b49aa6c` (local controlled-issuer only; immutable per operator constraint). ADR-0012 + five-path: TBD | Local evidence only. Staging/production provenance: TBD | TBD | ADR-0012 uncommitted; runner-integrity and five-path validation incomplete | TBD | In progress |
-| External-IdP validation | Trusting controlled-issuer or header auth as customer IdP proof | Per-tenant OIDC federation; DEPP tokens from verified IdP login; roles from IdP claims | Real IdP login → DEPP access token → protected routes under `enforce` in staging (separate evidence lineage) | [ADR-0003](adr/0003-production-authentication.md) (decision; production mechanism not fully implemented per ADR/auth docs/`CLAUDE.md`) | TBD (explicitly separate future evidence lineage; local controlled-issuer bundles are non-IdP) | Staging IdP: TBD. Production IdP: TBD | TBD | IdP owner readiness; staging environment; must not reuse local JWT/enforce bundles as IdP proof | TBD | Unverified |
-| Staging deployment baseline (packaging) | Shipping unpackaged process; conflating source packaging with deploy proof | Documented staging baseline + api-gateway production container **source** packaging under ADR-0013 constraints | ADR-0013 accepted/proposed with honest non-claims; Dockerfile + dist smoke exist as source; separate local Docker verifier evidence only when produced against a clean committed tree | [ADR-0013](adr/0013-staging-deployment-baseline.md); `backend/api-gateway/Dockerfile`; `npm run smoke:dist` (build + liveness + three fail-closed startup cases); `GET /ready` + live `test:db` readiness evidence tracked separately under Observability | **Current local container verification artifact `container-verification-20260817-081502.json`, 11/11 PASS, for commit `bf88acc7275f8d951a99548b26d340772a27fb6e`** — image built, `Config.User=node`, `/health` `ok:true` + `database.status=not_configured`, `docker stop` elapsed below timeout, `shutdown_started`+`shutdown_complete` present, no `shutdown_timeout`/`shutdown_failed`. Artifact is held outside the repository and is **evidence for `bf88acc` only**, not for later commits. It confirms packaging liveness/non-root/SIGTERM after logger hardening; it does **not** prove live-DB readiness in-container (verifier has no DB fixture — complementary to `tests/db/readiness.dbtest.ts`). Prior immutable non-rolling artifacts: `container-verification-20260817-075417.json` → `e0462024d7c006645db273c315ba295bb6f27e66`; `container-verification-20260817-071922.json` → `cc65dca0843b4a4201549d739cba96c893a7d407`; `container-verification-20260817-065242.json` → `ce3d7c9b106f36b2224085f7c8e22039e159daee` | Local container run only. Not staging, not a deployed environment, not live-DB readiness proof | TBD | Scan/SBOM/digest/registry/live-DB-in-container/K8s/IdP remain separate; artifacts do not roll forward to new SHAs | TBD | In progress |
+| Tenant isolation | Cross-tenant data disclosure | Every tenant-owned read/write is scoped by `tenant_id` and enforced by Postgres RLS via `app.current_tenant` / `withTenantTransaction` | Tenant A cannot read or mutate tenant B rows; unknown/cross-tenant paths are non-oracular | [ADR-0001](adr/0001-tenancy-and-data-model.md); [ADR-0004](adr/0004-persistence-and-data-access.md); `backend/api-gateway/src/db/` | Local `tests/db/*.dbtest.ts` (incl. telemetry + alerts isolation). Local JWT/`enforce` cross-tenant negatives @ `2ba2bc1` (local only) | Local only. Staging/production: TBD | BLACKNOIX founder | Staging/production RLS proof not linked | TBD | In progress |
+| Authentication and authorization | Unverified principals; privilege escalation; fail-open roles | Verified auth strategy; allow-listed human roles; JWT requires explicit `AUTH_EXPLICIT_ROLES_MODE`; agent vs human guards | Role-less human denied under `enforce`; agents cannot use human-only surfaces | [ADR-0002](adr/0002-authentication-seam.md); [ADR-0003](adr/0003-production-authentication.md); [ADR-0010](adr/0010-auditor-audit-read-rbac.md); [ADR-0011](adr/0011-explicit-roles-migration.md); `src/auth/` | Local JWT/`enforce` bundle @ `2ba2bc1`; unit RBAC suites (`tests/auth/*`, `tests/alerts/route-rbac.test.ts`) | Local only. Staging IdP: TBD | BLACKNOIX founder | IdP federation incomplete; ADR-0012 uncommitted | TBD | In progress |
+| Audit logging and auditability | Undetectable abuse; mutable audit history | Durable security-relevant audit; append-only where required; least-privilege read | Alert create audited; app role cannot rewrite `alert_audit_events`; cross-tenant audit read empty | Migration `017_alerts_and_alert_audit.ts`; `src/alerts/`; [docs/alerts.md](../alerts.md); [staging-enforce-alert-evidence](../runbooks/staging-enforce-alert-evidence.md) (procedure only) | `tests/db/alerts-auth-failure.dbtest.ts` (durable-before-success + append-only). **No** credential-lifecycle `/v1/audit/logs` on this tip | Local/dev only | BLACKNOIX founder | Denial-audit vertical gate incomplete; retention/SIEM deferred | TBD | In progress |
+| Endpoint/agent telemetry ingestion | Unauthenticated or cross-tenant ingest | Agent-authenticated ingest; tenant+agent from principal | Agent ingest succeeds; human denied on agent-only ingest; cross-tenant query isolation | [docs/telemetry.md](../telemetry.md); `src/telemetry/`; `src/routes/telemetry.ts` | Unit + `tests/db/telemetry.dbtest.ts`; alerts path ties auth_failure ingest → tenant alert | Local only | BLACKNOIX founder | Deployed CP ingest / chart cutover external | TBD | In progress |
+| Detection/correlation and tenant-scoped finding/alert visibility | Missed detection; cross-tenant leakage | Findings/alerts remain tenant-scoped | Cross-tenant list/detail empty/non-oracular | [ADR-0005](adr/0005-correlation-bridge-provenance-and-finality.md); alerts + findings routes | Local dbtests/route tests; alerts isolation case 2 | Local only | BLACKNOIX founder | Staging proof TBD | TBD | In progress |
+| Secrets management and rotation | Long-lived leaked secrets | Hashed agent credentials; no secrets in logs/artifacts | Exchange/ingest reject unusable credentials; probe failure logs omit driver/connection secrets | [docs/agents.md](../agents.md); `src/agents/`; readiness logger hardening in `src/db/pool.ts` (`bf88acc`) | Local tests; container/dbtest non-leak assertions. No KMS/vault evidence | Local/dev | BLACKNOIX founder | Enterprise secret store deferred | TBD | In progress |
+| Backup and restore | Unrecoverable tenant data loss | Documented, tested backup/restore with tenant + audit integrity | Restore drill restores isolation and append-only audit invariants | ADR-0004 defers backup/restore/retention | TBD — no restore runbook/drill in-repo | TBD | BLACKNOIX founder | No accepted restore drill | TBD | Unverified |
+| Kubernetes/platform hardening | Cluster compromise; unscanned images | Hardened deploy path; provenance; gated cutover | Platform scan/provenance; chart cutover only after gates | Local Compose only; no Helm/GitOps/scan config in-repo; ADR-0013 packaging baseline (historical) | TBD | Blocked / external | Platform (external); BLACKNOIX founder (app manifests when unblocked) | Cluster, scan, provenance, Legal where required | TBD | Blocked |
+| Observability, SLOs, and incident response | Undetected outages | Health/ready, logs, SLOs, IR | `/health` liveness; `/ready` reflects DB probe without hysteresis | `src/routes/health.ts`, `src/routes/ready.ts`, `createDatabaseHealthCheck` | Unit `tests/ready.test.ts`; live `tests/db/readiness.dbtest.ts` @ `bf88acc`. No SLO/IR bundle | Local only | BLACKNOIX founder | Deployed probe thresholds / SLO stack not started | TBD | Unverified |
+| Evidence-bundle integrity and provenance | Misleading Complete claims | Bundles declare claim class/SHA/scope; safe runners | ADR-0012 accepted; five-path validation | Planned ADR-0012 **not present** | Local JWT bundle @ `2ba2bc1` (pre-ADR-0012). Container artifacts outside git, SHA-pinned in this matrix | Local only | BLACKNOIX founder | ADR-0012 uncommitted | TBD | In progress |
+| External-IdP validation | Treating controlled-issuer as customer IdP proof | Per-tenant OIDC federation; roles from IdP | Staging IdP login → DEPP JWT → enforce routes | [ADR-0003](adr/0003-production-authentication.md) | TBD (must not reuse local JWT bundle) | Staging/production IdP: TBD | BLACKNOIX founder + Identity (external) | IdP readiness; staging env | TBD | Unverified |
+| Staging deployment baseline (packaging) | Conflating packaging with deploy proof | Source packaging + honest local container evidence under ADR-0013 constraints | Clean-tree verifier artifact per SHA; smoke:dist | Dockerfile; `smoke:dist`; ADR-0013 (do not edit) | **Current:** `container-verification-20260817-081502.json` @ `bf88acc` (cited `9a3ecf0`). Prior immutable: `…075417`→`e046202`; `…071922`→`cc65dca`; `…065242`→`ce3d7c9`. Not staging | Local container only | BLACKNOIX founder | Scan/SBOM/registry/K8s/IdP separate | TBD | In progress |
 
-## Critical Path
+---
+
+## Next Critical-Path Vertical Slice: Tenant-Isolated Authorization and Immutable Audit Validation
+
+### Why this slice next
+
+Secure customer onboarding is gated by a single vertical proof:
+
+**authenticated principal → tenant-scoped telemetry → tenant-bound alert → append-only audit → fail-closed cross-tenant/RBAC denial**
+
+Local building blocks already exist (`alerts-auth-failure.dbtest.ts`, alerts RBAC unit tests, RLS helpers). The next **implementation** commit must be the smallest **test-first** suite that turns those pieces into an explicit onboarding gate—not docs-only work, not agent/UI/platform expansion.
+
+### Pre-implementation acceptance criteria (must all pass before claiming the slice)
+
+| # | Criterion | Planned test layer |
+|---|---|---|
+| 1 | Tenant A cannot read, mutate, or act on Tenant B resources (alerts, telemetry, audit rows) | **Database integration** (`*.dbtest.ts`) + **API integration** where HTTP surfaces exist |
+| 2 | A valid authorized action succeeds for an allowed role (`operator`/`auditor` as designed for the surface) | **API integration** (minted JWT / enforce) and/or **unit** route guard tests |
+| 3 | Denied cross-tenant and RBAC attempts fail closed and are audited **safely** (no secrets/tokens/connection strings in bodies or logs; denial outcome is explicit and non-oracular) | **API integration** + log/response non-leak assertions; extend db/HTTP coverage where denial audit is in scope |
+| 4 | Authorized mutations that create security-relevant state also create tenant-bound audit events (`alert_audit_events` for alert creation on this tip) | **Database integration** (same-TX durable-before-success already partially proven—keep as required gate) |
+| 5 | Application runtime role (`depp_app`) cannot `UPDATE` or `DELETE` immutable audit events | **Database integration** (privilege negative already present—retain as required gate) |
+| 6 | A registered agent’s authenticated telemetry event appears only in its tenant’s alert/dashboard path | **Database integration** + **API integration** for `GET /v1/alerts` tenant scoping |
+| 7 | A documented recovery test restores the vertical slice without violating tenant isolation or audit integrity | **Manual recovery drill** (procedure + recorded results) until automation exists; not claimed Done until executed and linked |
+
+### Ordered execution sequence (implementation; approval required before coding)
+
+1. **First implementation commit (smallest test-first gate):** add/extend a focused vertical suite under `backend/api-gateway/tests/` that fails the build unless criteria 1–6 pass against the disposable Compose Postgres fixture (reuse `tests/db/helpers.ts`; no ad hoc persistent DB; no committed secrets). Prefer extending `alerts-auth-failure.dbtest.ts` / alerts API tests over new product surface area.
+2. Wire the suite into the existing `npm run test:db` / unit scripts already used by developers (no new platform).
+3. Record exact commands, source SHA, and fixture assumptions in the matrix evidence cell for this slice when green.
+4. Only then schedule the **manual recovery drill** (criterion 7) as a separate commit/evidence note.
+5. **Defer:** Windows agent work, UI polish, Helm/GitOps scaffolding, Dockerfile/verifier changes, ADR-0012/0013 edits, and staging IdP packs until this local vertical gate is green.
+
+### External / deployment prerequisites (later gates — not claims of this planning commit)
+
+These remain **Blocked** / external and must not be implied by local tests or the `bf88acc` container artifact:
+
+| Prerequisite | Why it is later |
+|---|---|
+| Kubernetes / GitOps environment | No in-repo deploy path yet |
+| Non-local least-privilege app and migration roles | Compose init roles are local-dev defaults only |
+| Secret injection | Images/docs require runtime injection; no staging injector evidenced |
+| Image scan / provenance | No scan workflow or attested digest evidence in-repo |
+| Reachable deployed control plane | Required for staging ingest/onboarding proof |
+| Deployment-level readiness gating | `/ready` exists locally; orchestrator probe wiring is undeployed |
+
+### Explicit non-claims
+
+- The `bf88acc` container verifier result is **local-only** (build, `Config.User=node`, `/health` liveness under `not_configured`, SIGTERM). It is **not** staging evidence and does **not** prove in-container live-DB readiness.
+- `not_configured` on `/health` must not be reinterpreted as readiness success.
+- ADR-0012 and the historical JWT/`enforce` bundle remain isolated and immutable.
+
+---
+
+## Critical Path (enterprise sales loop)
 
 Enterprise-salable readiness for the protection loop depends on this vertical slice being true **with linked evidence** in the target environment:
 
 1. **Authenticated tenant/device** — verified principal (human via IdP-backed DEPP JWT in staging/production lineages; agent via credential exchange), never unverified headers in those lineages.
 2. **Telemetry accepted** — agent-only ingest paths accept well-formed events bound to principal tenant/agent.
 3. **Durable tenant-scoped storage** — append-only (or equivalently integrity-protected) persistence under RLS.
-4. **Detection/finding** — deterministic correlation/alert materialization for the tenant.
-5. **Audit trail** — durable lifecycle/security-relevant audit where required by ADRs.
+4. **Detection/finding/alert** — deterministic materialization for the tenant.
+5. **Audit trail** — durable security-relevant audit where required.
 6. **Read-only operator visibility** — operator/auditor read surfaces without cross-tenant leakage.
 7. **Cross-tenant negative tests** — explicit empty/`NOT_FOUND`/reject outcomes proving isolation.
+8. **Recovery** — restore drill preserves isolation and audit integrity.
 
-Local controlled-issuer JWT/`enforce` and local dbtests may support **In progress** claims for pieces of this slice. They do not by themselves make the slice **Complete** for staging or production.
+Local controlled-issuer JWT/`enforce`, local dbtests, and local container verification may support **In progress** claims. They do not make the slice **Done** for staging or production.
+
+---
 
 ## Weekly Review
 
 Before any Status field changes on this matrix:
 
-1. Review every **Blocked** and red/failed control.
+1. Review every **Blocked** and failed control.
 2. Confirm each Evidence link still resolves and matches the claimed scope (local vs staging vs production vs IdP).
-3. Reject any proposal to mark **Complete** without a direct evidence link that satisfies Evidence Rules.
+3. Reject any proposal to mark staging/production **Done** without a direct evidence link that satisfies Evidence Rules.
 4. Record the review date and reviewer in the change notes or PR description when this file is updated.
+5. Do not begin the next implementation slice without explicit founder approval.

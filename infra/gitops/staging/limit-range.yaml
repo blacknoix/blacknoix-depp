@@ -1,0 +1,27 @@
+# Pilot defaults only — review before first apply; not capacity planning evidence.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: depp-staging-limits
+  labels:
+    app.kubernetes.io/part-of: depp
+    depp.blacknoix.io/environment: staging
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: 50m
+        memory: 128Mi
+      default:
+        cpu: 500m
+        memory: 512Mi
+      max:
+        cpu: "1"
+        memory: 1Gi
+      min:
+        cpu: 10m
+        memory: 64Mi
+    - type: Pod
+      max:
+        cpu: "2"
+        memory: 2Gi

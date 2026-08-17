@@ -1,0 +1,32 @@
+# TEMPLATE ONLY — not listed in kustomization.yaml.
+#
+# Kubernetes NetworkPolicy cannot safely target private RDS without an approved
+# egress strategy (security-group referencing, private CIDR allowlist, or
+# equivalent). Do NOT enable open internet egress (all-zero IPv4 prefix).
+#
+# NetworkPolicy does not replace AWS security groups or RDS public-access=false.
+#
+# When platform provides an approved private CIDR or SG-aware CNI policy model,
+# add an egress rule for TCP 5432 from api-gateway pods and activate via
+# kustomization — never invent CIDRs in-repo.
+#
+# Example shape (inactive):
+#
+# apiVersion: networking.k8s.io/v1
+# kind: NetworkPolicy
+# metadata:
+#   name: api-gateway-rds-egress
+#   namespace: depp-staging
+# spec:
+#   podSelector:
+#     matchLabels:
+#       app.kubernetes.io/name: api-gateway
+#   policyTypes:
+#     - Egress
+#   egress:
+#     - to:
+#         - ipBlock:
+#             cidr: REPLACE_WITH_APPROVED_PRIVATE_RDS_CIDR
+#       ports:
+#         - protocol: TCP
+#           port: 5432

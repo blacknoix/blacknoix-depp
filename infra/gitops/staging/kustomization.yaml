@@ -1,0 +1,22 @@
+# Non-deployable staging overlay for api-gateway.
+# Do not apply until image digest + SecretStore + platform egress are approved.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: depp-staging
+
+resources:
+  - namespace.yaml
+  - resource-quota.yaml
+  - limit-range.yaml
+  - serviceaccount-api-gateway.yaml
+  - network-policy-default-deny.yaml
+  - network-policy-api-gateway.yaml
+  - api-gateway-deployment.yaml
+  - api-gateway-service.yaml
+
+# Intentionally excluded (see staging/templates/ and README):
+# - ExternalSecret (requires ESO + approved SecretStore)
+# - Role/RoleBinding (no Kubernetes API need discovered)
+# - Ingress / ALB (future slice)
+# - RDS egress NetworkPolicy (needs approved CIDR/SG strategy)

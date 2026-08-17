@@ -1,0 +1,51 @@
+# Minimal api-gateway NetworkPolicy.
+# Does NOT replace AWS security groups or RDS network controls.
+# Probe behavior under default-deny is CNI-specific — validate on first cluster apply.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-gateway
+  labels:
+    app.kubernetes.io/name: api-gateway
+    app.kubernetes.io/part-of: depp
+    depp.blacknoix.io/environment: staging
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: api-gateway
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Same-namespace clients (ClusterIP). Not a public exposure path.
+    - from:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 3000
+    # Future ingress/controller boundary — label must be applied by a later
+    # approved slice. Until then this selector matches nothing.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              depp.blacknoix.io/role: ingress-boundary
+      ports:
+        - protocol: TCP
+          port: 3000
+  egress:
+    # Cluster DNS (kube-dns / CoreDNS convention). Not an AWS-specific invent.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # PostgreSQL egress to private RDS is NOT enabled here — see
+    # templates/network-policy-api-gateway-rds-egress.yaml.template
+    # (requires approved CIDR or security-group strategy; no open internet egress).

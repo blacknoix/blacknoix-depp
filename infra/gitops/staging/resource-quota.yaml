@@ -1,0 +1,20 @@
+# Pilot defaults only — not measured production sizing; not enforced until applied.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: depp-staging-quota
+  labels:
+    app.kubernetes.io/part-of: depp
+    depp.blacknoix.io/environment: staging
+spec:
+  hard:
+    pods: "20"
+    requests.cpu: "2"
+    requests.memory: 4Gi
+    limits.cpu: "4"
+    limits.memory: 8Gi
+    persistentvolumeclaims: "0"
+    services: "10"
+    secrets: "20"
+    configmaps: "20"
+    count/deployments.apps: "5"

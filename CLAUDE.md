@@ -19,8 +19,8 @@ Early. One backend service exists; everything else is still scaffolding.
 
 What actually exists:
 - CLAUDE.md
-- docs/architecture/adr/ — ADR-0001–0004 (tenancy, auth seam, production auth, persistence)
-- backend/api-gateway/ — running Express service, see below
+- docs/architecture/adr/ — ADR-0001–0005, 0010–0011 accepted; ADR-0013 Proposed (staging deployment baseline); enterprise-readiness control matrix under `docs/architecture/`
+- backend/api-gateway/ — running Express service, see below (includes production container **source** packaging: Dockerfile / `.dockerignore` / `npm run smoke:dist`; not Docker/staging/IdP proof by itself)
 - frontend/ — operator app shell + findings + agents inventory (Vite + React + TypeScript)
 - infra/ — empty
 
@@ -65,18 +65,20 @@ Treat this as the current priority order unless explicitly changed.
 
 ## Current status
 - Repository setup: done (git, hygiene files, ADR log)
-- Product docs: ADRs 0001–0004 accepted; Work/Findings/Attention runbook at `docs/runbooks/work-findings-attention.md` (operational invariants — not a full product spec)
-- Backend implementation: api-gateway — middleware baseline; `/v1/tenants/me`; tenant-scoped telemetry ingest + query/summary; minimal post-ingest correlation findings; agent enrollment + hashed credentials + agent JWT exchange for authenticated ingest; Findings triage + Attention + Work views/default
+- Product docs: ADRs 0001–0005, 0010–0011 accepted; ADR-0013 Proposed (staging deployment baseline + packaging boundaries); enterprise-readiness control matrix at `docs/architecture/enterprise-readiness-control-matrix.md` (Draft / evidence-baseline; no Complete without linked evidence); staging enforce+alert evidence runbook at `docs/runbooks/staging-enforce-alert-evidence.md`; Work/Findings/Attention runbook at `docs/runbooks/work-findings-attention.md` (operational invariants — not a full product spec)
+- Backend implementation: api-gateway — middleware baseline; `/v1/tenants/me`; tenant-scoped telemetry ingest + query/summary; minimal post-ingest correlation findings; agent enrollment + hashed credentials + agent JWT exchange for authenticated ingest; Findings triage + Attention + Work views/default; production container **source** packaging under ADR-0013 (Dockerfile, `.dockerignore`, `smoke:dist`)
 - Frontend implementation: operator app shell (default `/work`) + findings (`/findings`) + agents (`/agents`) with URL cross-links (`agentId` / `findingId`)
 - Infra setup: not started
-- Auth / RBAC: authentication seam (ADR-0002) with `dev-header` + `jwt`; human OIDC/refresh and agent credential exchange implemented; no RBAC
+- Auth / RBAC: authentication seam (ADR-0002) with `dev-header` + `jwt`; human OIDC/refresh and agent credential exchange implemented; allow-listed roles + staged `AUTH_EXPLICIT_ROLES_MODE` (ADR-0010/0011)
 - Database: schema + RLS (tenants, agents, agent_credentials, users, sessions, refresh_tokens, telemetry_events, correlation_findings, finding_suppressions, finding_revisit_reminders, finding_attention_dismissals, finding_shared_views, work_shared_views, work_tenant_defaults) via Kysely + migrator, plus platform-global `oidc_initiations`. NOTE: some auth narrative elsewhere may still need a docs-sync pass.
-- Enterprise hardening: not started
+- Enterprise hardening: packaging baseline started (ADR-0013); Docker verification, scan/SBOM, staging deploy, Kubernetes, and IdP proof remain separate / not claimed here
 
 ## backend/api-gateway
 Implemented:
 - Middleware: request ID, structured JSON request logging, tenant context, 404 handler, centralized error handler
-- Routes: `GET /`, `GET /health`, `GET /v1/tenants/me`, `GET /v1/agents` (operator inventory), `POST /v1/agents` (enroll), `POST /v1/agents/:id/credentials/revoke`, `POST /v1/auth/agent/token`, `POST /v1/telemetry/events`, `POST /v1/telemetry/events/batch`, `GET /v1/telemetry/events`, `GET /v1/findings`, `GET /v1/findings/dashboard`, `GET /v1/findings/attention`, `POST /v1/findings/attention/dismiss`, `POST /v1/findings/evaluate-silence`, `PATCH /v1/findings/:id`, `GET|POST /v1/findings/suppressions`, `DELETE /v1/findings/suppressions/:id`, `GET|POST|DELETE /v1/findings/views`, `GET|POST|DELETE /v1/work/views`, `PUT|DELETE /v1/work/default`
+- Routes: `GET /`, `GET /health` (liveness), `GET /ready` (readiness: 200 when
+  the database probe is `up`; 503 on `down` / `not_configured`; no debounce),
+  `GET /v1/tenants/me`, `GET /v1/agents` (operator inventory), `POST /v1/agents` (enroll), `POST /v1/agents/:id/credentials/revoke`, `POST /v1/auth/agent/token`, `POST /v1/telemetry/events`, `POST /v1/telemetry/events/batch`, `GET /v1/telemetry/events`, `GET /v1/findings`, `GET /v1/findings/dashboard`, `GET /v1/findings/attention`, `POST /v1/findings/attention/dismiss`, `POST /v1/findings/evaluate-silence`, `PATCH /v1/findings/:id`, `GET|POST /v1/findings/suppressions`, `DELETE /v1/findings/suppressions/:id`, `GET|POST|DELETE /v1/findings/views`, `GET|POST|DELETE /v1/work/views`, `PUT|DELETE /v1/work/default`
 - Error envelope: `{ ok: false, error: { code, message }, requestId }`
 - Success envelope on /v1: `{ ok: true, data, requestId }`
 - Tests: `node:test` integration suite against `createApp()` (`npm test`)
@@ -194,21 +196,50 @@ Requests are resolved into an `AuthenticatedPrincipal` by a pluggable
 `AuthStrategy` selected via `AUTH_MODE`. Route handlers read `req.principal` and
 never parse credentials themselves.
 
-The only implemented mode is `dev-header`, which trusts the client-supplied
-`x-tenant-id` header without verification. It is a development stand-in.
+Two modes are implemented (`src/auth/auth-mode.ts`):
 
-**The service cannot start with `NODE_ENV=production`.** Unverified modes are
-rejected at startup, and `dev-header` is currently the only mode, so there is no
-configuration in which api-gateway runs in production. This is intentional and
-fail-closed; it lifts when a verified mode exists.
+- `dev-header` — trusts the client-supplied `x-tenant-id` header without
+  verification. A development stand-in, and the default when `AUTH_MODE` is
+  unset. Listed in `UNVERIFIED_MODES` and therefore **rejected at startup when
+  `NODE_ENV=production`**.
+- `jwt` — the principal comes only from a DEPP-signed HS256 access token, never
+  from request headers. It verifies a signature, so it is not an unverified mode
+  and is permitted in production.
+
+Startup requirements for `AUTH_MODE=jwt`, all fail-closed:
+
+- `JWT_ACCESS_SECRET` (≥32 characters), `JWT_ISSUER`, `JWT_AUDIENCE` — missing
+  configuration throws rather than yielding a strategy that cannot verify.
+- `AUTH_EXPLICIT_ROLES_MODE` must be set explicitly to `compat` or `enforce`.
+  Unset is rejected under `jwt` (verified authentication must opt in); an
+  invalid value is rejected in any mode. See ADR-0011.
 
 An unrecognised `AUTH_MODE` also stops startup rather than falling back.
 
-The production authentication mechanism is decided in ADR-0003 but **not yet
-implemented**: per-tenant OIDC federation, no stored human credentials,
-DEPP-issued short-lived access tokens with server-side refresh, and a separate
-machine-identity path for agents. Roles come from IdP claims, with DEPP-persisted
-mappings only as a per-tenant compatibility layer.
+**Presented-but-invalid credentials are authentication failures, not anonymous
+requests.** A bearer token that fails verification — tampered signature,
+`alg: none` or any non-HS256 header, malformed structure, wrong issuer or
+audience, expired, missing claims — makes the strategy throw
+`InvalidCredentialError`. `middleware/authenticate.ts` records it as
+`req.authFailed` (it still never rejects, so `/` and `/health` stay reachable),
+and `requireTenant` / `requirePrincipal` answer `401 INVALID_TOKEN` with
+`WWW-Authenticate: Bearer error="invalid_token"` before any tenant lookup or
+RBAC check runs. This is distinct from a request carrying no credential at all,
+which still yields `400 TENANT_REQUIRED`. Rejection messages are fixed and
+claim-free so they cannot become an oracle for token forgery. The verifier
+hardcodes HS256 and never reads an attacker-supplied `alg`.
+
+ADR-0003 decides the full production mechanism. Implemented so far: DEPP-issued
+short-lived access tokens with server-side refresh, and the separate
+machine-identity path for agents. **Not yet implemented**: per-tenant OIDC
+federation end to end, and roles sourced from IdP claims — `AuthService`-minted
+human tokens still carry the transitional `operator` role
+(`TRANSITIONAL_HUMAN_OPERATOR_ROLES`), with DEPP-persisted mappings intended
+only as a per-tenant compatibility layer.
+
+Local JWT/enforce verification uses a controlled test issuer. It is not
+staging evidence and not external-IdP evidence; issuer, audience, JWKS/key
+rotation, and claim-mapping behaviour against a real IdP remain unverified.
 
 ## Tenancy model
 Authoritative decision: docs/architecture/adr/0001-tenancy-and-data-model.md.
@@ -247,6 +278,10 @@ Run from `backend/api-gateway/`:
 - Start dev: `npm run dev` (tsx, no build step)
 - Typecheck: `npm run typecheck`
 - Build: `npm run build` (emits to dist/)
+- Dist smoke (local process only): `npm run smoke:dist` — builds, then boots
+  `dist/index.js` and asserts liveness plus three fail-closed startup cases
+  (short JWT secret, missing `AUTH_EXPLICIT_ROLES_MODE` under jwt, `dev-header`
+  in production). No Docker, no database, no network; not Docker/staging proof
 - Start built: `npm start`
 - Lint: not configured yet
 - Test: `npm test` (`node:test` + tsx; see `tests/`)
@@ -256,6 +291,63 @@ Run from `backend/api-gateway/`:
 - Enable local marker hook once: `git config core.hooksPath .githooks`
 
 No commands exist for infra/ yet.
+
+### Container image (api-gateway)
+
+`backend/api-gateway/Dockerfile` is a two-stage build: the build stage installs
+all dependencies, runs `tsc`, then `npm prune --omit=dev`; the runtime stage
+copies the pruned `node_modules` plus `dist/` and the manifest, and runs as the
+base image's unprivileged `node` user. The build context is the package
+directory, not the repository root.
+
+Build:
+
+```
+docker build -t depp-api-gateway:local -f backend/api-gateway/Dockerfile backend/api-gateway
+```
+
+Run (placeholders — supply real values from your own environment):
+
+```
+docker run --rm -p 3000:3000 \
+  -e PORT=3000 \
+  -e AUTH_MODE=jwt \
+  -e AUTH_EXPLICIT_ROLES_MODE=enforce \
+  -e JWT_ACCESS_SECRET='<at least 32 characters>' \
+  -e JWT_ISSUER='<issuer>' \
+  -e JWT_AUDIENCE='<audience>' \
+  -e DATABASE_URL='postgres://<app-role>:<password>@<host>:5432/<db>' \
+  depp-api-gateway:local
+```
+
+Facts that constrain what a running container means:
+
+- **The image sets `NODE_ENV=production`.** `AUTH_MODE=dev-header` is therefore
+  refused at startup (ADR-0002), so a container must be given a verified mode.
+  Overriding `NODE_ENV` to re-enable the development stand-in defeats the guard.
+- **The database must already be reachable, and migrations must already have
+  run.** The image cannot run them: `migrate:latest` executes through `tsx`, a
+  devDependency, which the pruned runtime tree does not contain. Migrations are
+  a separate step run as `depp_migrator` via `DATABASE_MIGRATION_URL`
+  (ADR-0013). The container receives the application-role `DATABASE_URL` only.
+- **The pool connects lazily**, so the gateway starts even when the database is
+  unreachable. A started container is not evidence of a working database.
+- **`GET /health` is liveness; `GET /ready` is readiness.** `/health` returns 200
+  while the process serves, including when the database is down
+  (`src/routes/health.ts`). `/ready` (`src/routes/ready.ts`) reads the same probe
+  and answers 200 only when the database reports `up`, 503 on `down` or
+  `not_configured`. It carries no debounce: a single failed probe is unready
+  immediately, and transient-fault tolerance belongs in the deployment's probe
+  `failureThreshold`/period, not in application code. The image still declares
+  no `HEALTHCHECK`, because a Docker healthcheck governs container restart —
+  a liveness concern — and pointing it at `/ready` would restart instances over
+  a database fault.
+- **Secrets are injected as environment variables** by whatever runs the
+  container. No `.env` is present in the image (`.dockerignore`), and none may
+  be committed.
+- **A successful container start is not staging acceptance evidence.** ADR-0013
+  defines a 13-item bundle for that; building and booting an image satisfies
+  none of it.
 
 Run from `frontend/`:
 - Install dependencies: `npm install`

@@ -21,6 +21,7 @@ import { createAlertsRouter } from "./routes/alerts";
 import { createAuthRouter } from "./routes/auth";
 import { createFindingsRouter } from "./routes/findings";
 import { createHealthRouter } from "./routes/health";
+import { createReadyRouter } from "./routes/ready";
 import rootRouter from "./routes/root";
 import { createTenantsRouter } from "./routes/tenants";
 import { createTelemetryRouter } from "./routes/telemetry";
@@ -157,8 +158,13 @@ export function createApp(options: AppOptions = {}) {
   app.use(authenticate(authStrategy));
 
   // Infrastructure routes: no tenant context required.
+  //
+  // /health and /ready read the same database probe and differ only in how they
+  // respond to it: liveness stays 200 while the process serves, readiness
+  // answers 503 when the database is not usable right now.
   app.use("/", rootRouter);
   app.use("/health", createHealthRouter({ checkDatabase: options.checkDatabase }));
+  app.use("/ready", createReadyRouter({ checkDatabase: options.checkDatabase }));
 
   // Auth endpoints are NOT behind requireTenant: refresh / agent token exchange
   // present an opaque credential in the body, not an authenticated principal.

@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: depp-staging
+  labels:
+    app.kubernetes.io/part-of: depp
+    depp.blacknoix.io/environment: staging
+    depp.blacknoix.io/data-classification: synthetic-only
+    # Namespace alone is not a tenant boundary; RLS/RBAC remain primary.

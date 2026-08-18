@@ -1,0 +1,12 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  labels:
+    app.kubernetes.io/part-of: depp
+    depp.blacknoix.io/environment: staging
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress

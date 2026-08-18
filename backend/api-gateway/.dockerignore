@@ -1,0 +1,21 @@
+# Keep the production build context small and free of secrets / local artifacts.
+# Context is backend/api-gateway (see Dockerfile header).
+
+node_modules
+npm-debug.log*
+dist
+coverage
+.env
+.env.*
+!.env.example
+tests
+**/*.test.ts
+**/*.dbtest.ts
+tsconfig.test.json
+scripts/integration
+.git
+.gitignore
+.dockerignore
+Dockerfile
+README*
+*.md

@@ -10,13 +10,15 @@
     "test:watch": "node --env-file=tests/test.env --import tsx --test --watch \"tests/**/*.test.ts\"",
     "dev": "tsx src/index.ts",
     "build": "tsc -p tsconfig.json",
+    "smoke:dist": "npm run build && node scripts/smoke-dist.mjs",
     "start": "node dist/index.js",
     "migrate:latest": "tsx src/db/migrate.ts latest",
     "migrate:down": "tsx src/db/migrate.ts down",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
     "check:merge-markers": "node ../../scripts/check-merge-markers.cjs",
-    "verify:fresh-migrate": "node ../../scripts/verify-fresh-migrate.cjs"
+    "verify:fresh-migrate": "node ../../scripts/verify-fresh-migrate.cjs",
+    "recovery:local-postgres": "node ../../scripts/local-postgres-recovery-drill.cjs"
   },
   "keywords": [],
   "author": "",

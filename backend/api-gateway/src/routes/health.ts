@@ -20,9 +20,11 @@ const NOT_CONFIGURED: DatabaseHealth = { status: "not_configured" };
  * turning it into a readiness signal would let a database blip cause an
  * orchestrator to restart otherwise-healthy instances.
  *
- * Database state is reported as information. A separate readiness endpoint,
- * which may legitimately fail on an unreachable dependency, is deferred until
- * routes actually require the database.
+ * Database state is reported here as information only. Deciding whether the
+ * instance can serve database-dependent traffic is `/ready`'s job
+ * (`routes/ready.ts`), which reads this same probe and answers 503 when the
+ * database is not usable. Keep the two contracts distinct: making this endpoint
+ * fail on a database fault is what causes restart loops.
  */
 export function createHealthRouter(options: HealthRouterOptions = {}): Router {
   const router = Router();

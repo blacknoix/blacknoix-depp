@@ -87,6 +87,49 @@ function main() {
   mustInclude(wf, "configure-aws-credentials", "OIDC AWS auth step");
   mustInclude(wf, "needs: non-operational-guard", "cloud job depends on guard");
 
+  // Protected GitHub Environment binding (cloud job only)
+  function extractJobBody(text, jobId) {
+    const header = new RegExp(`^ {2}${jobId}:\\r?\\n`, "m");
+    const match = header.exec(text);
+    if (!match) {
+      return null;
+    }
+    const afterHeader = match.index + match[0].length;
+    const rest = text.slice(afterHeader);
+    const nextJob = rest.search(/^ {2}[a-zA-Z0-9_-]+:/m);
+    return nextJob < 0 ? rest : rest.slice(0, nextJob);
+  }
+
+  const guardJob = extractJobBody(wf, "non-operational-guard");
+  const supplyJob = extractJobBody(wf, "supply-chain");
+  if (!guardJob) {
+    fail("could not locate non-operational-guard job block");
+  }
+  if (!supplyJob) {
+    fail("could not locate supply-chain job block");
+  }
+
+  if (/^ {4}environment:\s*/m.test(guardJob)) {
+    fail("non-operational-guard must not declare environment:");
+  }
+  const jobLevelEnv = supplyJob.match(/^ {4}environment:\s*staging\s*$/gm) || [];
+  if (jobLevelEnv.length !== 1) {
+    fail("supply-chain job must declare exactly one job-level environment: staging");
+  }
+  if (/^ {6,}environment:\s*/m.test(supplyJob)) {
+    fail("environment: must not be placed under a step (indent deeper than job level)");
+  }
+  if (/configure-aws-credentials/.test(guardJob)) {
+    fail("OIDC configure-aws-credentials must not appear in non-operational-guard");
+  }
+  if (!/configure-aws-credentials/.test(supplyJob)) {
+    fail("OIDC configure-aws-credentials must appear inside supply-chain");
+  }
+  const oidcOccurrences = (wf.match(/configure-aws-credentials/g) || []).length;
+  if (oidcOccurrences !== 1) {
+    fail("configure-aws-credentials must appear exactly once (inside supply-chain)");
+  }
+
   mustNotMatch(wf, /^\s*push:\s*$/m, "active push trigger");
   mustNotMatch(wf, /pull_request_target/, "pull_request_target");
   mustNotMatch(wf, /:latest\b/, "latest tag");
@@ -147,6 +190,17 @@ function main() {
   mustInclude(rb, "sts.amazonaws.com", "aud restriction");
   mustInclude(rb, "180 days", "retention");
   mustInclude(rb, "REPLACE_WITH_ECR_IMAGE_AT_DIGEST", "gitops placeholder linkage");
+  mustInclude(
+    rb,
+    "repo:blacknoix/blacknoix-depp:environment:staging",
+    "OIDC environment trust subject",
+  );
+  mustInclude(rb, "environment: staging", "runbook environment binding");
+  mustInclude(
+    rb,
+    "Environment approval is a CI gate only",
+    "environment approval non-claim",
+  );
 
   console.log("");
   console.log("image-supply-chain-skeleton: safety checks PASSED");

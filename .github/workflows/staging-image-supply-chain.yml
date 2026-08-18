@@ -137,13 +137,13 @@ jobs:
 
   # -------------------------------------------------------------------------
   # Quality + supply chain. Separated so AWS auth cannot run if guard fails.
-  # GitHub Environment protection (e.g. staging-image-supply-chain) is a
-  # FUTURE prerequisite — not assumed to exist yet. Add `environment:` only
-  # after the environment is created and required reviewers are configured.
+  # Bound to GitHub Environment `staging` so required reviewers approve before
+  # OIDC can authenticate to AWS. Guard job stays outside this environment.
   # -------------------------------------------------------------------------
   supply-chain:
     name: build scan sbom sign push (gated)
     needs: non-operational-guard
+    environment: staging
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:

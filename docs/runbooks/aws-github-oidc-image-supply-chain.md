@@ -26,12 +26,16 @@ Local container/readiness/isolation/recovery evidence remains **local-only**.
 |---|---|
 | Trigger | `workflow_dispatch` only (no `push` / no `pull_request_target`) |
 | Default inputs | All critical fields are `REPLACE_*` or `NO` |
-| Fail-closed guard | Job `non-operational-guard` runs **before** AWS OIDC and rejects placeholders |
+| Fail-closed guard | Job `non-operational-guard` runs **outside** GitHub Environment `staging`, performs **no** AWS authentication, and rejects placeholders before the cloud job starts |
+| Protected environment | Job `supply-chain` is bound to GitHub Environment **`staging`** (`environment: staging`). Required reviewer approval gates that job before OIDC can authenticate to AWS |
+| OIDC trust subject (expected) | `repo:blacknoix/blacknoix-depp:environment:staging` |
 | Execute confirm | Requires `I_UNDERSTAND_THIS_PUSHES_TO_ECR` in addition to founder approval |
 | GitOps | Echo-only reminder; no `kubectl` / `helm` / `argocd` / Terraform |
 
 Docker build context (discovered): `backend/api-gateway` with `backend/api-gateway/Dockerfile`.
 Deploy rule (unchanged): GitOps must use `repository@sha256:<digest>`, never a tag / never `latest`.
+
+**Authorization boundary:** Environment approval is a CI gate only. It is **not** evidence of an ECR push, scan, signing, provenance, or Kubernetes deployment. Real IAM role ARNs, ECR repository URIs, AWS account IDs, access keys, and secrets must **never** be committed to this repository.
 
 ---
 
@@ -78,9 +82,9 @@ Complete before a successful non-placeholder run:
 2. Private **ECR** repository for api-gateway.
 3. GitHub OIDC identity provider in that AWS account.
 4. Least-privilege IAM role for this repository only (see permission categories below).
-5. Trust policy with **exact** org/repo, protected ref, protected environment, `aud=sts.amazonaws.com` (sample template below — placeholders only).
+5. Trust policy with **exact** org/repo and environment subject `repo:blacknoix/blacknoix-depp:environment:staging`, plus `aud=sts.amazonaws.com` (sample template below — placeholders only for account ID).
 6. ECR repository policy allowing that role to push/pull as required.
-7. GitHub **protected environment** (e.g. `staging-image-supply-chain`) with required reviewers — then optionally wire `environment:` into the workflow in a follow-up edit.
+7. GitHub Environment **`staging`** with required reviewers (workflow already binds `supply-chain` via `environment: staging`; creating/protecting the environment remains console work).
 8. Protected branches / rulesets for `main` (and GitOps `staging` when that repo exists).
 9. Repository Actions permissions reviewed (OIDC token, artifacts, attestations).
 10. Action version review (checkout, setup-node, aws-actions, trivy, cosign, attest, upload-artifact).
@@ -117,10 +121,7 @@ Do **not** grant: EKS API, RDS, Secrets Manager, IAM write, Route 53, ACM, broad
       "Condition": {
         "StringEquals": {
           "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-          "token.actions.githubusercontent.com:sub": "repo:<GITHUB_ORG>/<GITHUB_REPO>:environment:<GITHUB_ENVIRONMENT>"
-        },
-        "StringLike": {
-          "token.actions.githubusercontent.com:sub": "repo:<GITHUB_ORG>/<GITHUB_REPO>:ref:<PROTECTED_REF>"
+          "token.actions.githubusercontent.com:sub": "repo:blacknoix/blacknoix-depp:environment:staging"
         }
       }
     }
@@ -128,7 +129,7 @@ Do **not** grant: EKS API, RDS, Secrets Manager, IAM write, Route 53, ACM, broad
 }
 ```
 
-**Warning:** Replace every `<…>` placeholder, remove contradictory conditions after choosing environment **or** ref binding (prefer environment + ref together per AWS/GitHub guidance), peer-review, and apply only in the dedicated non-prod account. Never commit a filled policy with a real account ID to this application repository if it can be avoided; prefer AWS-side storage.
+**Warning:** Replace `<AWS_ACCOUNT_ID>` only. Do not apply until peer-reviewed in the dedicated non-prod account. Never commit a filled policy with a real account ID to this application repository; prefer AWS-side storage. Environment approval does not prove ECR push, scan, signing, or deployment.
 
 ---
 

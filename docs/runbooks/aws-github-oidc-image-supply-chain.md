@@ -81,6 +81,8 @@ Do **not** use `@latest`, branch refs, or mutable version tags (e.g. `@0.28.0`) 
 
 **Non-claims for run `32265431591`:** This is **not** an image vulnerability finding, ECR push failure, AWS IAM failure, Docker build failure, SBOM/signing/provenance failure, or deployment attempt. No ECR image, scan result, SBOM, signature, provenance, retained supply-chain artifact, or deployment outcome is established by that failed run.
 
+**Remediation status:** The unsupported/unavailable `aquasecurity/trivy-action@0.28.0` reference was replaced with the reviewed immutable pin `aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1` (`v0.35.0`). A **new controlled manual run is required** after this change is on the branch tip. Do **not** claim remediation success until that new run completes successfully through scan/SBOM/sign/push evidence.
+
 ---
 
 ## Scan / exception policy

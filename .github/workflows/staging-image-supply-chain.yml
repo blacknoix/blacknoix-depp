@@ -220,6 +220,7 @@ jobs:
             --label "depp.blacknoix.io/data-classification=synthetic-only" \
             backend/api-gateway
 
+      # Immutable pin required: @0.28.0 was unresolvable (run 32265431591; pre-execution action resolution).
       - name: Trivy image scan (Critical/High with fix — fail closed)
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0, reviewed immutable pin
         with:

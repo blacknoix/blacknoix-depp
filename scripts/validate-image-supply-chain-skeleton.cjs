@@ -161,6 +161,18 @@ function main() {
 
   // Scan policy + exception fail-closed
   mustInclude(wf, "trivy", "trivy");
+  mustInclude(
+    wf,
+    "aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1",
+    "immutable trivy-action commit pin",
+  );
+  mustNotMatch(wf, /aquasecurity\/trivy-action@0\.28\.0\b/, "unresolvable trivy-action 0.28.0");
+  mustNotMatch(wf, /aquasecurity\/trivy-action@(latest|main|master)\b/, "floating trivy-action ref");
+  mustNotMatch(
+    wf,
+    /aquasecurity\/trivy-action@v?\d+\.\d+\.\d+\b/,
+    "mutable trivy-action version tag (require commit SHA pin)",
+  );
   mustInclude(wf, "CRITICAL", "critical severity");
   mustInclude(wf, "HIGH", "high severity");
   mustInclude(wf, "FOUNDER_ACK_HIGH_EXCEPTION", "founder exception ack");
@@ -196,11 +208,14 @@ function main() {
     "OIDC environment trust subject",
   );
   mustInclude(rb, "environment: staging", "runbook environment binding");
+  mustInclude(rb, "Environment approval is a CI gate only", "environment approval non-claim");
   mustInclude(
     rb,
-    "Environment approval is a CI gate only",
-    "environment approval non-claim",
+    "aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1",
+    "runbook trivy immutable pin",
   );
+  mustInclude(rb, "32265431591", "failed run ID record");
+  mustInclude(rb, "Pre-execution external-action resolution", "failure class non-claim");
 
   console.log("");
   console.log("image-supply-chain-skeleton: safety checks PASSED");

@@ -1,0 +1,12 @@
+{
+  "SchemaVersion": 2,
+  "ArtifactName": "fixture-image-clean",
+  "Results": [
+    {
+      "Target": "fixture-image-clean (fixture)",
+      "Class": "lang-pkgs",
+      "Type": "npm",
+      "Vulnerabilities": null
+    }
+  ]
+}

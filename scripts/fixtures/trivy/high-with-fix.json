@@ -1,0 +1,21 @@
+{
+  "SchemaVersion": 2,
+  "ArtifactName": "fixture-image-high",
+  "Results": [
+    {
+      "Target": "fixture-image-high (fixture)",
+      "Class": "lang-pkgs",
+      "Type": "npm",
+      "Vulnerabilities": [
+        {
+          "VulnerabilityID": "TEST-CVE-0002",
+          "PkgName": "example-pkg",
+          "InstalledVersion": "0.0.0-fixture",
+          "FixedVersion": "0.0.1-fixture",
+          "Severity": "HIGH",
+          "Title": "Synthetic fixture finding only — not production scan evidence"
+        }
+      ]
+    }
+  ]
+}

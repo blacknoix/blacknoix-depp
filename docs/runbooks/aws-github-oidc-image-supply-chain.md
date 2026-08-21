@@ -79,9 +79,9 @@ Do **not** use `@latest`, branch refs, or mutable version tags (e.g. `@0.28.0`) 
 | Failure class | Pre-execution external-action resolution |
 | Error (redacted class) | Unable to resolve `aquasecurity/trivy-action@0.28.0` (version not found) |
 
-**Non-claims for run `32265431591`:** This is **not** an image vulnerability finding, ECR push failure, AWS IAM failure, Docker build failure, SBOM/signing/provenance failure, or deployment attempt. No ECR image, scan result, SBOM, signature, provenance, retained supply-chain artifact, or deployment outcome is established by that failed run.
+**Non-claims for run `32265431591`:** This is **not** an image vulnerability finding, ECR push failure, AWS IAM failure, Docker build failure, SBOM/signing/provenance failure, or deployment attempt. No ECR image, scan result, SBOM, signature, provenance, retained supply-chain artifact, or deployment outcome is established by that failed run. Any later Trivy log observation without a retained `trivy-image.json` artifact is classified as **“log-observed, artifact not retained”** and must not be cited as CI vulnerability evidence or as an exact CVE/package/version set.
 
-**Remediation status:** The unsupported/unavailable `aquasecurity/trivy-action@0.28.0` reference was replaced with the reviewed immutable pin `aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1` (`v0.35.0`). A **new controlled manual run is required** after this change is on the branch tip. Do **not** claim remediation success until that new run completes successfully through scan/SBOM/sign/push evidence.
+**Remediation status:** The unsupported/unavailable `aquasecurity/trivy-action@0.28.0` reference was replaced with the reviewed immutable pin `aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1` (`v0.35.0`). The workflow now retains `trivy-image.json` via a SHA-pinned `actions/upload-artifact` step (`if: always()`, `if-no-files-found: error`) **before** the separate fail-closed Node policy evaluator runs. A **new controlled manual run is required** after this change is on the branch tip. Do **not** claim remediation success until that new run completes successfully through scan/SBOM/sign/push evidence.
 
 ---
 

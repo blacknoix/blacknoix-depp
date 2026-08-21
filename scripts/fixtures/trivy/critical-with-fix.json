@@ -1,0 +1,21 @@
+{
+  "SchemaVersion": 2,
+  "ArtifactName": "fixture-image-critical",
+  "Results": [
+    {
+      "Target": "fixture-image-critical (fixture)",
+      "Class": "lang-pkgs",
+      "Type": "npm",
+      "Vulnerabilities": [
+        {
+          "VulnerabilityID": "TEST-CVE-0001",
+          "PkgName": "example-pkg",
+          "InstalledVersion": "0.0.0-fixture",
+          "FixedVersion": "0.0.1-fixture",
+          "Severity": "CRITICAL",
+          "Title": "Synthetic fixture finding only — not production scan evidence"
+        }
+      ]
+    }
+  ]
+}

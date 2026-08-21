@@ -160,10 +160,10 @@ jobs:
       IMAGE_SOURCE_SHA: ${{ github.sha }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Setup Node.js 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
           cache: npm
@@ -197,14 +197,14 @@ jobs:
           echo "image_ref_tag=${ECR_REPOSITORY_URI}:sha-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Configure AWS credentials via GitHub OIDC
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@ececac1a45f3b08a01d2dd070d28d111c5fe6722 # v4.1.0
         with:
           role-to-assume: ${{ inputs.aws_role_to_assume }}
           aws-region: ${{ inputs.aws_region }}
 
       - name: Login to Amazon ECR
         id: ecr
-        uses: aws-actions/amazon-ecr-login@v2
+        uses: aws-actions/amazon-ecr-login@062b18b96a7aff071d4dc91bc00c4c1a7945b076 # v2.0.1
 
       - name: Build api-gateway image (Dockerfile backend/api-gateway)
         working-directory: ${{ github.workspace }}
@@ -221,7 +221,8 @@ jobs:
             backend/api-gateway
 
       # Immutable pin required: @0.28.0 was unresolvable (runs 32265431591, 32341637169; pre-execution action resolution).
-      - name: Trivy image scan (Critical/High with fix — fail closed)
+      # Scan always writes JSON with exit-code 0; fail-closed policy is a separate later step.
+      - name: Trivy image scan (Critical/High with fix — retain JSON)
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0, reviewed immutable pin
         with:
           image-ref: ${{ steps.coords.outputs.image_ref_tag }}
@@ -232,6 +233,16 @@ jobs:
           severity: CRITICAL,HIGH
           scanners: vuln
 
+      # Retain scan evidence before policy can fail the job (historic gap: log-observed, artifact not retained).
+      - name: Upload Trivy scan evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: trivy-image-${{ github.sha }}
+          path: trivy-image.json
+          if-no-files-found: error
+          retention-days: 180
+
       - name: Enforce scan policy (Critical always; High unless complete exception)
         working-directory: ${{ github.workspace }}
         env:
@@ -241,63 +252,7 @@ jobs:
           HIGH_ACK: ${{ inputs.high_vuln_exception_founder_ack }}
         run: |
           set -euo pipefail
-          python3 <<'PY'
-          import json, os, sys
-          from datetime import datetime, timezone
-
-          path = "trivy-image.json"
-          with open(path, encoding="utf-8") as f:
-              report = json.load(f)
-
-          critical_fixed = []
-          high_fixed = []
-          for result in report.get("Results") or []:
-              for vuln in result.get("Vulnerabilities") or []:
-                  sev = (vuln.get("Severity") or "").upper()
-                  fixed = vuln.get("FixedVersion")
-                  if not fixed:
-                      continue
-                  item = f"{vuln.get('VulnerabilityID')} {vuln.get('PkgName')} fixed_in={fixed}"
-                  if sev == "CRITICAL":
-                      critical_fixed.append(item)
-                  elif sev == "HIGH":
-                      high_fixed.append(item)
-
-          if critical_fixed:
-              print("BLOCK: Critical vulnerabilities with available fix:")
-              print("\n".join(critical_fixed))
-              sys.exit(1)
-
-          if high_fixed:
-              if os.environ.get("HIGH_EXC") != "YES":
-                  print("BLOCK: High vulnerabilities with available fix (no complete exception):")
-                  print("\n".join(high_fixed))
-                  sys.exit(1)
-              reason = os.environ.get("HIGH_REASON") or ""
-              expiry = os.environ.get("HIGH_EXPIRY") or ""
-              ack = os.environ.get("HIGH_ACK") or ""
-              if not reason or ack != "FOUNDER_ACK_HIGH_EXCEPTION":
-                  print("BLOCK: High exception incomplete (reason/ack)")
-                  sys.exit(1)
-              try:
-                  exp = datetime.strptime(expiry, "%Y-%m-%d").date()
-              except ValueError:
-                  print("BLOCK: High exception expiry invalid")
-                  sys.exit(1)
-              if exp <= datetime.now(timezone.utc).date():
-                  print("BLOCK: High exception expiry not in the future")
-                  sys.exit(1)
-              with open("high-vuln-exception-record.txt", "w", encoding="utf-8") as out:
-                  out.write("high_vuln_exception=YES\n")
-                  out.write(f"reason={reason}\n")
-                  out.write(f"expiry_utc={expiry}\n")
-                  out.write(f"founder_ack={ack}\n")
-                  out.write(f"source_sha={os.environ.get('IMAGE_SOURCE_SHA','')}\n")
-                  out.write("findings:\n")
-                  out.write("\n".join(high_fixed) + "\n")
-              print("WARN: High findings allowed under time-bounded founder exception; record artifacted")
-          print("Scan policy gate passed")
-          PY
+          node scripts/evaluate-trivy-image-policy.cjs trivy-image.json
 
       - name: Generate CycloneDX SBOM with Syft
         working-directory: ${{ github.workspace }}
@@ -324,7 +279,7 @@ jobs:
           echo "Deploy ONLY: ${ECR_REPOSITORY_URI}@${DIGEST}"
 
       - name: Install Cosign
-        uses: sigstore/cosign-installer@v3.7.0
+        uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da # v3.7.0
 
       - name: Cosign keyless sign (GitHub OIDC identity)
         working-directory: ${{ github.workspace }}
@@ -333,7 +288,7 @@ jobs:
           cosign sign --yes "${{ steps.digest.outputs.image_ref_digest }}"
 
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@c074443f1aee8d4aeeae555aebba3282517141b2 # v2.2.3
         with:
           subject-name: ${{ inputs.ecr_repository_uri }}
           subject-digest: ${{ steps.digest.outputs.image_digest }}
@@ -351,12 +306,11 @@ jobs:
             echo "gitops_note=REPLACE_WITH_ECR_IMAGE_AT_DIGEST in infra/gitops must become digest ref"
           } > image-digest-evidence.txt
 
-      - name: Upload supply-chain artifacts (retain per GitHub plan; pilot target 180d)
-        uses: actions/upload-artifact@v4
+      - name: Upload remaining supply-chain artifacts (retain per GitHub plan; pilot target 180d)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: staging-image-supply-chain-${{ github.sha }}
           path: |
-            trivy-image.json
             sbom.cyclonedx.json
             image-digest-evidence.txt
             high-vuln-exception-record.txt

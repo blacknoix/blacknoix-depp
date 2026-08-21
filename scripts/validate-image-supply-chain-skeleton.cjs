@@ -185,22 +185,76 @@ function main() {
   if (!/^[0-9a-f]{40}$/i.test(trivyRefs[0])) {
     fail("trivy-action pin must be a full 40-character commit SHA");
   }
+
+  // Every third-party action must be pinned to a full 40-char commit SHA.
+  const actionRefs = [...wf.matchAll(/^\s+uses:\s*([^\s#]+)/gm)].map((m) => m[1]);
+  if (actionRefs.length === 0) {
+    fail("expected at least one uses: action reference");
+  }
+  for (const ref of actionRefs) {
+    if (ref.startsWith("./") || ref.startsWith("docker://")) {
+      continue;
+    }
+    const at = ref.lastIndexOf("@");
+    if (at < 0) {
+      fail(`action missing @ref: ${ref}`);
+    }
+    const pin = ref.slice(at + 1);
+    if (!/^[0-9a-f]{40}$/i.test(pin)) {
+      fail(
+        `mutable third-party action reference rejected (require full 40-char SHA): ${ref}`,
+      );
+    }
+  }
+  mustInclude(
+    wf,
+    "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+    "immutable upload-artifact commit pin",
+  );
+
   const iTrivy = wf.indexOf(TRIVY_PIN);
+  const iUploadEvidence = wf.indexOf("Upload Trivy scan evidence");
   const iPolicy = wf.indexOf("Enforce scan policy");
   const iPush = wf.indexOf("docker push");
-  if (iTrivy < 0 || iPolicy < 0 || iPush < 0) {
-    fail("missing Trivy step, policy gate, or docker push for order checks");
-  }
-  if (!(iTrivy < iPolicy && iPolicy < iPush)) {
+  if (iTrivy < 0 || iUploadEvidence < 0 || iPolicy < 0 || iPush < 0) {
     fail(
-      "Trivy scan must precede the policy gate, and the policy gate must precede ECR push",
+      "missing Trivy step, Trivy evidence upload, policy gate, or docker push for order checks",
     );
   }
+  if (!(iTrivy < iUploadEvidence && iUploadEvidence < iPolicy && iPolicy < iPush)) {
+    fail(
+      "order must be Trivy scan -> Trivy evidence upload -> policy gate -> ECR push",
+    );
+  }
+  mustInclude(wf, 'exit-code: "0"', "trivy exit-code 0 for retained JSON");
+  mustInclude(wf, "if: always()", "evidence upload runs even when later steps fail");
+  mustInclude(wf, "if-no-files-found: error", "fail closed when trivy JSON missing");
+  mustInclude(
+    wf,
+    "scripts/evaluate-trivy-image-policy.cjs",
+    "local Node policy evaluator",
+  );
+  mustNotMatch(
+    wf,
+    /Enforce scan policy[\s\S]{0,400}continue-on-error:\s*true/,
+    "policy continue-on-error",
+  );
   mustInclude(wf, "CRITICAL", "critical severity");
   mustInclude(wf, "HIGH", "high severity");
   mustInclude(wf, "FOUNDER_ACK_HIGH_EXCEPTION", "founder exception ack");
   mustInclude(wf, "high-vuln-exception-record", "exception artifact");
-  mustInclude(wf, "BLOCK:", "fail-closed block messaging");
+  const policyEvalPath = path.join(ROOT, "scripts", "evaluate-trivy-image-policy.cjs");
+  if (!fs.existsSync(policyEvalPath)) {
+    fail("missing scripts/evaluate-trivy-image-policy.cjs");
+  }
+  const policyEval = fs.readFileSync(policyEvalPath, "utf8");
+  mustInclude(policyEval, "BLOCK:", "fail-closed block messaging in policy evaluator");
+  mustInclude(policyEval, "HIGH_EXC", "HIGH_EXC reporting in policy evaluator");
+  mustInclude(
+    policyEval,
+    "blocking_critical_with_fix",
+    "critical blocking count in policy evaluator",
+  );
 
   // SBOM / cosign / digest deployment rule
   mustInclude(wf, "cyclonedx", "cyclonedx sbom");
@@ -239,6 +293,11 @@ function main() {
   );
   mustInclude(rb, "32265431591", "failed run ID record");
   mustInclude(rb, "Pre-execution external-action resolution", "failure class non-claim");
+  mustInclude(
+    rb,
+    "log-observed, artifact not retained",
+    "historic evidence-gap classification",
+  );
   mustInclude(
     rb,
     "new controlled manual run is required",

@@ -22,21 +22,26 @@ name: staging-image-supply-chain
 on:
   workflow_dispatch:
     inputs:
+      scan_only:
+        description: "true = build+scan+evidence only, no AWS/ECR/sign/provenance. false = full publish."
+        type: boolean
+        required: true
+        default: true
       founder_approval:
         description: "Must equal I_APPROVE_STAGING_IMAGE_PIPELINE after AWS/GitHub prerequisites exist"
-        required: true
+        required: false
         default: "REPLACE_WITH_FOUNDER_APPROVAL"
       execute_confirm:
         description: "Must equal I_UNDERSTAND_THIS_PUSHES_TO_ECR to run build/scan/push steps"
-        required: true
+        required: false
         default: "REPLACE_WITH_EXECUTE_CONFIRM"
       aws_role_to_assume:
         description: "IAM role ARN for GitHub OIDC (no wildcards). Placeholder until provisioned."
-        required: true
+        required: false
         default: "REPLACE_WITH_AWS_ROLE_ARN"
       ecr_repository_uri:
         description: "ECR repository URI without tag (…amazonaws.com/name). No latest."
-        required: true
+        required: false
         default: "REPLACE_WITH_ECR_REPOSITORY_URI"
       aws_region:
         description: "AWS region for ECR (decision record default ap-south-1)"
@@ -59,13 +64,9 @@ on:
         required: false
         default: ""
 
-# Least privilege for this skeleton. id-token is required only after gates pass
-# (GitHub OIDC -> AWS and Cosign keyless). actions:write is for artifact upload.
+# Least privilege at workflow scope. Cloud OIDC/attestations stay on supply-chain only.
 permissions:
   contents: read
-  id-token: write
-  actions: write
-  attestations: write
 
 concurrency:
   group: staging-image-supply-chain-${{ github.ref }}
@@ -83,6 +84,7 @@ jobs:
     steps:
       - name: Reject placeholders and incomplete exception inputs
         env:
+          SCAN_ONLY: ${{ inputs.scan_only }}
           FOUNDER_APPROVAL: ${{ inputs.founder_approval }}
           EXECUTE_CONFIRM: ${{ inputs.execute_confirm }}
           AWS_ROLE_TO_ASSUME: ${{ inputs.aws_role_to_assume }}
@@ -98,51 +100,163 @@ jobs:
 
           fail() { echo "::error::$1"; exit 1; }
 
-          [[ "${FOUNDER_APPROVAL}" == "I_APPROVE_STAGING_IMAGE_PIPELINE" ]] \
-            || fail "founder_approval placeholder/unapproved — refusing to proceed"
-          [[ "${EXECUTE_CONFIRM}" == "I_UNDERSTAND_THIS_PUSHES_TO_ECR" ]] \
-            || fail "execute_confirm not set — refusing build/push"
-          [[ "${AWS_ROLE_TO_ASSUME}" != REPLACE_WITH_* ]] \
-            || fail "aws_role_to_assume is still a REPLACE_* placeholder — before AWS auth"
-          [[ "${AWS_ROLE_TO_ASSUME}" == arn:aws:iam::*:role/* ]] \
-            || fail "aws_role_to_assume must look like an IAM role ARN form (still no account committed in-repo defaults)"
-          case "${AWS_ROLE_TO_ASSUME}" in
-            *REPLACE*|*EXAMPLE*|*123456789012*) fail "aws_role_to_assume contains forbidden placeholder/example patterns" ;;
-          esac
-          [[ "${ECR_REPOSITORY_URI}" != REPLACE_WITH_* ]] \
-            || fail "ecr_repository_uri is still a REPLACE_* placeholder — before AWS auth"
-          [[ "${ECR_REPOSITORY_URI}" != *latest* ]] \
-            || fail "ecr_repository_uri must not contain latest"
-          [[ "${ECR_REPOSITORY_URI}" != *:* ]] \
-            || fail "ecr_repository_uri must be repository URI without a tag"
-          [[ "${ECR_REPOSITORY_URI}" == *.dkr.ecr.*.amazonaws.com/* ]] \
-            || fail "ecr_repository_uri must be an Amazon ECR repository URI"
-          [[ "${AWS_REGION}" =~ ^[a-z]{2}-[a-z]+-[0-9]+$ ]] \
-            || fail "aws_region looks invalid"
+          if [ "${SCAN_ONLY}" = "true" ]; then
+            echo "scan-only mode is active — build+scan+evidence only; no AWS/ECR/sign/provenance"
+            [[ "${FOUNDER_APPROVAL}" == "REPLACE_WITH_FOUNDER_APPROVAL" ]] \
+              || fail "scan-only mode requires founder_approval to remain REPLACE_WITH_FOUNDER_APPROVAL"
+            [[ "${EXECUTE_CONFIRM}" == "REPLACE_WITH_EXECUTE_CONFIRM" ]] \
+              || fail "scan-only mode requires execute_confirm to remain REPLACE_WITH_EXECUTE_CONFIRM"
+            [[ "${AWS_ROLE_TO_ASSUME}" == "REPLACE_WITH_AWS_ROLE_ARN" ]] \
+              || fail "scan-only mode requires aws_role_to_assume to remain REPLACE_WITH_AWS_ROLE_ARN"
+            [[ "${ECR_REPOSITORY_URI}" == "REPLACE_WITH_ECR_REPOSITORY_URI" ]] \
+              || fail "scan-only mode requires ecr_repository_uri to remain REPLACE_WITH_ECR_REPOSITORY_URI"
+            echo "Guard passed — scan-only path may continue (no AWS auth)"
+          else
+            [[ "${FOUNDER_APPROVAL}" == "I_APPROVE_STAGING_IMAGE_PIPELINE" ]] \
+              || fail "founder_approval placeholder/unapproved — refusing to proceed"
+            [[ "${EXECUTE_CONFIRM}" == "I_UNDERSTAND_THIS_PUSHES_TO_ECR" ]] \
+              || fail "execute_confirm not set — refusing build/push"
+            [[ "${AWS_ROLE_TO_ASSUME}" != REPLACE_WITH_* ]] \
+              || fail "aws_role_to_assume is still a REPLACE_* placeholder — before AWS auth"
+            [[ "${AWS_ROLE_TO_ASSUME}" == arn:aws:iam::*:role/* ]] \
+              || fail "aws_role_to_assume must look like an IAM role ARN form (still no account committed in-repo defaults)"
+            case "${AWS_ROLE_TO_ASSUME}" in
+              *REPLACE*|*EXAMPLE*|*123456789012*) fail "aws_role_to_assume contains forbidden placeholder/example patterns" ;;
+            esac
+            [[ "${ECR_REPOSITORY_URI}" != REPLACE_WITH_* ]] \
+              || fail "ecr_repository_uri is still a REPLACE_* placeholder — before AWS auth"
+            [[ "${ECR_REPOSITORY_URI}" != *latest* ]] \
+              || fail "ecr_repository_uri must not contain latest"
+            [[ "${ECR_REPOSITORY_URI}" != *:* ]] \
+              || fail "ecr_repository_uri must be repository URI without a tag"
+            [[ "${ECR_REPOSITORY_URI}" == *.dkr.ecr.*.amazonaws.com/* ]] \
+              || fail "ecr_repository_uri must be an Amazon ECR repository URI"
+            [[ "${AWS_REGION}" =~ ^[a-z]{2}-[a-z]+-[0-9]+$ ]] \
+              || fail "aws_region looks invalid"
 
-          if [[ "${HIGH_EXC}" == "YES" ]]; then
-            [[ -n "${HIGH_REASON}" ]] || fail "high exception missing reason"
-            [[ "${HIGH_ACK}" == "FOUNDER_ACK_HIGH_EXCEPTION" ]] \
-              || fail "high exception missing founder ack"
-            [[ "${HIGH_EXPIRY}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] \
-              || fail "high exception expiry must be YYYY-MM-DD"
-            today="$(date -u +%F)"
-            [[ "${HIGH_EXPIRY}" > "${today}" ]] \
-              || fail "high exception expiry must be in the future (UTC)"
-          elif [[ "${HIGH_EXC}" != "NO" ]]; then
-            fail "high_vuln_exception_approved must be YES or NO"
+            if [[ "${HIGH_EXC}" == "YES" ]]; then
+              [[ -n "${HIGH_REASON}" ]] || fail "high exception missing reason"
+              [[ "${HIGH_ACK}" == "FOUNDER_ACK_HIGH_EXCEPTION" ]] \
+                || fail "high exception missing founder ack"
+              [[ "${HIGH_EXPIRY}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] \
+                || fail "high exception expiry must be YYYY-MM-DD"
+              today="$(date -u +%F)"
+              [[ "${HIGH_EXPIRY}" > "${today}" ]] \
+                || fail "high exception expiry must be in the future (UTC)"
+            elif [[ "${HIGH_EXC}" != "NO" ]]; then
+              fail "high_vuln_exception_approved must be YES or NO"
+            fi
+
+            echo "Guard passed — cloud steps may run only in this workflow run"
           fi
 
-          echo "Guard passed — cloud steps may run only in this workflow run"
+  # -------------------------------------------------------------------------
+  # Uncredentialed build + Trivy scan. No environment, OIDC, ECR, or signing.
+  # Runs in both scan-only and full-publish modes.
+  # -------------------------------------------------------------------------
+  scan:
+    name: build and scan (no credentials)
+    needs: non-operational-guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: backend/api-gateway
+    env:
+      IMAGE_SOURCE_SHA: ${{ github.sha }}
+      LOCAL_IMAGE_TAG: depp-api-gateway:ci-scan-${{ github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: backend/api-gateway/package-lock.json
+
+      - name: npm ci
+        run: npm ci
+
+      - name: typecheck
+        run: npm run typecheck
+
+      - name: typecheck:test
+        run: npm run typecheck:test
+
+      - name: test:unit
+        run: npm run test:unit
+
+      - name: Build local-only api-gateway image
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          docker build \
+            --file backend/api-gateway/Dockerfile \
+            --tag "${LOCAL_IMAGE_TAG}" \
+            backend/api-gateway
+
+      # Immutable pin required: @0.28.0 was unresolvable (runs 32265431591, 32341637169; pre-execution action resolution).
+      # Scan always writes JSON with exit-code 0; fail-closed policy is a separate later step.
+      - name: Trivy image scan (Critical/High with fix — retain JSON)
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0, reviewed immutable pin
+        with:
+          image-ref: ${{ env.LOCAL_IMAGE_TAG }}
+          format: json
+          output: trivy-image.json
+          exit-code: "0"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+          scanners: vuln
+
+      - name: Write scan metadata (no secrets)
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          {
+            echo "github.sha=${IMAGE_SOURCE_SHA}"
+            echo "trivy_action_pin=57a97c7e7821a5776cebc9bb87c984fa69cba8f1"
+            echo "LOCAL_IMAGE_TAG=${LOCAL_IMAGE_TAG}"
+            echo "image_id=$(docker image inspect --format '{{.Id}}' "${LOCAL_IMAGE_TAG}")"
+            echo "trivy vulnerability-DB timestamp: NOT CAPTURED (action does not expose it)"
+          } > scan-metadata.txt
+
+      # Retain scan evidence before policy can fail the job (historic gap: log-observed, artifact not retained).
+      - name: Upload Trivy scan evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: scan-evidence-${{ github.sha }}
+          path: |
+            trivy-image.json
+            scan-metadata.txt
+          if-no-files-found: error
+          retention-days: 180
+
+      - name: Enforce scan policy (Critical always; High unless complete exception)
+        working-directory: ${{ github.workspace }}
+        env:
+          HIGH_EXC: ${{ inputs.high_vuln_exception_approved }}
+          HIGH_REASON: ${{ inputs.high_vuln_exception_reason }}
+          HIGH_EXPIRY: ${{ inputs.high_vuln_exception_expiry }}
+          HIGH_ACK: ${{ inputs.high_vuln_exception_founder_ack }}
+        run: |
+          set -euo pipefail
+          node scripts/evaluate-trivy-image-policy.cjs trivy-image.json
 
   # -------------------------------------------------------------------------
   # Quality + supply chain. Separated so AWS auth cannot run if guard fails.
   # Bound to GitHub Environment `staging` so required reviewers approve before
   # OIDC can authenticate to AWS. Guard job stays outside this environment.
+  # Runs only when scan_only is false (full publish).
   # -------------------------------------------------------------------------
   supply-chain:
     name: build scan sbom sign push (gated)
-    needs: non-operational-guard
+    needs: [non-operational-guard, scan]
+    if: ${{ inputs.scan_only == false }}
     environment: staging
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -219,40 +333,6 @@ jobs:
             --label "depp.blacknoix.io/environment=staging" \
             --label "depp.blacknoix.io/data-classification=synthetic-only" \
             backend/api-gateway
-
-      # Immutable pin required: @0.28.0 was unresolvable (runs 32265431591, 32341637169; pre-execution action resolution).
-      # Scan always writes JSON with exit-code 0; fail-closed policy is a separate later step.
-      - name: Trivy image scan (Critical/High with fix — retain JSON)
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0, reviewed immutable pin
-        with:
-          image-ref: ${{ steps.coords.outputs.image_ref_tag }}
-          format: json
-          output: trivy-image.json
-          exit-code: "0"
-          ignore-unfixed: true
-          severity: CRITICAL,HIGH
-          scanners: vuln
-
-      # Retain scan evidence before policy can fail the job (historic gap: log-observed, artifact not retained).
-      - name: Upload Trivy scan evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: trivy-image-${{ github.sha }}
-          path: trivy-image.json
-          if-no-files-found: error
-          retention-days: 180
-
-      - name: Enforce scan policy (Critical always; High unless complete exception)
-        working-directory: ${{ github.workspace }}
-        env:
-          HIGH_EXC: ${{ inputs.high_vuln_exception_approved }}
-          HIGH_REASON: ${{ inputs.high_vuln_exception_reason }}
-          HIGH_EXPIRY: ${{ inputs.high_vuln_exception_expiry }}
-          HIGH_ACK: ${{ inputs.high_vuln_exception_founder_ack }}
-        run: |
-          set -euo pipefail
-          node scripts/evaluate-trivy-image-policy.cjs trivy-image.json
 
       - name: Generate CycloneDX SBOM with Syft
         working-directory: ${{ github.workspace }}

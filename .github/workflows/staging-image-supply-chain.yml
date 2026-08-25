@@ -263,7 +263,6 @@ jobs:
     permissions:
       contents: read
       id-token: write
-      actions: write
       attestations: write
     defaults:
       run:
@@ -336,10 +335,29 @@ jobs:
 
       - name: Generate CycloneDX SBOM with Syft
         working-directory: ${{ github.workspace }}
+        env:
+          SYFT_VERSION: "v1.51.0"
+          SYFT_ARCHIVE: "syft_1.51.0_linux_amd64.tar.gz"
+          # Official release asset: https://github.com/anchore/syft/releases/download/v1.51.0/syft_1.51.0_linux_amd64.tar.gz
+          # Official checksums file: https://github.com/anchore/syft/releases/download/v1.51.0/syft_1.51.0_checksums.txt
+          SYFT_SHA256: "2a2e837a2c8d59ec9af5472ee22d3b04ee463c4e44476ecf993fd1e5ab6ebc7f"
         run: |
           set -euo pipefail
-          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
-          syft "${{ steps.coords.outputs.image_ref_tag }}" -o cyclonedx-json=sbom.cyclonedx.json
+          SYFT_TMP="$(mktemp -d)"
+          curl -sSfL -o "${SYFT_TMP}/${SYFT_ARCHIVE}" \
+            "https://github.com/anchore/syft/releases/download/${SYFT_VERSION}/${SYFT_ARCHIVE}"
+          curl -sSfL -o "${SYFT_TMP}/checksums.txt" \
+            "https://github.com/anchore/syft/releases/download/${SYFT_VERSION}/syft_${SYFT_VERSION#v}_checksums.txt"
+          awk -v archive="${SYFT_ARCHIVE}" '$2 == archive { print }' \
+            "${SYFT_TMP}/checksums.txt" > "${SYFT_TMP}/expected.sha256"
+          test "$(wc -l < "${SYFT_TMP}/expected.sha256")" -eq 1
+          test "$(awk '{print $1}' "${SYFT_TMP}/expected.sha256")" = "${SYFT_SHA256}"
+          (
+            cd "${SYFT_TMP}"
+            sha256sum -c expected.sha256
+          )
+          tar -xzf "${SYFT_TMP}/${SYFT_ARCHIVE}" -C "${SYFT_TMP}"
+          "${SYFT_TMP}/syft" "${{ steps.coords.outputs.image_ref_tag }}" -o cyclonedx-json=sbom.cyclonedx.json
 
       - name: Push image tags to ECR (digest captured next)
         working-directory: ${{ github.workspace }}
